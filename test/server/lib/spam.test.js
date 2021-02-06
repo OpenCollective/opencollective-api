@@ -1,46 +1,84 @@
 import { expect } from 'chai';
+import config from 'config';
 import sinon from 'sinon';
+
 import slackLib from '../../../server/lib/slack';
 import { collectiveSpamCheck, notifyTeamAboutSuspiciousCollective } from '../../../server/lib/spam';
+import { fakeCollective } from '../../test-helpers/fake-data';
 
 describe('server/lib/spam', () => {
+  let clock;
+
+  before(() => {
+    clock = sinon.useFakeTimers(new Date('2020-01-01T00:00:00.000Z'));
+  });
+
+  after(() => {
+    clock.restore();
+  });
+
   describe('collectiveSpamCheck', () => {
     it('detects bad keywords', async () => {
       // Description
-      expect(collectiveSpamCheck({ description: 'Some keto stuff' })).to.deep.eq({
-        score: 0.25,
+      const collectiveWithBadDescription = await fakeCollective({ description: 'Some keto stuff' });
+      expect(await collectiveSpamCheck(collectiveWithBadDescription, 'test')).to.deep.eq({
+        score: 0.3,
         keywords: ['keto'],
         domains: [],
+        bayes: 'ham',
+        context: 'test',
+        data: collectiveWithBadDescription.info,
+        date: '2020-01-01T00:00:00.000Z',
       });
 
       // Long description
-      expect(collectiveSpamCheck({ longDescription: 'Some PORN stuff' })).to.deep.eq({
-        score: 0.25,
+      const collectiveWithBadLongDescription = await fakeCollective({ longDescription: 'Some PORN stuff' });
+      expect(await collectiveSpamCheck(collectiveWithBadLongDescription)).to.deep.eq({
+        score: 0.2,
         keywords: ['porn'],
         domains: [],
+        bayes: 'ham',
+        context: undefined,
+        date: '2020-01-01T00:00:00.000Z',
+        data: collectiveWithBadLongDescription.info,
       });
 
       // Website
-      expect(collectiveSpamCheck({ website: 'https://maxketo.com' })).to.deep.eq({
-        score: 0.25,
+      const collectiveWithBadWebsite = await fakeCollective({ website: 'https://maxketo.com' });
+      expect(await collectiveSpamCheck(collectiveWithBadWebsite)).to.deep.eq({
+        score: 0.3,
         keywords: ['keto'],
         domains: [],
+        bayes: 'ham',
+        context: undefined,
+        date: '2020-01-01T00:00:00.000Z',
+        data: collectiveWithBadWebsite.info,
       });
 
       // Name
-      expect(collectiveSpamCheck({ name: 'BEST KeTo!!!' })).to.deep.eq({
-        score: 0.25,
+      const collectiveWithBadName = await fakeCollective({ name: 'BEST KeTo!!!' });
+      expect(await collectiveSpamCheck(collectiveWithBadName)).to.deep.eq({
+        score: 0.3,
         keywords: ['keto'],
         domains: [],
+        bayes: 'ham',
+        context: undefined,
+        date: '2020-01-01T00:00:00.000Z',
+        data: collectiveWithBadName.info,
       });
     });
 
-    it('detects blacklisted websites', async () => {
+    it('detects blocked websites', async () => {
       // Website
-      expect(collectiveSpamCheck({ website: 'https://supplementslove.com/promotion' })).to.deep.eq({
+      const collectiveWithBlockedWebsite = await fakeCollective({ website: 'https://supplementslove.com/promotion' });
+      expect(await collectiveSpamCheck(collectiveWithBlockedWebsite)).to.deep.eq({
         score: 1,
         keywords: [],
         domains: ['supplementslove.com'],
+        bayes: 'ham',
+        context: undefined,
+        date: '2020-01-01T00:00:00.000Z',
+        data: collectiveWithBlockedWebsite.info,
       });
     });
   });
@@ -57,14 +95,15 @@ describe('server/lib/spam', () => {
     });
 
     it('notifies Slack with the report info', async () => {
-      await notifyTeamAboutSuspiciousCollective({ name: 'Keto stuff', slug: 'ketoooo' });
+      const report = await collectiveSpamCheck({ name: 'Keto stuff', slug: 'ketoooo' });
+      await notifyTeamAboutSuspiciousCollective(report);
       expect(slackPostMessageStub.calledOnce).to.be.true;
 
       const args = slackPostMessageStub.getCall(0).args;
       expect(args[0]).to.eq(
-        '*Suspicious collective data was submitted for collective:* https://opencollective.com/ketoooo\nScore: 0.25\nKeywords: `keto`',
+        '*Suspicious collective data was submitted for collective:* https://opencollective.com/ketoooo\nScore: 0.3\nKeywords: `keto`',
       );
-      expect(args[2].channel).to.eq('#abuse');
+      expect(args[1]).to.eq(config.slack.webhooks.abuse);
     });
   });
 });
