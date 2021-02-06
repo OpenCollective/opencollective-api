@@ -685,20 +685,22 @@ export default function (Sequelize, DataTypes) {
             instance.data = { ...instance.data, spamReport };
           }
         },
-        afterCreate: async instance => {
+        afterCreate: async (instance, options) => {
           instance.findImage();
 
           if ([types.COLLECTIVE, types.FUND, types.EVENT, types.PROJECT].includes(instance.type)) {
-            await models.PaymentMethod.create({
-              CollectiveId: instance.id,
-              service: 'opencollective',
-              type: 'collective',
-              name: `${instance.name} (${capitalize(instance.type.toLowerCase())})`,
-              primary: true,
-              currency: instance.currency,
-            });
+            await models.PaymentMethod.create(
+              {
+                CollectiveId: instance.id,
+                service: 'opencollective',
+                type: 'collective',
+                name: `${instance.name} (${capitalize(instance.type.toLowerCase())})`,
+                primary: true,
+                currency: instance.currency,
+              },
+              { transaction: options.transaction },
+            );
           }
-
           return null;
         },
         afterUpdate: async (instance, options) => {
@@ -968,6 +970,16 @@ export default function (Sequelize, DataTypes) {
     return this;
   };
 
+  Collective.prototype.hasBudget = function () {
+    if ([types.COLLECTIVE, types.EVENT, types.PROJECT, types.FUND].includes(this.type)) {
+      return true;
+    } else if (this.type === types.ORGANIZATION) {
+      return this.isHostAccount && this.isActive;
+    } else {
+      return false;
+    }
+  };
+
   /**
    * Activate Budget (so the "Host Organization" can receive financial contributions and manage expenses)
    */
@@ -1038,11 +1050,10 @@ export default function (Sequelize, DataTypes) {
   };
 
   /**
-   * If the collective is a host, this function return true in case it's open to applications.
-   * It does **not** check that the collective is indeed a host.
+   * Returns true if Collective is a host account open to applications.
    */
   Collective.prototype.canApply = async function () {
-    return Boolean(this.settings && this.settings.apply);
+    return Boolean(this.isHostAccount && this.settings?.apply);
   };
 
   /**
@@ -1115,7 +1126,7 @@ export default function (Sequelize, DataTypes) {
     debug('getUsers for ', this.id);
     return models.Member.findAll({
       where: { CollectiveId: this.id },
-      include: [{ model: models.Collective, as: 'memberCollective' }],
+      include: [{ model: models.Collective, as: 'memberCollective', required: true }],
     })
       .tap(memberships => debug('>>> members found', memberships.length))
       .map(membership => membership.memberCollective)
@@ -1697,7 +1708,7 @@ export default function (Sequelize, DataTypes) {
     if (typeof hostFeePercent === undefined || !remoteUser || hostFeePercent === this.hostFeePercent) {
       return;
     }
-    if (this.type === types.COLLECTIVE || this.type === types.EVENT) {
+    if ([types.COLLECTIVE, types.EVENT, types.FUND, types.PROJECT].includes(this.type)) {
       // only an admin of the host of the collective can edit `hostFeePercent` of a COLLECTIVE
       if (!remoteUser || !remoteUser.isAdmin(this.HostCollectiveId)) {
         throw new Error('Only an admin of the host collective can edit the host fee for this collective');
@@ -1726,6 +1737,44 @@ export default function (Sequelize, DataTypes) {
 
         // Update host
         return this.update({ hostFeePercent });
+      }
+    }
+    return this;
+  };
+
+  Collective.prototype.updatePlatformFee = async function (platformFeePercent, remoteUser) {
+    if (typeof platformFeePercent === undefined || !remoteUser || platformFeePercent === this.platformFeePercent) {
+      return;
+    }
+    if ([types.COLLECTIVE, types.EVENT, types.FUND, types.PROJECT].includes(this.type)) {
+      // only an admin of the host of the collective can edit `platformFeePercent` of a COLLECTIVE
+      if (!remoteUser || !remoteUser.isAdmin(this.HostCollectiveId)) {
+        throw new Error('Only an admin of the host collective can edit the host fee for this collective');
+      }
+      return this.update({ platformFeePercent });
+    } else {
+      const isHost = await this.isHost();
+      if (isHost) {
+        if (!remoteUser.isAdmin(this.id)) {
+          throw new Error('You must be an admin of this host to change the platform fee');
+        }
+
+        await models.Collective.update(
+          { platformFeePercent },
+          {
+            hooks: false,
+            where: {
+              HostCollectiveId: this.id,
+              approvedAt: { [Op.not]: null },
+              data: {
+                useCustomPlatformFee: { [Op.not]: true },
+              },
+            },
+          },
+        );
+
+        // Update host
+        return this.update({ platformFeePercent });
       }
     }
     return this;
@@ -1926,7 +1975,12 @@ export default function (Sequelize, DataTypes) {
         };
 
         // Record application
-        promises.push(models.HostApplication.recordApplication(hostCollective, this, { message: options?.message }));
+        promises.push(
+          models.HostApplication.recordApplication(hostCollective, this, {
+            message: options?.message,
+            customData: options?.applicationData,
+          }),
+        );
 
         if (!options?.skipCollectiveApplyActivity) {
           promises.push(
@@ -2949,6 +3003,13 @@ export default function (Sequelize, DataTypes) {
         t => !t.platformFeeInHostCurrency && t.hostFeeInHostCurrency,
       ),
     );
+    const pendingHostFeeShare = Math.abs(
+      sumByWhen(
+        transactions,
+        t => round((t.hostFeeInHostCurrency * (t.data?.hostFeeSharePercent || plan.hostFeeSharePercent)) / 100),
+        t => !t.platformFeeInHostCurrency && t.hostFeeInHostCurrency && isPendingTransaction(t),
+      ),
+    );
 
     const tipsTransactions = await models.Transaction.findAll({
       where: {
@@ -2981,6 +3042,7 @@ export default function (Sequelize, DataTypes) {
       platformTips,
       pendingPlatformTips,
       hostFeeShare,
+      pendingHostFeeShare,
       hostFeeSharePercent,
       totalMoneyManaged,
     };
