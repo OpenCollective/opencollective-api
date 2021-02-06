@@ -64,7 +64,9 @@ export const PaymentMethod = new GraphQLObjectType({
       account: {
         type: Account,
         resolve(paymentMethod, _, req) {
-          return req.loaders.Collective.byId.load(paymentMethod.CollectiveId);
+          if (paymentMethod.CollectiveId) {
+            return req.loaders.Collective.byId.load(paymentMethod.CollectiveId);
+          }
         },
       },
       sourcePaymentMethod: {
@@ -85,7 +87,7 @@ export const PaymentMethod = new GraphQLObjectType({
 
           // Protect and whitelist fields for virtualcard
           if (paymentMethod.type === 'virtualcard') {
-            if (!req.remoteUser || !req.remoteUser.isAdmin(paymentMethod.CollectiveId)) {
+            if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(paymentMethod.CollectiveId)) {
               return null;
             }
             return pick(paymentMethod.data, ['email']);

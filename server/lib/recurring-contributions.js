@@ -5,16 +5,18 @@ import { Op } from 'sequelize';
 
 import intervals from '../constants/intervals';
 import status from '../constants/order_status';
+import { PAYMENT_METHOD_TYPE } from '../constants/paymentMethods';
 import models from '../models';
 
 import emailLib from './email';
 import logger from './logger';
 import * as paymentsLib from './payments';
+import { getTransactionPdf } from './pdf';
 import { isHostPlan } from './plans';
-import { sleep } from './utils';
+import { sleep, toIsoDateStr } from './utils';
 
 /** Maximum number of attempts before an order gets cancelled. */
-export const MAX_RETRIES = 5;
+export const MAX_RETRIES = 6;
 
 /** Find all orders with subscriptions that are active & due.
  *
@@ -246,10 +248,12 @@ export function getNextChargeAndPeriodStartDates(status, order) {
 
     response.nextPeriodStart = nextChargeDate.toDate();
   } else if (status === 'failure') {
-    if (order.Subscription.chargeRetryCount >= 2) {
-      nextChargeDate = moment(new Date()).add(5, 'days');
+    if (order.Subscription.chargeRetryCount > 2) {
+      // How do I remove time part from JavaScript date?
+      // https://stackoverflow.com/questions/34722862/how-do-i-remove-time-part-from-javascript-date/34722927
+      nextChargeDate = moment(new Date(new Date().toDateString())).add(5, 'days');
     } else {
-      nextChargeDate = moment(new Date()).add(2, 'days');
+      nextChargeDate = moment(new Date(new Date().toDateString())).add(2, 'days');
     }
   } else if (status === 'updated') {
     // used when user updates payment method
@@ -370,6 +374,8 @@ export async function sendFailedEmail(order, lastAttempt) {
 
 /** Send `thankyou` email */
 export async function sendThankYouEmail(order, transaction) {
+  const attachments = [];
+  const { collective, paymentMethod } = order;
   const relatedCollectives = await order.collective.getRelatedCollectives(3, 0);
   const user = order.createdByUser;
   const host = await order.collective.getHostCollective();
@@ -385,26 +391,54 @@ export async function sendThankYouEmail(order, transaction) {
     );
   }
 
-  return emailLib.send(
-    'thankyou',
-    user.email,
-    {
-      order: order.info,
-      transaction: transaction.info,
-      user: user.info,
-      firstPayment: false,
-      collective: order.collective.info,
-      host: host ? host.info : {},
-      fromCollective: order.fromCollective.minimal,
-      relatedCollectives,
-      config: { host: config.host },
-      interval: order.Subscription.interval,
-      subscriptionsLink: `${config.host.website}/${order.fromCollective.slug}/recurring-contributions`,
-    },
-    {
-      from: `${order.collective.name} <no-reply@${order.collective.slug}.opencollective.com>`,
-    },
-  );
+  const data = {
+    order: order.info,
+    transaction: transaction ? transaction.info : null,
+    user: user.info,
+    firstPayment: false,
+    collective: order.collective.info,
+    host: host ? host.info : {},
+    fromCollective: order.fromCollective.minimal,
+    relatedCollectives,
+    config: { host: config.host },
+    interval: order.Subscription.interval,
+    subscriptionsLink: `${config.host.website}/${order.fromCollective.slug}/recurring-contributions`,
+  };
+
+  // hit PDF service and get PDF (unless payment method type is gift card)
+  if (transaction && paymentMethod?.type !== PAYMENT_METHOD_TYPE.VIRTUALCARD) {
+    const transactionPdf = await getTransactionPdf(transaction, user);
+    if (transactionPdf) {
+      const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
+      attachments.push({
+        filename: `transaction_${collective.slug}_${createdAtString}_${transaction.uuid}.pdf`,
+        content: transactionPdf,
+      });
+      data.transactionPdf = true;
+    }
+
+    if (transaction.hasPlatformTip()) {
+      const platformTipTransaction = await transaction.getPlatformTipTransaction();
+      if (platformTipTransaction) {
+        const platformTipPdf = await getTransactionPdf(platformTipTransaction, user);
+        if (platformTipPdf) {
+          const createdAtString = toIsoDateStr(new Date(platformTipTransaction.createdAt));
+          attachments.push({
+            filename: `transaction_opencollective_${createdAtString}_${platformTipTransaction.uuid}.pdf`,
+            content: platformTipPdf,
+          });
+          data.platformTipPdf = true;
+        }
+      }
+    }
+  }
+
+  const emailOptions = {
+    from: `${order.collective.name} <no-reply@${order.collective.slug}.opencollective.com>`,
+    attachments,
+  };
+
+  return emailLib.send('thankyou', user.email, data, emailOptions);
 }
 
 export async function sendCreditCardConfirmationEmail(order) {

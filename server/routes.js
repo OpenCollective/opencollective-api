@@ -1,7 +1,7 @@
-import { ApolloServer } from 'apollo-server-express';
+import { ApolloError, ApolloServer } from 'apollo-server-express';
 import config from 'config';
 import expressLimiter from 'express-limiter';
-import { get } from 'lodash';
+import { get, pick } from 'lodash';
 import multer from 'multer';
 import redis from 'redis';
 
@@ -15,7 +15,8 @@ import { getGraphqlCacheKey } from './graphql/cache';
 import graphqlSchemaV1 from './graphql/v1/schema';
 import graphqlSchemaV2 from './graphql/v2/schema';
 import cache from './lib/cache';
-import statsd from './lib/statsd';
+import logger from './lib/logger';
+import { SentryGraphQLPlugin } from './lib/sentry';
 import { parseToBoolean } from './lib/utils';
 import * as authentication from './middleware/authentication';
 import errorHandler from './middleware/error_handler';
@@ -25,6 +26,11 @@ import sanitizer from './middleware/sanitizer';
 import * as paypal from './paymentProviders/paypal/payment';
 
 const upload = multer();
+
+const noCache = (req, res, next) => {
+  res.set('Cache-Control', 'no-cache');
+  next();
+};
 
 export default app => {
   /**
@@ -120,7 +126,6 @@ export default app => {
         req.endAt = req.endAt || new Date();
         const executionTime = req.endAt - req.startAt;
         res.set('Execution-Time', executionTime);
-        statsd.timing('api.graphql.executionTime', executionTime);
         res.send(fromCache);
         return;
       }
@@ -134,9 +139,22 @@ export default app => {
   const graphqlServerOptions = {
     introspection: true,
     playground: isDevelopment,
+    plugins: config.sentry?.dsn ? [SentryGraphQLPlugin] : undefined,
     // Align with behavior from express-graphql
     context: ({ req }) => {
       return req;
+    },
+    formatError: err => {
+      logger.error(`GraphQL error: ${err.message}`);
+      const extra = pick(err, ['locations', 'path']);
+      if (Object.keys(extra).length) {
+        logger.error(extra);
+      }
+      const stacktrace = get(err, 'err.extensions.exception.stacktrace');
+      if (stacktrace) {
+        logger.error(stacktrace);
+      }
+      return err;
     },
     formatResponse: (response, ctx) => {
       const req = ctx.context;
@@ -148,7 +166,6 @@ export default app => {
       req.endAt = req.endAt || new Date();
       const executionTime = req.endAt - req.startAt;
       req.res.set('Execution-Time', executionTime);
-      statsd.timing('api.graphql.executionTime', executionTime);
       return response;
     },
   };
@@ -195,8 +212,12 @@ export default app => {
   app.post('/webhooks/transferwise', transferwiseWebhook); // when it gets a new subscription invoice
   app.post('/webhooks/paypal', paypalWebhook);
   app.post('/webhooks/mailgun', email.webhook); // when receiving an email
-  app.get('/connected-accounts/:service/callback', authentication.authenticateServiceCallback); // oauth callback
-  app.delete('/connected-accounts/:service/disconnect/:collectiveId', authentication.authenticateServiceDisconnect);
+  app.get('/connected-accounts/:service/callback', noCache, authentication.authenticateServiceCallback); // oauth callback
+  app.delete(
+    '/connected-accounts/:service/disconnect/:collectiveId',
+    noCache,
+    authentication.authenticateServiceDisconnect,
+  );
 
   app.use(sanitizer()); // note: this break /webhooks/mailgun /graphiql
 
@@ -213,12 +234,18 @@ export default app => {
   /**
    * Generic OAuth (ConnectedAccounts)
    */
-  app.get('/connected-accounts/:service(github)', authentication.authenticateService); // backward compatibility
+  app.get('/connected-accounts/:service(github)', noCache, authentication.authenticateService); // backward compatibility
   app.get(
-    '/connected-accounts/:service(github|twitter|meetup|stripe|paypal)/oauthUrl',
+    '/connected-accounts/:service(github|twitter|stripe|paypal)/oauthUrl',
+    noCache,
     authentication.authenticateService,
   );
-  app.get('/connected-accounts/:service/verify', authentication.parseJwtNoExpiryCheck, connectedAccounts.verify);
+  app.get(
+    '/connected-accounts/:service/verify',
+    noCache,
+    authentication.parseJwtNoExpiryCheck,
+    connectedAccounts.verify,
+  );
 
   /* PayPal Payment Method Helpers */
   app.post('/services/paypal/create-payment', paypal.createPayment);

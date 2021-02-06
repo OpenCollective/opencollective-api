@@ -8,12 +8,15 @@ import statuses from '../../../constants/expense_status';
 import expenseType from '../../../constants/expense_type';
 import FEATURE from '../../../constants/feature';
 import roles from '../../../constants/roles';
-import { enforceTwoFactorAuthenticationOnPayouts } from '../../../lib/auth';
 import { getFxRate } from '../../../lib/currency';
 import { floatAmountToCents } from '../../../lib/math';
 import * as libPayments from '../../../lib/payments';
 import { handleTransferwisePayoutsLimit } from '../../../lib/plans';
 import { createFromPaidExpense as createTransactionFromPaidExpense } from '../../../lib/transactions';
+import {
+  handleTwoFactorAuthenticationPayoutLimit,
+  resetRollingPayoutLimitOnFailure,
+} from '../../../lib/two-factor-authentication';
 import { canUseFeature } from '../../../lib/user-permissions';
 import { formatCurrency } from '../../../lib/utils';
 import models, { sequelize } from '../../../models';
@@ -28,7 +31,7 @@ export async function updateExpenseStatus(req, expenseId, status) {
   const { remoteUser } = req;
   if (!remoteUser) {
     throw new Unauthorized('You need to be logged in to update the status of an expense');
-  } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+  } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
     throw new FeatureNotAllowedForUser();
   }
 
@@ -199,7 +202,7 @@ const createAttachedFiles = async (expense, attachedFilesData, remoteUser, trans
 export async function createExpense(remoteUser, expenseData) {
   if (!remoteUser) {
     throw new Unauthorized('You need to be logged in to create an expense');
-  } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+  } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
     throw new FeatureNotAllowedForUser();
   }
 
@@ -328,11 +331,11 @@ export const getItemsChanges = async (expense, expenseData) => {
   return [hasItemChanges, itemsData, itemsDiff];
 };
 
-export async function editExpense(req, expenseData) {
-  const { remoteUser } = req;
+export async function editExpense(req, expenseData, options) {
+  const remoteUser = options?.overrideRemoteUser || req.remoteUser;
   if (!remoteUser) {
     throw new Unauthorized('You need to be logged in to edit an expense');
-  } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+  } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
     throw new FeatureNotAllowedForUser();
   } else if (expenseData.payoutMethod && expenseData.PayoutMethod) {
     throw new Error('payoutMethod and PayoutMethod are exclusive, please use only one');
@@ -349,7 +352,7 @@ export async function editExpense(req, expenseData) {
 
   if (!expense) {
     throw new NotFound('Expense not found');
-  } else if (!(await ExpenseLib.canEditExpense(req, expense))) {
+  } else if (!options?.skipPermissionCheck && !(await ExpenseLib.canEditExpense(req, expense))) {
     throw new Unauthorized("You don't have permission to edit this expense");
   }
 
@@ -360,7 +363,7 @@ export async function editExpense(req, expenseData) {
   // Load the payee profile
   const fromCollective = expenseData.fromCollective || expense.fromCollective;
   if (expenseData.fromCollective && expenseData.fromCollective.id !== expense.fromCollective.id) {
-    if (!remoteUser.isAdmin(fromCollective.id)) {
+    if (!options?.skipPermissionCheck && !remoteUser.isAdmin(fromCollective.id)) {
       throw new ValidationFailed('You must be an admin of the account to submit an expense in its name');
     } else if (!fromCollective.canBeUsedAsPayoutProfile()) {
       throw new ValidationFailed('This account cannot be used for payouts');
@@ -462,7 +465,7 @@ export async function deleteExpense(req, expenseId) {
   const { remoteUser } = req;
   if (!remoteUser) {
     throw new Unauthorized('You need to be logged in to delete an expense');
-  } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+  } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
     throw new FeatureNotAllowedForUser();
   }
 
@@ -609,7 +612,7 @@ export async function payExpense(req, args) {
 
     if (!remoteUser) {
       throw new Unauthorized('You need to be logged in to pay an expense');
-    } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+    } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
       throw new FeatureNotAllowedForUser();
     }
     const expense = await models.Expense.findByPk(expenseId, {
@@ -703,67 +706,75 @@ export async function payExpense(req, args) {
       );
     }
 
-    // If the amount of the expense is larger than i.e. $1000 enforce 2FA if the user has it turned on
-    const is2FARequiredForPayoutMethod = [PayoutMethodTypes.PAYPAL, PayoutMethodTypes.BANK_ACCOUNT].includes(
-      payoutMethodType,
-    );
-    const hostHasPayout2FAEnabled = get(host, 'settings.payoutsTwoFactorAuth.enabled', false);
-    const hostPayout2FAExpenseAmount = get(host, 'settings.payoutsTwoFactorAuth.expenseAmount', 100000);
-    if (
-      is2FARequiredForPayoutMethod &&
+    // 2FA for payouts
+    const isTwoFactorAuthenticationRequiredForPayoutMethod = [
+      PayoutMethodTypes.PAYPAL,
+      PayoutMethodTypes.BANK_ACCOUNT,
+    ].includes(payoutMethodType);
+    const hostHasPayoutTwoFactorAuthenticationEnabled = get(host, 'settings.payoutsTwoFactorAuth.enabled', false);
+    const useTwoFactorAuthentication =
+      isTwoFactorAuthenticationRequiredForPayoutMethod &&
       !args.forceManual &&
-      hostHasPayout2FAEnabled &&
-      expense.amount >= hostPayout2FAExpenseAmount
-    ) {
-      enforceTwoFactorAuthenticationOnPayouts(req, args.twoFactorAuthenticatorCode);
+      hostHasPayoutTwoFactorAuthenticationEnabled;
+
+    if (useTwoFactorAuthentication) {
+      await handleTwoFactorAuthenticationPayoutLimit(req.remoteUser, args.twoFactorAuthenticatorCode, expense);
     }
 
-    // Pay expense based on chosen payout method
-    if (payoutMethodType === PayoutMethodTypes.PAYPAL) {
-      const paypalEmail = payoutMethod.data.email;
-      let paypalPaymentMethod = null;
-      try {
-        paypalPaymentMethod = await host.getPaymentMethod({ service: 'paypal' });
-      } catch {
-        // ignore missing paypal payment method
-      }
-      // If the expense has been filed with the same paypal email than the host paypal
-      // then we simply mark the expense as paid
-      if (paypalPaymentMethod && paypalEmail === paypalPaymentMethod.name) {
-        feesInHostCurrency.paymentProcessorFeeInHostCurrency = 0;
+    try {
+      // Pay expense based on chosen payout method
+      if (payoutMethodType === PayoutMethodTypes.PAYPAL) {
+        const paypalEmail = payoutMethod.data.email;
+        let paypalPaymentMethod = null;
+        try {
+          paypalPaymentMethod = await host.getPaymentMethod({ service: 'paypal' });
+        } catch {
+          // ignore missing paypal payment method
+        }
+        // If the expense has been filed with the same paypal email than the host paypal
+        // then we simply mark the expense as paid
+        if (paypalPaymentMethod && paypalEmail === paypalPaymentMethod.name) {
+          feesInHostCurrency.paymentProcessorFeeInHostCurrency = 0;
+          await createTransactions(host, expense, feesInHostCurrency);
+        } else if (args.forceManual) {
+          await createTransactions(host, expense, feesInHostCurrency);
+        } else if (paypalPaymentMethod) {
+          await payExpenseWithPayPal(remoteUser, expense, host, paypalPaymentMethod, paypalEmail, feesInHostCurrency);
+        } else {
+          throw new Error('No Paypal account linked, please reconnect Paypal or pay manually');
+        }
+      } else if (payoutMethodType === PayoutMethodTypes.BANK_ACCOUNT) {
+        if (args.forceManual) {
+          feesInHostCurrency.paymentProcessorFeeInHostCurrency = 0;
+          await createTransactions(host, expense, feesInHostCurrency);
+        } else {
+          await payExpenseWithTransferwise(host, payoutMethod, expense, feesInHostCurrency, remoteUser);
+          await expense.setProcessing(remoteUser.id);
+          // Early return, we'll only mark as Paid when the transaction completes.
+          return expense;
+        }
+      } else if (payoutMethodType === PayoutMethodTypes.ACCOUNT_BALANCE) {
+        const payee = expense.fromCollective;
+        const payeeHost = await payee.getHostCollective();
+        if (!payeeHost) {
+          throw new Error('The payee needs to have an Host to able to be paid on its Open Collective balance.');
+        }
+        if (host.id !== payeeHost.id) {
+          throw new Error(
+            'The payee needs to be on the same Host than the payer to be paid on its Open Collective balance.',
+          );
+        }
         await createTransactions(host, expense, feesInHostCurrency);
-      } else if (args.forceManual) {
+      } else if (expense.legacyPayoutMethod === 'manual' || expense.legacyPayoutMethod === 'other') {
+        // note: we need to check for manual and other for legacy reasons
         await createTransactions(host, expense, feesInHostCurrency);
-      } else if (paypalPaymentMethod) {
-        await payExpenseWithPayPal(remoteUser, expense, host, paypalPaymentMethod, paypalEmail, feesInHostCurrency);
-      } else {
-        throw new Error('No Paypal account linked, please reconnect Paypal or pay manually');
       }
-    } else if (payoutMethodType === PayoutMethodTypes.BANK_ACCOUNT) {
-      if (args.forceManual) {
-        feesInHostCurrency.paymentProcessorFeeInHostCurrency = 0;
-        await createTransactions(host, expense, feesInHostCurrency);
-      } else {
-        await payExpenseWithTransferwise(host, payoutMethod, expense, feesInHostCurrency, remoteUser);
-        await expense.setProcessing(remoteUser.id);
-        // Early return, we'll only mark as Paid when the transaction completes.
-        return expense;
+    } catch (error) {
+      if (useTwoFactorAuthentication) {
+        await resetRollingPayoutLimitOnFailure(req.remoteUser, expense);
       }
-    } else if (payoutMethodType === PayoutMethodTypes.ACCOUNT_BALANCE) {
-      const payee = expense.fromCollective;
-      const payeeHost = await payee.getHostCollective();
-      if (!payeeHost) {
-        throw new Error('The payee needs to have an Host to able to be paid on its Open Collective balance.');
-      }
-      if (host.id !== payeeHost.id) {
-        throw new Error(
-          'The payee needs to be on the same Host than the payer to be paid on its Open Collective balance.',
-        );
-      }
-      await createTransactions(host, expense, feesInHostCurrency);
-    } else if (expense.legacyPayoutMethod === 'manual' || expense.legacyPayoutMethod === 'other') {
-      // note: we need to check for manual and other for legacy reasons
-      await createTransactions(host, expense, feesInHostCurrency);
+
+      return error;
     }
 
     return markExpenseAsPaid(expense, remoteUser);
@@ -776,7 +787,7 @@ export async function markExpenseAsUnpaid(req, ExpenseId, processorFeeRefunded) 
   const updatedExpense = await lockExpense(ExpenseId, async () => {
     if (!remoteUser) {
       throw new Unauthorized('You need to be logged in to unpay an expense');
-    } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+    } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
       throw new FeatureNotAllowedForUser();
     }
 

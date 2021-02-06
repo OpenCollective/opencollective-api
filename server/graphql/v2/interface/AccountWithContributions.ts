@@ -1,8 +1,7 @@
+import config from 'config';
 import { GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLString } from 'graphql';
 import { isNil } from 'lodash';
 
-import { types } from '../../../constants/collectives';
-import { OC_FEE_PERCENT } from '../../../constants/transactions';
 import { getPaginatedContributorsForCollective } from '../../../lib/contributors';
 import models from '../../../models';
 import { ContributorCollection } from '../collection/ContributorCollection';
@@ -10,10 +9,6 @@ import { TierCollection } from '../collection/TierCollection';
 import { AccountType, MemberRole } from '../enum';
 
 import { CollectionArgs } from './Collection';
-
-const hasBudget = account => {
-  return account.type !== types.ORGANIZATION || (account.isHostAccount && account.isActive);
-};
 
 export const AccountWithContributionsFields = {
   totalFinancialContributors: {
@@ -26,7 +21,7 @@ export const AccountWithContributionsFields = {
       },
     },
     async resolve(account, args, req): Promise<number> {
-      if (!hasBudget(account)) {
+      if (!account.hasBudget()) {
         return 0;
       }
 
@@ -43,7 +38,7 @@ export const AccountWithContributionsFields = {
   tiers: {
     type: new GraphQLNonNull(TierCollection),
     async resolve(account): Promise<object> {
-      if (!hasBudget(account)) {
+      if (!account.hasBudget()) {
         return [];
       }
 
@@ -67,7 +62,7 @@ export const AccountWithContributionsFields = {
     type: new GraphQLNonNull(GraphQLInt),
     description: 'How much platform fees are charged for this account',
     resolve(account): number {
-      return isNil(account.platformFeePercent) ? OC_FEE_PERCENT : account.platformFeePercent;
+      return isNil(account.platformFeePercent) ? config.fees.default.platformPercent : account.platformFeePercent;
     },
   },
   platformContributionAvailable: {
@@ -75,7 +70,7 @@ export const AccountWithContributionsFields = {
     description:
       'Returns true if a custom contribution to Open Collective can be submitted for contributions made to this account',
     resolve(account): boolean {
-      return account.platformFeePercent === 0;
+      return account.platformFeePercent === 0 && Boolean(account.data?.disablePlatformTips) !== true;
     },
   },
   balance: {

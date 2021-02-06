@@ -9,6 +9,7 @@ import request from 'request-promise';
 
 import * as connectedAccounts from '../controllers/connectedAccounts';
 import errors from '../lib/errors';
+import { confirmGuestAccount } from '../lib/guest-accounts';
 import logger from '../lib/logger';
 import { getTokenFromRequestHeaders } from '../lib/utils';
 import models from '../models';
@@ -131,6 +132,12 @@ export const _authenticateUserByJwt = async (req, res, next) => {
         }
       }
     }
+
+    // If a guest signs in, it's safe to directly confirm its account
+    if (!user.confirmedAt) {
+      await confirmGuestAccount(user);
+    }
+
     await user.update({
       // The login was accepted, we can update lastLoginAt. This will invalidate all older tokens.
       lastLoginAt: new Date(),
@@ -210,10 +217,6 @@ export const authenticateService = (req, res, next) => {
       .catch(next);
   }
 
-  if (service === 'meetup') {
-    opts.scope = 'ageless';
-  }
-
   return passport.authenticate(service, opts)(req, res, next);
 };
 
@@ -233,11 +236,7 @@ export const authenticateServiceCallback = (req, res, next) => {
     if (!accessToken) {
       return res.redirect(config.host.website);
     }
-    let emails;
-    if (service === 'github' && !req.remoteUser) {
-      emails = await getGithubEmails(accessToken);
-    }
-    connectedAccounts.createOrUpdate(req, res, next, accessToken, data, emails).catch(next);
+    connectedAccounts.createOrUpdate(req, res, next, accessToken, data).catch(next);
   })(req, res, next);
 };
 
@@ -247,22 +246,17 @@ export const authenticateServiceDisconnect = (req, res) => {
 
 function getOAuthCallbackUrl(req) {
   // eslint-disable-next-line camelcase
-  const { utm_source, CollectiveId, access_token, redirect } = req.query;
+  const { CollectiveId, access_token, context } = req.query;
   const { service } = req.params;
 
   // eslint-disable-next-line camelcase
-  const params = new URLSearchParams(omitBy({ access_token, redirect, CollectiveId, utm_source }, isNil));
+  const params = new URLSearchParams(omitBy({ CollectiveId, access_token, context }, isNil));
 
-  return `${config.host.website}/api/connected-accounts/${service}/callback?${params.toString()}`;
-}
-
-function getGithubEmails(accessToken) {
-  return request({
-    uri: 'https://api.github.com/user/emails',
-    qs: { access_token: accessToken }, // eslint-disable-line camelcase
-    headers: { 'User-Agent': 'OpenCollective' },
-    json: true,
-  }).then(json => json.map(entry => entry.email));
+  if (params.toString().length > 0) {
+    return `${config.host.website}/api/connected-accounts/${service}/callback?${params.toString()}`;
+  } else {
+    return `${config.host.website}/api/connected-accounts/${service}/callback`;
+  }
 }
 
 /**

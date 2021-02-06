@@ -10,6 +10,7 @@ env:
   NODE_ENV: ci # TODO: should be ideally development, test or production
   PGHOST: localhost
   PGUSER: postgres
+  ENABLE_GUEST_CONTRIBUTIONS: true
   WEBSITE_URL: http://localhost:3000
   IMAGES_URL: http://localhost:3001
   API_URL: http://localhost:3060
@@ -26,7 +27,6 @@ env:
   FRONTEND_FOLDER: /home/runner/work/opencollective-api/opencollective-api/opencollective-frontend
   IMAGES_FOLDER: /home/runner/work/opencollective-api/opencollective-api/opencollective-images
   TERM: xterm
-  NEW_CONTRIBUTION_FLOW: ${{ contains(github.ref, 'new-cf') }}
 
 jobs:
   e2e:

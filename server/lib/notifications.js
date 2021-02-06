@@ -10,8 +10,10 @@ import activitiesLib from '../lib/activities';
 import emailLib from '../lib/email';
 import models from '../models';
 
+import { getTransactionPdf } from './pdf';
 import slackLib from './slack';
 import twitter from './twitter';
+import { toIsoDateStr } from './utils';
 import { enrichActivity, sanitizeActivity } from './webhooks';
 
 const debug = debugLib('notifications');
@@ -117,6 +119,40 @@ async function notifyUserId(UserId, activity, options = {}) {
     const parentCollective = await event.getParentCollective();
     const ics = await event.getICS();
     options.attachments = [{ filename: `${event.slug}.ics`, content: ics }];
+
+    const transaction = await models.Transaction.findOne({
+      where: { OrderId: activity.data.order.id, type: 'CREDIT' },
+    });
+
+    if (transaction) {
+      const transactionPdf = await getTransactionPdf(transaction, user);
+      if (transactionPdf) {
+        const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
+        options.attachments.push({
+          filename: `transaction_${event.slug}_${createdAtString}_${transaction.uuid}.pdf`,
+          content: transactionPdf,
+        });
+        activity.data.transactionPdf = true;
+      }
+
+      if (transaction.hasPlatformTip()) {
+        const platformTipTransaction = await transaction.getPlatformTipTransaction();
+
+        if (platformTipTransaction) {
+          const platformTipPdf = await getTransactionPdf(platformTipTransaction, user);
+
+          if (platformTipPdf) {
+            const createdAtString = toIsoDateStr(new Date(platformTipTransaction.createdAt));
+            options.attachments.push({
+              filename: `transaction_opencollective_${createdAtString}_${platformTipTransaction.uuid}.pdf`,
+              content: platformTipPdf,
+            });
+            activity.data.platformTipPdf = true;
+          }
+        }
+      }
+    }
+
     activity.data.event = event.info;
     activity.data.collective = parentCollective.info;
     options.from = `${parentCollective.name} <no-reply@${parentCollective.slug}.opencollective.com>`;
@@ -395,14 +431,6 @@ async function notifyByEmail(activity) {
       break;
 
     case activityType.COLLECTIVE_CREATED:
-      // Meetups
-      if ((get(activity, 'data.collective.tags') || []).includes('meetup')) {
-        notifyAdminsOfCollective(activity.data.collective.id, activity, {
-          template: 'collective.created.meetup',
-        });
-        break;
-      }
-
       // Funds MVP
       if (get(activity, 'data.collective.type') === 'FUND' || get(activity, 'data.collective.settings.fund') === true) {
         if (get(activity, 'data.host.slug') === 'foundation') {
@@ -449,5 +477,15 @@ async function notifyByEmail(activity) {
       notifyAdminsOfCollective(activity.data.collective.id, activity, {
         template: 'deactivated.collective.as.host',
       });
+      break;
+
+    case activityType.COLLECTIVE_EXPENSE_INVITE_DRAFTED:
+      // New User
+      if (activity.data.payee?.email) {
+        await emailLib.send(activity.type, activity.data.payee.email, activity.data, { sendEvenIfNotProduction: true });
+      } else if (activity.data.payee.id) {
+        await notifyAdminsOfCollective(activity.data.payee.id, activity, { sendEvenIfNotProduction: true });
+      }
+      break;
   }
 }

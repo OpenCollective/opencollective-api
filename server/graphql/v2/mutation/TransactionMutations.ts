@@ -65,6 +65,10 @@ const transactionMutations = {
         refundedTransaction = await fetchTransactionWithReference({ legacyId: transaction.RefundTransactionId });
       }
 
+      if (!refundedTransaction) {
+        throw new NotFound('Refunded transaction not found');
+      }
+
       const orderToUpdate = await models.Order.findOne({
         where: { id: refundedTransaction.OrderId },
         include: { model: models.Subscription },
@@ -95,14 +99,16 @@ const transactionMutations = {
           role: 'BACKER',
         },
       });
-      purgeCacheForCollective(fromAccount);
-      purgeCacheForCollective(toAccount);
+      purgeCacheForCollective(fromAccount.slug);
+      purgeCacheForCollective(toAccount.slug);
 
       // email contributor(s) to let them know their transaction has been rejected
       const collective = {
         name: toAccount.name,
       };
-      const rejectionReason = args.message || null;
+      const rejectionReason =
+        args.message ||
+        `An administrator of ${collective.name} manually rejected your contribution without providing a specific message.`;
 
       const data = { collective, rejectionReason };
 

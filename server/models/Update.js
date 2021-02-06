@@ -216,6 +216,11 @@ export default function (Sequelize, DataTypes) {
             return instance.generateSlug();
           }
         },
+        beforeDestroy: async instance => {
+          const newSlug = `${instance.slug}-${Date.now()}`;
+          instance.slug = newSlug;
+          await instance.save({ paranoid: false, hooks: false });
+        },
         afterCreate: instance => {
           models.Activity.create({
             type: activities.COLLECTIVE_UPDATE_CREATED,
@@ -295,6 +300,7 @@ export default function (Sequelize, DataTypes) {
 
   Update.prototype.delete = async function (remoteUser) {
     mustHaveRole(remoteUser, 'ADMIN', this.CollectiveId, 'delete this update');
+    await models.Comment.destroy({ where: { UpdateId: this.id } });
     return this.destroy();
   };
 
@@ -365,21 +371,6 @@ export default function (Sequelize, DataTypes) {
     return Promise.map(updates, u => Update.create(defaults({}, u, defaultValues)), { concurrency: 1 }).catch(
       console.error,
     );
-  };
-
-  Update.findBySlug = (slug, options = {}) => {
-    if (!slug || slug.length < 1) {
-      return Promise.resolve(null);
-    }
-    return Update.findOne({
-      where: { slug: slug.toLowerCase() },
-      ...options,
-    }).then(Update => {
-      if (!Update) {
-        throw new Error(`No update found with slug ${slug}`);
-      }
-      return Update;
-    });
   };
 
   Update.associate = m => {

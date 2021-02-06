@@ -2,12 +2,9 @@ import Promise from 'bluebird';
 import config from 'config';
 import jwt from 'jsonwebtoken';
 import moment from 'moment';
-import speakeasy from 'speakeasy';
 
 import * as errors from '../graphql/errors';
 import models, { Op } from '../models';
-
-import { crypto } from './encryption';
 
 // Helper
 const daysToSeconds = days => moment.duration({ days }).asSeconds();
@@ -17,6 +14,7 @@ const minutesToSeconds = minutes => moment.duration({ minutes }).asSeconds();
 export const TOKEN_EXPIRATION_LOGIN = minutesToSeconds(75);
 export const TOKEN_EXPIRATION_CONNECTED_ACCOUNT = daysToSeconds(1);
 export const TOKEN_EXPIRATION_SESSION = daysToSeconds(90);
+export const TOKEN_EXPIRATION_PDF = minutesToSeconds(75);
 
 const ALGORITHM = 'HS256';
 const KID = 'HS256-2019-09-02';
@@ -74,37 +72,5 @@ export function mustHaveRole(remoteUser, roles, CollectiveId, action = 'perform 
   mustBeLoggedInTo(remoteUser, action);
   if (!CollectiveId || !remoteUser.hasRole(roles, CollectiveId)) {
     throw new errors.Unauthorized(`You don't have sufficient permissions to ${action}`);
-  }
-}
-
-/**
- * Verifies a TOTP against a user's 2FA token saved in the DB
- * encryptedTwoFactorAuthToken = token saved for a User in the DB
- * twoFactorAuthenticatorCode = 6-digit TOTP
- */
-export function verifyTwoFactorAuthenticatorCode(encryptedTwoFactorAuthToken, twoFactorAuthenticatorCode) {
-  const decryptedTwoFactorAuthToken = crypto.decrypt(encryptedTwoFactorAuthToken);
-  const verified = speakeasy.totp.verify({
-    secret: decryptedTwoFactorAuthToken,
-    encoding: 'base32',
-    token: twoFactorAuthenticatorCode,
-    window: 2,
-  });
-  return verified;
-}
-
-export function enforceTwoFactorAuthenticationOnPayouts(req, twoFactorAuthenticatorCode) {
-  if (req.remoteUser.twoFactorAuthToken !== null) {
-    if (twoFactorAuthenticatorCode) {
-      const verified = verifyTwoFactorAuthenticatorCode(req.remoteUser.twoFactorAuthToken, twoFactorAuthenticatorCode);
-      if (!verified) {
-        throw new Error('Two-factor authentication failed: invalid code. Please try again.');
-      }
-      return;
-    } else {
-      throw new Error('Two-factor authentication enabled: please enter your code.');
-    }
-  } else {
-    throw new Error('Host has two-factor authentication enabled for large payouts.');
   }
 }

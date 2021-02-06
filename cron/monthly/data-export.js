@@ -5,8 +5,8 @@ import fs from 'fs';
 import readline from 'readline';
 
 import Promise from 'bluebird';
-import { googleDrive } from 'config';
-import { google } from 'googleapis'; // eslint-disable-line node/no-unpublished-import
+import config, { googleDrive } from 'config';
+import { google } from 'googleapis';
 import { parse as json2csv } from 'json2csv';
 import moment from 'moment';
 
@@ -174,10 +174,11 @@ const authorize = (googleDrive, callback) => {
   if (refresh_token) {
     oAuth2Client.setCredentials(googleDrive);
     callback(oAuth2Client);
-  } else if (process.env.NODE_ENV !== 'production') {
+  } else if (process.env.NODE_ENV !== 'production' || process.env.MANUAL_RUN) {
     return getAccessToken(oAuth2Client, callback);
   } else {
     console.log('No token set for Google Drive, skipping data export upload');
+    process.exit(0);
   }
 };
 
@@ -200,7 +201,12 @@ const getAccessToken = (oAuth2Client, callback) => {
   rl.question('Enter the code from that page here: ', code => {
     rl.close();
     oAuth2Client.getToken(code, (err, token) => {
-      if (err) return console.error('Error retrieving access token', err);
+      if (err) {
+        return console.error('Error retrieving access token', err);
+      } else {
+        console.log(`>>> Token: ${JSON.stringify(token)}`);
+      }
+
       oAuth2Client.setCredentials(token);
       callback(oAuth2Client);
     });
@@ -214,7 +220,7 @@ const getAccessToken = (oAuth2Client, callback) => {
 const uploadFiles = async auth => {
   const drive = google.drive({ version: 'v3', auth });
 
-  //create a folder on drive
+  // Create a folder on drive
   const folderMetadata = {
     name: `${startDate.getFullYear()}-${month}`,
     mimeType: 'application/vnd.google-apps.folder',
@@ -244,7 +250,7 @@ const uploadFiles = async auth => {
   });
   console.log(`>>> all files uploaded to "${folderMetadata['name']}" folder in google drive`);
 
-  //delete all the files after succesful upload
+  // Delete all the files after succesful upload
   try {
     fs.rmdirSync(`${path}`, { recursive: true });
     console.log(`${path} is deleted!`);
@@ -255,18 +261,25 @@ const uploadFiles = async auth => {
   process.exit(0);
 };
 
-run()
-  .then(() => {
-    // If drive credentails are available try to upload generated files to drive
-    if (googleDrive.clientId && googleDrive.clientSecret && googleDrive.redirectUri) {
-      // Authorize with credentials, then call the Google Drive API.
-      authorize(googleDrive, uploadFiles);
-    } else {
-      console.log(`>>> Required google drive credentails weren't provided.`);
-      process.exit(0);
-    }
-  })
-  .catch(e => {
-    console.error(e);
-    process.exit(1);
-  });
+// Only run on the first of the month
+const today = new Date();
+if (config.env === 'production' && today.getDate() !== 1 && !process.env.MANUAL_RUN) {
+  console.log('OC_ENV is production and today is not the first of month, script aborted!');
+  process.exit();
+} else {
+  run()
+    .then(() => {
+      // If drive credentails are available try to upload generated files to drive
+      if (googleDrive.clientId && googleDrive.clientSecret && googleDrive.redirectUri) {
+        // Authorize with credentials, then call the Google Drive API.
+        authorize(googleDrive, uploadFiles);
+      } else {
+        console.log(`>>> Required google drive credentails weren't provided.`);
+        process.exit(0);
+      }
+    })
+    .catch(e => {
+      console.error(e);
+      process.exit(1);
+    });
+}

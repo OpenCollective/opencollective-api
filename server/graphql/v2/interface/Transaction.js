@@ -23,7 +23,7 @@ import { Account } from './Account';
 const TransactionPermissions = new GraphQLObjectType({
   name: 'TransactionPermissions',
   description: 'Fields for the user permissions on an transaction',
-  fields: {
+  fields: () => ({
     canRefund: {
       type: new GraphQLNonNull(GraphQLBoolean),
       description: 'Whether the current user can edit the transaction',
@@ -39,7 +39,7 @@ const TransactionPermissions = new GraphQLObjectType({
       description: 'Whether the current user can reject the transaction',
       resolve: TransactionLib.canReject,
     },
-  },
+  }),
 });
 
 export const Transaction = new GraphQLInterfaceType({
@@ -119,7 +119,7 @@ export const Transaction = new GraphQLInterfaceType({
       permissions: {
         type: TransactionPermissions,
       },
-      isRejected: {
+      isOrderRejected: {
         type: new GraphQLNonNull(GraphQLBoolean),
       },
       refundTransaction: {
@@ -285,7 +285,7 @@ export const TransactionFields = () => {
           : null;
       },
     },
-    isRejected: {
+    isOrderRejected: {
       type: new GraphQLNonNull(GraphQLBoolean),
       async resolve(transaction, _, req) {
         if (transaction.OrderId) {

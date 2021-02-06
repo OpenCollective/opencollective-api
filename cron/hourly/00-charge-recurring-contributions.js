@@ -13,6 +13,7 @@ import {
   ordersWithPendingCharges,
   processOrderWithSubscription,
 } from '../../server/lib/recurring-contributions';
+import { parseToBoolean } from '../../server/lib/utils';
 import { sequelize } from '../../server/models';
 
 const REPORT_EMAIL = 'ops@opencollective.com';
@@ -36,6 +37,11 @@ const csvFields = [
 ];
 
 const startTime = new Date();
+
+if (parseToBoolean(process.env.SKIP_CHARGE_RECURRING_CONTRIBUTIONS) && !process.env.OFFCYCLE) {
+  console.log('Skipping because SKIP_CHARGE_RECURRING_CONTRIBUTIONS is set.');
+  process.exit();
+}
 
 /** Run the script with parameters read from the command line */
 async function run(options) {
@@ -155,11 +161,11 @@ export function parseCommandLineArguments() {
   });
   parser.add_argument('-l', '--limit', {
     help: 'Total recurring contributions to process',
-    default: 1000,
+    default: 500,
   });
   parser.add_argument('-c', '--concurrency', {
     help: 'Number of operations to process at the same time',
-    default: 5,
+    default: 3,
   });
   parser.add_argument('-s', '--simulate', {
     help: 'If in dry run, simulate operation between 0 to 5 seconds',

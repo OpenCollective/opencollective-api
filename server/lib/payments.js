@@ -2,24 +2,26 @@
 import Promise from 'bluebird';
 import config from 'config';
 import debugLib from 'debug';
-import { find, get, includes, omit, pick } from 'lodash';
-import { Op } from 'sequelize';
+import { find, get, includes, isNumber, omit, pick } from 'lodash';
 
 import activities from '../constants/activities';
 import status from '../constants/order_status';
+import { PAYMENT_METHOD_TYPE } from '../constants/paymentMethods';
 import roles from '../constants/roles';
 import tiers from '../constants/tiers';
-import { FEES_ON_TOP_TRANSACTION_PROPERTIES, OC_FEE_PERCENT } from '../constants/transactions';
-import { createPrepaidPaymentMethod, isPrepaidBudgetOrder } from '../lib/prepaid-budget';
-import { formatAccountDetails } from '../lib/transferwise';
-import { formatCurrency } from '../lib/utils';
-import models from '../models';
+import { FEES_ON_TOP_TRANSACTION_PROPERTIES } from '../constants/transactions';
+import models, { Op } from '../models';
 import paymentProviders from '../paymentProviders';
 
 import emailLib from './email';
+import { notifyAdminsOfCollective } from './notifications';
+import { getTransactionPdf } from './pdf';
 import { subscribeOrUpgradePlan, validatePlanRequest } from './plans';
+import { createPrepaidPaymentMethod, isPrepaidBudgetOrder } from './prepaid-budget';
 import { getNextChargeAndPeriodStartDates } from './recurring-contributions';
 import { netAmount } from './transactions';
+import { formatAccountDetails } from './transferwise';
+import { formatCurrency, toIsoDateStr } from './utils';
 
 const debug = debugLib('payments');
 
@@ -173,9 +175,9 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
       'paymentProcessorFeeInHostCurrency',
       'data.isFeesOnTop',
     ]);
-    refund.CreatedByUserId = user.id;
+    refund.CreatedByUserId = user?.id || null;
     refund.description = `Refund of "${t.description}"`;
-    refund.data = data;
+    refund.data = { ...refund.data, ...data };
 
     /* The refund operation moves back fees to the user's ledger so the
      * fees there should be positive. Since they're usually in negative,
@@ -204,9 +206,7 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
   const creditTransactionRefund = buildRefund(creditTransaction);
 
   if (transaction.data?.isFeesOnTop) {
-    const feeOnTopTransaction = await models.Transaction.findOne({
-      where: { ...FEES_ON_TOP_TRANSACTION_PROPERTIES, type: 'CREDIT' },
-    });
+    const feeOnTopTransaction = await transaction.getPlatformTipTransaction();
     const feeOnTopRefund = buildRefund(feeOnTopTransaction);
     const feeOnTopRefundTransaction = await models.Transaction.createDoubleEntry(feeOnTopRefund);
     await associateTransactionRefundId(feeOnTopTransaction, feeOnTopRefundTransaction, data);
@@ -249,11 +249,10 @@ export const sendEmailNotifications = (order, transaction) => {
   debug('sendEmailNotifications');
   // for gift cards and manual payment methods
   if (!transaction) {
-    sendOrderProcessingEmail(order);
-    sendManualPendingOrderEmail(order);
+    sendOrderProcessingEmail(order); // This is the one for the Contributor
+    sendManualPendingOrderEmail(order); // This is the one for the Host Admins
   } else {
-    order.transaction = transaction;
-    sendOrderConfirmedEmail(order); // async
+    sendOrderConfirmedEmail(order, transaction); // async
   }
 };
 
@@ -388,8 +387,9 @@ const validatePayment = payment => {
   }
 };
 
-const sendOrderConfirmedEmail = async order => {
-  const { collective, tier, interval, fromCollective } = order;
+const sendOrderConfirmedEmail = async (order, transaction) => {
+  const attachments = [];
+  const { collective, tier, interval, fromCollective, paymentMethod } = order;
   const user = order.createdByUser;
   const host = await collective.getHostCollective();
 
@@ -409,12 +409,9 @@ const sendOrderConfirmedEmail = async order => {
   } else {
     // normal order
     const relatedCollectives = await order.collective.getRelatedCollectives(3, 0);
-    const emailOptions = {
-      from: `${collective.name} <no-reply@${collective.slug}.opencollective.com>`,
-    };
     const data = {
       order: order.activity,
-      transaction: pick(order.transaction, ['createdAt', 'uuid']),
+      transaction: pick(transaction, ['createdAt', 'uuid']),
       user: user.info,
       collective: collective.info,
       host: host ? host.info : {},
@@ -424,6 +421,39 @@ const sendOrderConfirmedEmail = async order => {
       monthlyInterval: interval === 'month',
       firstPayment: true,
       subscriptionsLink: interval && `${config.host.website}/${fromCollective.slug}/recurring-contributions`,
+    };
+
+    // hit PDF service and get PDF (unless payment method type is gift card)
+    if (paymentMethod?.type !== PAYMENT_METHOD_TYPE.VIRTUALCARD) {
+      const transactionPdf = await getTransactionPdf(transaction, user);
+      if (transactionPdf) {
+        const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
+        attachments.push({
+          filename: `transaction_${collective.slug}_${createdAtString}_${transaction.uuid}.pdf`,
+          content: transactionPdf,
+        });
+        data.transactionPdf = true;
+      }
+
+      if (transaction.hasPlatformTip()) {
+        const platformTipTransaction = await transaction.getPlatformTipTransaction();
+        if (platformTipTransaction) {
+          const platformTipPdf = await getTransactionPdf(platformTipTransaction, user);
+          if (platformTipPdf) {
+            const createdAtString = toIsoDateStr(new Date(platformTipTransaction.createdAt));
+            attachments.push({
+              filename: `transaction_opencollective_${createdAtString}_${platformTipTransaction.uuid}.pdf`,
+              content: platformTipPdf,
+            });
+            data.platformTipPdf = true;
+          }
+        }
+      }
+    }
+
+    const emailOptions = {
+      from: `${collective.name} <no-reply@${collective.slug}.opencollective.com>`,
+      attachments,
     };
 
     return emailLib.send('thankyou', user.email, data, emailOptions);
@@ -455,7 +485,7 @@ export const sendOrderProcessingEmail = async order => {
     const formatValues = {
       account,
       reference: order.id,
-      amount: formatCurrency(order.totalAmount, order.currency),
+      amount: formatCurrency(order.totalAmount, order.currency, 2),
       collective: parentCollective ? `${parentCollective.slug} event` : order.collective.slug,
       tier: get(order, 'tier.slug') || get(order, 'tier.name'),
       // @deprecated but we still have some entries in the DB
@@ -476,20 +506,22 @@ export const sendOrderProcessingEmail = async order => {
 
 const sendManualPendingOrderEmail = async order => {
   const { collective, fromCollective } = order;
-  const user = order.createdByUser;
   const host = await collective.getHostCollective();
+
+  const pendingOrderLink =
+    host.type === 'COLLECTIVE'
+      ? `${config.host.website}/${host.slug}/edit/pending-orders?searchTerm=%23${order.id}`
+      : `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`;
+
   const data = {
     order: order.info,
-    user: user.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
-    pendingOrderLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
+    pendingOrderLink,
   };
 
-  return emailLib.send('order.new.pendingFinancialContribution', user.email, data, {
-    from: `${collective.name} <no-reply@${collective.slug}.opencollective.com>`,
-  });
+  return notifyAdminsOfCollective(host.id, { type: 'order.new.pendingFinancialContribution', data });
 };
 
 export const sendReminderPendingOrderEmail = async order => {
@@ -503,18 +535,20 @@ export const sendReminderPendingOrderEmail = async order => {
     return;
   }
 
+  const viewDetailsLink =
+    host.type === 'COLLECTIVE'
+      ? `${config.host.website}/${host.slug}/edit/pending-orders?searchTerm=%23${order.id}`
+      : `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`;
+
   const data = {
     order: order.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
-    viewDetailsLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
+    viewDetailsLink,
   };
 
-  const adminUsers = await host.getAdminUsers();
-  for (const adminUser of adminUsers) {
-    await emailLib.send('order.reminder.pendingFinancialContribution', adminUser.email, data);
-  }
+  return notifyAdminsOfCollective(host.id, { type: 'order.reminder.pendingFinancialContribution', data });
 };
 
 export const sendExpiringCreditCardUpdateEmail = async data => {
@@ -526,16 +560,116 @@ export const sendExpiringCreditCardUpdateEmail = async data => {
   return emailLib.send('payment.creditcard.expiring', data.email, data);
 };
 
-export const getPlatformFee = order => {
-  const orderPlatformFee = get(order, 'data.platformFee');
-  if (!isNaN(orderPlatformFee)) {
-    return orderPlatformFee;
+export const getPlatformFee = async (totalAmount, order, host = null, { hostPlan } = {}) => {
+  const isFeesOnTop = order.data?.isFeesOnTop || false;
+  const isSharedRevenue = hostPlan?.hostFeeSharePercent || false;
+
+  // Fees On Top can now be combined with Shared Revenue
+  if (isFeesOnTop || isSharedRevenue) {
+    const platformFee = order.data?.platformFee || 0;
+
+    const sharedRevenue = isSharedRevenue
+      ? calcFee(await getHostFee(totalAmount, order, host), hostPlan.hostFeeSharePercent)
+      : 0;
+
+    return platformFee + sharedRevenue;
   }
 
-  const defaultPlatformFeePercent =
-    order.collective.platformFeePercent === null ? OC_FEE_PERCENT : order.collective.platformFeePercent;
+  //  Otherwise, use platformFeePercent
+  const platformFeePercent = await getPlatformFeePercent(order, host);
 
-  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFeePercent);
+  return calcFee(totalAmount, platformFeePercent);
+};
 
-  return parseInt((order.totalAmount * platformFeePercent) / 100, 10);
+export const getPlatformFeePercent = async (order, host = null) => {
+  const possibleValues = [
+    // Fixed in the Order (special tiers: BackYourStack, Pre-Paid)
+    order.data?.platformFeePercent,
+  ];
+
+  if (order.paymentMethod.service === 'opencollective' && order.paymentMethod.type === 'manual') {
+    host = host || (await order.collective.getHostCollective());
+    // Fixed for Bank Transfers at collective level
+    possibleValues.push(order.collective.data?.bankTransfersPlatformFeePercent);
+    // Fixed for Bank Transfers at host level
+    // As of August 2020, this will be only set on a selection of Hosts (opensource 5%)
+    possibleValues.push(host.data?.bankTransfersPlatformFeePercent);
+    // Default to 0 for this kind of payments
+    possibleValues.push(0);
+  }
+
+  if (order.paymentMethod.service === 'opencollective') {
+    // Default to 0 for this kind of payments
+    if (order.paymentMethod.type === 'collective' || order.paymentMethod.type === 'host') {
+      possibleValues.push(0);
+    }
+  }
+
+  // Default for Collective
+  possibleValues.push(order.collective.platformFeePercent);
+
+  // Just in case, default on the platform (not used in normal operation)
+  possibleValues.push(config.fees.default.platformPercent);
+
+  // Pick the first that is set as a Number
+  return possibleValues.find(isNumber);
+};
+
+export const getHostFee = async (totalAmount, order, host = null) => {
+  const feeOnTop = order.data?.platformFee || 0;
+
+  const hostFeePercent = await getHostFeePercent(order, host);
+
+  return calcFee(totalAmount - feeOnTop, hostFeePercent);
+};
+
+export const getHostFeePercent = async (order, host = null) => {
+  host = host || (await order.collective.getHostCollective());
+
+  // No Host Fee for money going to an host itself
+  if (order.collective.isHostAccount) {
+    return 0;
+  }
+
+  const possibleValues = [
+    // Fixed in the Order (special tiers: BackYourStack, Pre-Paid)
+    order.data?.hostFeePercent,
+  ];
+
+  if (order.paymentMethod.service === 'opencollective' && order.paymentMethod.type === 'manual') {
+    // Fixed for Bank Transfers at collective level
+    // As of August 2020, this will be only set on a selection of Collective (some foundation collectives 5%)
+    possibleValues.push(order.collective.data?.bankTransfersHostFeePercent);
+    // Fixed for Bank Transfers at host level
+    // As of August 2020, this will be only set on a selection of Hosts (foundation 8%)
+    possibleValues.push(host.data?.bankTransfersHostFeePercent);
+  }
+
+  if (order.paymentMethod.service === 'opencollective') {
+    // Default to 0 for this kind of payments
+    if (order.paymentMethod.type === 'collective' || order.paymentMethod.type === 'host') {
+      possibleValues.push(0);
+    }
+  }
+
+  if (order.paymentMethod.service === 'stripe') {
+    // Configurable by the Host globally or at the Collective level
+    possibleValues.push(order.collective.data?.creditCardHostFeePercent);
+    possibleValues.push(host.data?.creditCardHostFeePercent);
+  }
+
+  if (order.paymentMethod.service === 'paypal') {
+    // Configurable by the Host globally or at the Collective level
+    possibleValues.push(order.collective.data?.paypalHostFeePercent);
+    possibleValues.push(host.data?.paypalHostFeePercent);
+  }
+
+  // Default for Collective
+  possibleValues.push(order.collective.hostFeePercent);
+
+  // Just in case, default on the platform (not used in normal operation)
+  possibleValues.push(config.fees.default.hostPercent);
+
+  // Pick the first that is set as a Number
+  return possibleValues.find(isNumber);
 };
