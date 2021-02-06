@@ -14,7 +14,7 @@ import models from '../../../models';
 import {
   approveExpense,
   canDeleteExpense,
-  canEditExpense,
+  canVerifyDraftExpense,
   rejectExpense,
   scheduleExpenseForPayment,
   unapproveExpense,
@@ -159,7 +159,7 @@ const expenseMutations = {
               organizationData,
               throwIfExists: true,
               sendSignInLink: true,
-              redirect: `/${existingExpense.collective.slug}/expenses/${expenseId}?key=${existingExpense.data.draftKey}`,
+              redirect: `/${existingExpense.collective.slug}/expenses/${expenseId}`,
               creationRequest: {
                 ip: req.ip,
                 userAgent: req.header?.['user-agent'],
@@ -176,7 +176,7 @@ const expenseMutations = {
         await existingExpense.update({
           status: options.overrideRemoteUser?.id ? expenseStatus.UNVERIFIED : undefined,
           lastEditedById: options.overrideRemoteUser?.id || req.remoteUser?.id,
-          UserId: req.remoteUser?.id,
+          UserId: options.overrideRemoteUser?.id || req.remoteUser?.id,
         });
 
         return existingExpense;
@@ -233,7 +233,7 @@ const expenseMutations = {
         type: new GraphQLInputObjectType({
           name: 'ProcessExpensePaymentParams',
           description: 'Parameters for paying an expense',
-          fields: {
+          fields: () => ({
             paymentProcessorFee: {
               type: GraphQLInt,
               description:
@@ -247,7 +247,7 @@ const expenseMutations = {
               type: GraphQLString,
               description: '2FA code for if the host account has 2FA for payouts turned on.',
             },
-          },
+          }),
         }),
       },
     },
@@ -304,7 +304,7 @@ const expenseMutations = {
 
       if (!remoteUser) {
         throw new Unauthorized('You need to be logged in to create an expense');
-      } else if (!canUseFeature(remoteUser, FEATURE.EXPENSES)) {
+      } else if (!canUseFeature(remoteUser, FEATURE.USE_EXPENSES)) {
         throw new FeatureNotAllowedForUser();
       }
       if (size(expenseData.attachedFiles) > 15) {
@@ -399,11 +399,11 @@ const expenseMutations = {
         throw new NotFound('Expense not found');
       } else if (expense.status !== expenseStatus.DRAFT) {
         throw new Unauthorized('Expense was already submitted.');
-      } else if (!(await canEditExpense(req, expense))) {
+      } else if (!(await canVerifyDraftExpense(req, expense))) {
         throw new Unauthorized("You don't have the permission to edit this expense.");
       }
 
-      const inviteUrl = `${config.host.website}/${expense.collective.slug}/expenses/${expense.id}?key=${expense.data.draftKey}`;
+      const inviteUrl = `${config.host.website}/${expense.collective.slug}/expenses/${expense.id}`;
       expense
         .createActivity(activityType.COLLECTIVE_EXPENSE_INVITE_DRAFTED, req.remoteUser, { ...expense.data, inviteUrl })
         .catch(e => logger.error('An error happened when creating the COLLECTIVE_EXPENSE_INVITE_DRAFTED activity', e));
@@ -428,9 +428,7 @@ const expenseMutations = {
       const expense = await fetchExpenseWithReference(args.expense, { throwIfMissing: true });
       if (expense.status !== expenseStatus.UNVERIFIED) {
         throw new Unauthorized('Expense can not be verified.');
-      } else if (expense.data?.draftKey !== args.draftKey) {
-        throw new Unauthorized('The provided draft key is not correct.');
-      } else if (!(await canEditExpense(req, expense))) {
+      } else if (!(await canVerifyDraftExpense(req, expense))) {
         throw new Unauthorized("You don't have the permission to edit this expense.");
       }
       await expense.update({ status: expenseStatus.PENDING });

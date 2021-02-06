@@ -32,7 +32,7 @@
     "api": "http://localhost:3060",
     "website": "http://localhost:3000",
     "images": "https://images-staging.opencollective.com",
-    "invoices": "https://invoices-staging.opencollective.com"
+    "pdf": "https://pdf-staging.opencollective.com"
   },
   "fees": {
     "default": {
@@ -55,6 +55,9 @@
       "update": 10,
       "confirmToken": 15
     },
+    "sendGuestConfirmPerMinutePerEmail": 1,
+    "sendGuestConfirmPerMinutePerIp": 2,
+    "confirmGuestAccountPerMinutePerIp": 5,
     "maxNumberOfAppsPerUser": 15,
     "maxWebhooksPerUserPerCollective": 50,
     "searchEmailPerHour": 150,
@@ -100,9 +103,6 @@
   "github": {
     "clientID": "UNDEFINED_GITHUB_CLIENT_ID",
     "clientSecret": "UNDEFINED_GITHUB_CLIENT_SECRET"
-  },
-  "algolia": {
-    "index": "dvl_collectives"
   },
   "stripe": {
     "accountId": "acct_15vekcDjPFcHOcTm",
@@ -157,5 +157,8 @@
       "enabled": false,
       "ttl": 300
     }
+  },
+  "pdfService": {
+    "fetchTransactionsReceipts": false
   }
 }

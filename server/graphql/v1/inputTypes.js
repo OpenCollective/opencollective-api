@@ -10,8 +10,8 @@ import {
   GraphQLScalarType,
   GraphQLString,
 } from 'graphql';
-import GraphQLJSON from 'graphql-type-json';
 import { Kind } from 'graphql/language';
+import GraphQLJSON from 'graphql-type-json';
 
 import { DateString, IsoDateString, PayoutMethodTypeEnum } from './types';
 
@@ -269,6 +269,10 @@ export const TierInputType = new GraphQLInputObjectType({
     longDescription: {
       type: GraphQLString,
       description: 'A long, html-formatted description.',
+    },
+    useStandalonePage: {
+      type: GraphQLBoolean,
+      description: 'Whether this tier has a standalone page',
     },
     videoUrl: {
       type: GraphQLString,

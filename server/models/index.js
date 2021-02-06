@@ -26,6 +26,7 @@ export function setupModels(client) {
     'ExpenseAttachedFile',
     'ExpenseItem',
     'GuestToken',
+    'HostApplication',
     'LegalDocument',
     'Member',
     'MemberInvitation',
@@ -74,6 +75,7 @@ export function setupModels(client) {
 
   // GuestTokens
   m.GuestToken.belongsTo(m.Collective, { as: 'collective', foreignKey: 'CollectiveId' });
+  m.GuestToken.belongsTo(m.User, { as: 'user', foreignKey: 'UserId' });
 
   // Members
   m.Member.belongsTo(m.User, {

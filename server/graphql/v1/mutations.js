@@ -1,14 +1,10 @@
-import config from 'config';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
-import { pick } from 'lodash';
 
 import statuses from '../../constants/expense_status';
-import roles from '../../constants/roles';
-import emailLib from '../../lib/email';
-import logger from '../../lib/logger';
-import models, { sequelize } from '../../models';
+import models from '../../models';
 import { bulkCreateVirtualCards, createVirtualCardsForEmails } from '../../paymentProviders/opencollective/virtualcard';
 import { editPublicMessage } from '../common/members';
+import * as updateMutations from '../common/update';
 import { createUser } from '../common/user';
 import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../errors';
 
@@ -52,7 +48,6 @@ import {
 } from './mutations/orders';
 import * as paymentMethodsMutation from './mutations/paymentMethods';
 import { editTier, editTiers } from './mutations/tiers';
-import * as updateMutations from './mutations/updates';
 import { confirmUserEmail, updateUserEmail } from './mutations/users';
 import { ApplicationInputType, ApplicationType } from './Application';
 import { CollectiveInterfaceType } from './CollectiveInterface';
@@ -138,6 +133,7 @@ const mutations = {
   approveCollective: {
     type: CollectiveInterfaceType,
     description: 'Approve a collective',
+    deprecationReason: '2020-11-16: Please use API V2',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
@@ -148,6 +144,7 @@ const mutations = {
   rejectCollective: {
     type: CollectiveInterfaceType,
     description: 'Reject a collective',
+    deprecationReason: '2020-11-16: Please use API V2',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
       rejectionReason: { type: GraphQLString },
@@ -279,6 +276,7 @@ const mutations = {
   },
   approveExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
@@ -288,6 +286,7 @@ const mutations = {
   },
   unapproveExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
@@ -306,6 +305,7 @@ const mutations = {
   },
   payExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
       paymentProcessorFeeInCollectiveCurrency: { type: GraphQLInt },
@@ -344,7 +344,7 @@ const mutations = {
   },
   createExpense: {
     type: ExpenseType,
-    deprecationReason: '2020-09-17: Now using GQLV2 for that',
+    deprecationReason: '2020-09-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       expense: { type: new GraphQLNonNull(ExpenseInputType) },
     },
@@ -354,6 +354,7 @@ const mutations = {
   },
   editExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       expense: { type: new GraphQLNonNull(ExpenseInputType) },
     },
@@ -363,6 +364,7 @@ const mutations = {
   },
   deleteExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
@@ -372,6 +374,7 @@ const mutations = {
   },
   markExpenseAsUnpaid: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
       processorFeeRefunded: { type: new GraphQLNonNull(GraphQLBoolean) },
@@ -414,7 +417,7 @@ const mutations = {
       const collective = await models.Collective.findByPk(args.collectiveId);
       if (!collective) {
         throw new NotFound();
-      } else if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+      } else if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
         throw new Unauthorized();
       } else {
         await collective.editMembers(args.members, {
@@ -472,6 +475,7 @@ const mutations = {
   },
   createUpdate: {
     type: UpdateType,
+    deprecationReason: 'This endpoint has been moved to GQLV2',
     args: {
       update: {
         type: new GraphQLNonNull(UpdateInputType),
@@ -535,7 +539,13 @@ const mutations = {
         type: new GraphQLNonNull(CommentInputType),
       },
     },
-    resolve: commentMutations.createComment,
+    resolve: (_, args, req) => {
+      if (args['UpdateId']) {
+        throw new Error('Use QPI V2 to post comments on updates');
+      }
+
+      return commentMutations.createComment(_, args, req);
+    },
   },
   editComment: {
     type: CommentType,

@@ -99,10 +99,15 @@ async function checkOrdersLimit(order, reqIp) {
   }
 }
 
-const checkGuestContribution = order => {
+const checkGuestContribution = async (order, loaders) => {
   const { interval, guestInfo } = order;
 
-  if (!parseToBoolean(config.guestContributions.enable)) {
+  const collective = order.collective.id && (await loaders.Collective.byId.load(order.collective.id));
+  if (!collective) {
+    throw new Error('Guest contributions need to be made to an existing collective');
+  }
+
+  if (!parseToBoolean(config.guestContributions.enable) && !get(collective.settings, 'features.GUEST_CONTRIBUTIONS')) {
     throw new Error('Guest contributions are not enabled yet');
   } else if (interval) {
     throw new Error('You need to sign up to create a recurring contribution');
@@ -112,8 +117,10 @@ const checkGuestContribution = order => {
     throw new Error('You need to provide a valid email');
   } else if (!guestInfo.email && !guestInfo.token) {
     throw new Error('When contributing as a guest, you either need to provide an email or a token');
-  } else if (order.totalAmount > 5000) {
-    if (!guestInfo.name || !guestInfo.location?.address || !guestInfo.location.country) {
+  } else if (order.totalAmount > 25000) {
+    if (!guestInfo.name) {
+      throw new Error('Contributions that are more than $250 must have a name attached');
+    } else if (order.totalAmount > 500000 && (!guestInfo.location?.address || !guestInfo.location.country)) {
       throw new Error('Contributions that are more than $5000 must have an address attached');
     }
   }
@@ -121,19 +128,12 @@ const checkGuestContribution = order => {
 
 async function checkRecaptcha(order, remoteUser, reqIp) {
   // Disabled for all environments
-  if (['ci', 'test', 'development', 'production'].includes(config.env)) {
+  if (config.env.recaptcha && !parseToBoolean(config.env.recaptcha.enable)) {
     return;
   }
 
   if (!order.recaptchaToken) {
-    // Fail if Recaptcha is required
-    if (!remoteUser) {
-      debug('Recaptcha token missing');
-      throw new Error(
-        'Error while processing your request (Recaptcha token missing), please try again or contact support@opencollective.com',
-      );
-    }
-    // Otherwise, pass for now
+    // Pass for now
     return;
   }
 
@@ -218,7 +218,7 @@ export async function createOrder(order, loaders, remoteUser, reqIp) {
   if (remoteUser && !canUseFeature(remoteUser, FEATURE.ORDER)) {
     return new FeatureNotAllowedForUser();
   } else if (!remoteUser) {
-    checkGuestContribution(order);
+    await checkGuestContribution(order, loaders);
   }
 
   await checkOrdersLimit(order, reqIp);
@@ -355,12 +355,12 @@ export async function createOrder(order, loaders, remoteUser, reqIp) {
         throw new Error(`From collective id ${order.fromCollective.id} not found`);
       }
 
-      const possibleRoles = [roles.ADMIN];
+      const possibleRoles = [];
       if (fromCollective.type === types.ORGANIZATION) {
         possibleRoles.push(roles.MEMBER);
       }
 
-      if (!remoteUser?.hasRole(possibleRoles, order.fromCollective.id)) {
+      if (!remoteUser?.isAdminOfCollective(fromCollective) && !remoteUser?.hasRole(possibleRoles, fromCollective.id)) {
         // We only allow to add funds on behalf of a collective if the user is an admin of that collective or an admin of the host of the collective that receives the money
         const HostId = await collective.getHostCollectiveId();
         if (!remoteUser?.isAdmin(HostId)) {
@@ -596,16 +596,7 @@ export async function createOrder(order, loaders, remoteUser, reqIp) {
 }
 
 export async function confirmOrder(order, remoteUser, guestToken) {
-  if (!remoteUser) {
-    if (!parseToBoolean(config.guestContributions.enable)) {
-      throw new Unauthorized('You need to be logged in to confirm an order');
-    } else if (!guestToken) {
-      throw new Error('We could not authenticate your request');
-    } else {
-      const result = await loadGuestToken(guestToken);
-      remoteUser = result.user;
-    }
-  } else if (!canUseFeature(remoteUser, FEATURE.ORDER)) {
+  if (remoteUser && !canUseFeature(remoteUser, FEATURE.ORDER)) {
     return new FeatureNotAllowedForUser();
   }
 
@@ -621,9 +612,24 @@ export async function confirmOrder(order, remoteUser, guestToken) {
     ],
   });
 
+  if (!remoteUser) {
+    if (
+      !parseToBoolean(config.guestContributions.enable) &&
+      !get(order.collective, 'settings.features.GUEST_CONTRIBUTIONS')
+    ) {
+      throw new Unauthorized('You need to be logged in to confirm an order');
+    } else if (!guestToken) {
+      throw new Error('We could not authenticate your request');
+    } else {
+      const result = await loadGuestToken(guestToken);
+      remoteUser = result.user;
+    }
+  }
+
   if (!order) {
     throw new NotFound('Order not found');
   }
+
   if (!remoteUser.isAdmin(order.FromCollectiveId)) {
     throw new Unauthorized("You don't have permission to confirm this order");
   }
@@ -874,12 +880,17 @@ export async function addFundsToCollective(order, remoteUser) {
     fromCollective = await models.Collective.findByPk(order.fromCollective.id);
     if (!fromCollective) {
       throw new Error(`From collective id ${order.fromCollective.id} not found`);
-    } else if ([types.COLLECTIVE, types.EVENT].includes(fromCollective.type)) {
+    } else if (fromCollective.hasBudget()) {
+      // Make sure logged in user is admin of the source profile, unless it doesn't have a budget (user
+      // or host organization without budget activated). It's not an ideal solution though, as spammy
+      // hosts could still use this to pollute user's ledgers.
       const isAdminOfFromCollective = remoteUser.isRoot() || remoteUser.isAdmin(fromCollective.id);
       if (!isAdminOfFromCollective && fromCollective.HostCollectiveId !== host.id) {
         const fromCollectiveHostId = await fromCollective.getHostCollectiveId();
-        if (!remoteUser.isAdmin(fromCollectiveHostId)) {
-          throw new Error("You don't have the permission to add funds from collectives you don't own or host.");
+        if (!remoteUser.isAdmin(fromCollectiveHostId) && !host.data?.allowAddFundsFromAllAccounts) {
+          throw new Error(
+            "You don't have the permission to add funds from accounts you don't own or host. Please contact support@opencollective.com if you want to enable this.",
+          );
         }
       }
     }

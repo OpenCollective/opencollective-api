@@ -9,6 +9,7 @@ import request from 'request-promise';
 
 import * as connectedAccounts from '../controllers/connectedAccounts';
 import errors from '../lib/errors';
+import { confirmGuestAccount } from '../lib/guest-accounts';
 import logger from '../lib/logger';
 import { getTokenFromRequestHeaders } from '../lib/utils';
 import models from '../models';
@@ -131,6 +132,12 @@ export const _authenticateUserByJwt = async (req, res, next) => {
         }
       }
     }
+
+    // If a guest signs in, it's safe to directly confirm its account
+    if (!user.confirmedAt) {
+      await confirmGuestAccount(user);
+    }
+
     await user.update({
       // The login was accepted, we can update lastLoginAt. This will invalidate all older tokens.
       lastLoginAt: new Date(),
@@ -208,10 +215,6 @@ export const authenticateService = (req, res, next) => {
       .redirectUrl(req.remoteUser, req.query.CollectiveId, req.query)
       .then(redirectUrl => res.send({ redirectUrl }))
       .catch(next);
-  }
-
-  if (service === 'meetup') {
-    opts.scope = 'ageless';
   }
 
   return passport.authenticate(service, opts)(req, res, next);

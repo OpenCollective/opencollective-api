@@ -17,7 +17,7 @@ import models, { Op, sequelize } from '../../server/models';
 const query = `SELECT "Orders"."id"
   FROM "Orders", "Collectives", "Collectives" as "FromCollectives"
   WHERE "Orders"."CollectiveId" = "Collectives"."id" AND "FromCollectives"."id" = "Orders"."FromCollectiveId"
-  AND "Orders"."status" = 'ACTIVE'
+  AND "Orders"."status" IN ('ACTIVE', 'PAID')
   AND "Collectives"."settings"->'moderation'->'rejectedCategories' IS NOT NULL
   AND "FromCollectives"."data"->'categories' IS NOT NULL`;
 
@@ -43,7 +43,7 @@ const getContributorRejectedCategories = (fromCollective, collective) => {
   return intersection(rejectedCategories, contributorRejectedCategories);
 };
 
-async function run({ dryRun, limit } = {}) {
+async function run({ dryRun, limit, force } = {}) {
   let rows = await sequelize.query(query, { type: sequelize.QueryTypes.SELECT });
 
   if (rows.length > 0 && limit) {
@@ -54,6 +54,10 @@ async function run({ dryRun, limit } = {}) {
     const order = await models.Order.findByPk(row['id']);
     const collective = await models.Collective.findByPk(order.CollectiveId);
     const fromCollective = await models.Collective.findByPk(order.FromCollectiveId);
+
+    if (collective.slug === 'opencollective') {
+      continue;
+    }
 
     logger.info(`Checking order #${order.id} from #${fromCollective.slug} to #${collective.slug}`);
 
@@ -66,6 +70,9 @@ async function run({ dryRun, limit } = {}) {
 
     logger.info(`  - Found rejected categories: ${rejectedCategories.join(', ')}`);
 
+    let shouldMarkAsRejected = true;
+    let shouldNotifyContributor = true;
+
     // Retrieve latest transaction
     const transaction = await models.Transaction.findOne({
       where: {
@@ -74,6 +81,7 @@ async function run({ dryRun, limit } = {}) {
         createdAt: { [Op.gte]: sequelize.literal("NOW() - INTERVAL '30 days'") },
       },
       order: [['createdAt', 'DESC']],
+      include: [models.PaymentMethod],
     });
 
     if (transaction) {
@@ -81,24 +89,52 @@ async function run({ dryRun, limit } = {}) {
       // Refund transaction if not already refunded
       if (!transaction.RefundTransactionId) {
         logger.info(`  - Refunding transaction`);
+        const paymentMethodProvider = transaction.PaymentMethod
+          ? libPayments.findPaymentMethodProvider(transaction.PaymentMethod)
+          : null;
+        if (!paymentMethodProvider || !paymentMethodProvider.refundTransaction) {
+          if (force) {
+            logger.info(`  - refundTransaction not available. Creating refundTransaction in the database only.`);
+          } else {
+            logger.info(`  - refundTransaction not available. Use 'force' to refundTransaction in the database only.`);
+          }
+        }
         if (!dryRun) {
-          await libPayments.refundTransaction(transaction);
+          try {
+            if (paymentMethodProvider.refundTransaction) {
+              await libPayments.refundTransaction(transaction);
+            } else if (force) {
+              await libPayments.createRefundTransaction(transaction, 0, null);
+            }
+          } catch (e) {
+            if (e.message.includes('has already been refunded')) {
+              logger.info(`  - Transaction has already been refunded on Payment Provider`);
+              if (paymentMethodProvider && paymentMethodProvider.refundTransactionOnlyInDatabase) {
+                await paymentMethodProvider.refundTransactionOnlyInDatabase(transaction);
+              }
+            }
+          }
         }
       } else {
         logger.info(`  - Transaction already refunded`);
       }
     } else {
       logger.info(`  - No transaction found`);
+      if (order.status === 'PAID') {
+        shouldMarkAsRejected = false;
+        shouldNotifyContributor = false;
+      }
     }
 
-    // Mark the Order as rejected
-    logger.info(`  - Marking order #${order.id} as rejected `);
-    if (!dryRun) {
-      await order.update({ status: orderStatus.REJECTED });
+    // Mark the Order as rejected (only if we found a transaction to refund)
+    if (shouldMarkAsRejected) {
+      logger.info(`  - Marking order #${order.id} as rejected `);
+      if (!dryRun) {
+        await order.update({ status: orderStatus.REJECTED });
+      }
     }
 
     // Deactivate subscription
-
     if (order.SubscriptionId) {
       const subscription = await models.Subscription.findByPk(order.SubscriptionId);
       if (subscription) {
@@ -132,17 +168,18 @@ async function run({ dryRun, limit } = {}) {
       purgeCacheForCollective(fromCollective.slug);
     }
 
-    const activity = {
-      type: 'contribution.rejected',
-      data: {
-        collective: { name: collective.name },
-        rejectionReason: `${collective.name} banned some specific categories of contributors and there was a match with your profile.`,
-      },
-    };
-
-    logger.info(`  - Notifying admins of ${fromCollective.slug}`);
-    if (!dryRun) {
-      await notifyAdminsOfCollective(fromCollective.id, activity);
+    if (shouldNotifyContributor) {
+      const activity = {
+        type: 'contribution.rejected',
+        data: {
+          collective: { name: collective.name },
+          rejectionReason: `${collective.name} banned some specific categories of contributors and there was a match with your profile.`,
+        },
+      };
+      logger.info(`  - Notifying admins of ${fromCollective.slug}`);
+      if (!dryRun) {
+        await notifyAdminsOfCollective(fromCollective.id, activity);
+      }
     }
   }
 }
@@ -162,10 +199,17 @@ function parseCommandLineArguments() {
   parser.add_argument('-l', '--limit', {
     help: 'Total matching orders to process',
   });
+  parser.add_argument('--force', {
+    help: "Force refunds even if payment provider doesn't support it.",
+    default: false,
+    action: 'store_const',
+    const: true,
+  });
   const args = parser.parse_args();
   return {
     dryRun: args.dryrun,
     limit: args.limit,
+    force: args.force,
   };
 }
 

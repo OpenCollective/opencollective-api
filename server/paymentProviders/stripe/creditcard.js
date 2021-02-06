@@ -3,7 +3,7 @@ import { get, result } from 'lodash';
 
 import * as constants from '../../constants/transactions';
 import logger from '../../lib/logger';
-import * as paymentsLib from '../../lib/payments';
+import { createRefundTransaction, getHostFee, getPlatformFee } from '../../lib/payments';
 import stripe, { extractFees } from '../../lib/stripe';
 import models from '../../models';
 
@@ -110,8 +110,13 @@ const getOrCreateCustomerOnHostAccount = async (hostStripeAccount, { paymentMeth
  * See: Shared Customers: https://stripe.com/docs/connect/shared-customers
  */
 const createChargeAndTransactions = async (hostStripeAccount, { order, hostStripeCustomer }) => {
+  const host = await order.collective.getHostCollective();
+  const hostPlan = await host.getPlan();
+  const isSharedRevenue = !!hostPlan.hostFeeSharePercent;
+
   // Read or compute Platform Fee
-  const platformFee = paymentsLib.getPlatformFee(order);
+  const platformFee = await getPlatformFee(order.totalAmount, order, host, { hostPlan });
+  const platformTip = order.data?.platformFee;
 
   // Make sure data is available (breaking in some old tests)
   order.data = order.data || {};
@@ -183,9 +188,24 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
 
   // Create a Transaction
   const fees = extractFees(balanceTransaction);
-  const hostFeePercent = get(order, 'data.hostFeePercent', order.collective.hostFeePercent);
-  const feeOnTop = order.data?.platformFee || 0;
-  const hostFeeInHostCurrency = paymentsLib.calcFee(balanceTransaction.amount - feeOnTop, hostFeePercent);
+  const hostFeeInHostCurrency = await getHostFee(balanceTransaction.amount, order);
+  const data = {
+    charge,
+    balanceTransaction,
+    isFeesOnTop: order.data?.isFeesOnTop,
+    isSharedRevenue,
+    settled: true,
+    platformFee: platformFee,
+    platformTip,
+  };
+
+  let platformFeeInHostCurrency = fees.applicationFee;
+  if (isSharedRevenue) {
+    // Platform Fee In Host Currency makes no sense in the shared revenue model.
+    platformFeeInHostCurrency = platformTip || 0;
+    data.hostFeeSharePercent = hostPlan.hostFeeSharePercent;
+  }
+
   const payload = {
     CreatedByUserId: order.CreatedByUserId,
     FromCollectiveId: order.FromCollectiveId,
@@ -199,12 +219,12 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
       hostCurrency: balanceTransaction.currency,
       amountInHostCurrency: balanceTransaction.amount,
       hostCurrencyFxRate: balanceTransaction.amount / order.totalAmount,
-      hostFeeInHostCurrency,
-      platformFeeInHostCurrency: fees.applicationFee,
       paymentProcessorFeeInHostCurrency: fees.stripeFee,
       taxAmount: order.taxAmount,
       description: order.description,
-      data: { charge, balanceTransaction, isFeesOnTop: order.data?.isFeesOnTop },
+      hostFeeInHostCurrency,
+      platformFeeInHostCurrency,
+      data,
     },
   };
 
@@ -295,8 +315,9 @@ export default {
         'Your card was declined.',
         'Your card does not support this type of purchase.',
         'Your card has expired.',
-        "Your card's security code is incorrect",
+        "Your card's security code is incorrect.",
         'Your card number is incorrect.',
+        'The zip code you supplied failed validation.',
         'Invalid amount.',
         'Payment Intent require action',
       ];
@@ -367,7 +388,7 @@ export default {
     const fees = extractFees(refundBalance);
 
     /* Create negative transactions for the received transaction */
-    return await paymentsLib.createRefundTransaction(
+    return await createRefundTransaction(
       transaction,
       fees.stripeFee,
       {
@@ -404,7 +425,7 @@ export default {
     const fees = extractFees(refundBalance);
 
     /* Create negative transactions for the received transaction */
-    return await paymentsLib.createRefundTransaction(
+    return await createRefundTransaction(
       transaction,
       fees.stripeFee,
       { ...transaction.data, charge, refund, balanceTransaction: refundBalance },

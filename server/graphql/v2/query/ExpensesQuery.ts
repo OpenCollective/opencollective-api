@@ -153,7 +153,7 @@ const ExpensesQuery = {
         association: 'collective',
         attributes: [],
         required: true,
-        where: { HostCollectiveId: host.id },
+        where: { HostCollectiveId: host.id, approvedAt: { [Op.not]: null } },
       });
     }
 
@@ -219,7 +219,16 @@ const ExpensesQuery = {
         await updateFilterConditionsForReadyToPay(where, include);
       }
     } else {
-      where['status'] = { [Op.ne]: expenseStatus.DRAFT };
+      if (req.remoteUser) {
+        where[Op.and].push({
+          [Op.or]: [
+            { status: { [Op.notIn]: [expenseStatus.DRAFT] } },
+            { status: expenseStatus.DRAFT, UserId: req.remoteUser.id },
+          ],
+        });
+      } else {
+        where['status'] = { [Op.notIn]: [expenseStatus.DRAFT] };
+      }
     }
 
     const order = [[args.orderBy.field, args.orderBy.direction]];
