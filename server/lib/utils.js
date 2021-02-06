@@ -1,16 +1,18 @@
-import { padStart } from 'lodash';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { URL } from 'url';
 
-import config from 'config';
 import Promise from 'bluebird';
+import config from 'config';
 import pdf from 'html-pdf';
+import { cloneDeep, filter, get, isEqual, padStart, sumBy } from 'lodash';
 import sanitizeHtml from 'sanitize-html';
-import { get, cloneDeep, isEqual } from 'lodash';
 
+import errors from './errors';
 import handlebars from './handlebars';
+
+const { BadRequest } = errors;
 
 export function addParamsToUrl(url, obj) {
   const u = new URL(url);
@@ -366,16 +368,20 @@ export function exportToPDF(template, data, options) {
  * @param {"opensource" | null} category of the collective
  */
 export const defaultHostCollective = category => {
-  if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
+  if (config.env === 'production' || config.env === 'staging') {
     if (category === 'opensource') {
       return { id: 772, CollectiveId: 11004, ParentCollectiveId: 83 }; // Open Source Host Collective
+    } else if (category === 'foundation') {
+      return { CollectiveId: 11049 };
     } else {
       return {}; // Don't automatically assign a host anymore
     }
   }
-  if (process.env.NODE_ENV === 'development' || process.env.E2E_TEST) {
+  if (config.env === 'development' || process.env.E2E_TEST) {
     if (category === 'opensource') {
       return { CollectiveId: 9805, ParentCollectiveId: 83 }; // Open Source Host Collective
+    } else if (category === 'foundation') {
+      return { CollectiveId: 9805 };
     } else {
       return {}; // Don't automatically assign a host anymore
     }
@@ -517,21 +523,6 @@ export function isUUID(str) {
   return str.length === 36 && str.match(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i);
 }
 
-export function hashCode(str) {
-  let hash = 0,
-    i,
-    chr;
-  if (str.length === 0) {
-    return hash;
-  }
-  for (i = 0; i < str.length; i++) {
-    chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-}
-
 /** Sleeps for MS milliseconds */
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -560,6 +551,11 @@ export function promiseSeq(arr, predicate, consecutive = 100) {
 }
 
 export function parseToBoolean(value) {
+  // If value is already a boolean, don't bother converting it
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
   let lowerValue = value;
   // check whether it's string
   if (lowerValue && (typeof lowerValue === 'string' || lowerValue instanceof String)) {
@@ -591,6 +587,8 @@ export const cleanTags = tags => {
 };
 
 export const md5 = value => crypto.createHash('md5').update(value).digest('hex');
+
+export const sha512 = value => crypto.createHash('sha512').update(value).digest('hex');
 
 /**
  * Filter `list` with `filterFunc` until `conditionFunc` returns true.
@@ -626,3 +624,21 @@ export const toIsoDateStr = date => {
   const day = date.getUTCDate();
   return `${year}-${padStart(month.toString(), 2, '0')}-${padStart(day.toString(), 2, '0')}`;
 };
+
+export const getTokenFromRequestHeaders = req => {
+  const header = req.headers && req.headers.authorization;
+  if (!header) {
+    return null;
+  }
+
+  const parts = header.split(' ');
+  const scheme = parts[0];
+  const token = parts[1];
+  if (!/^Bearer$/i.test(scheme) || !token) {
+    throw new BadRequest('Format is Authorization: Bearer [token]');
+  }
+
+  return token;
+};
+
+export const sumByWhen = (vector, iteratee, predicate) => sumBy(filter(vector, predicate), iteratee);

@@ -1,15 +1,17 @@
-import config from 'config';
-import jwt from 'jsonwebtoken';
-import axios from 'axios';
-import debugLib from 'debug';
-import { get } from 'lodash';
 import { URLSearchParams } from 'url';
 
-import models from '../../models';
+import axios from 'axios';
+import config from 'config';
+import debugLib from 'debug';
+import jwt from 'jsonwebtoken';
+import { get } from 'lodash';
+
 import errors from '../../lib/errors';
-import creditcard from './creditcard';
-import { addParamsToUrl } from '../../lib/utils';
 import stripe from '../../lib/stripe';
+import { addParamsToUrl } from '../../lib/utils';
+import models from '../../models';
+
+import creditcard from './creditcard';
 
 const debug = debugLib('stripe');
 
@@ -118,7 +120,7 @@ export default {
        * with the default currency of the bank account connected to the stripe account and legal address
        * @param {*} connectedAccount
        */
-      const updateHost = connectedAccount => {
+      const updateHost = async connectedAccount => {
         if (!connectedAccount) {
           console.error('>>> updateHost: error: no connectedAccount');
         }
@@ -140,9 +142,15 @@ export default {
           addressLines.push(address.country);
           collective.address = addressLines.join('\n');
         }
-        collective.currency = account.default_currency.toUpperCase();
+
+        // Adds the opencollective payment method to enable the host to allocate funds to collectives
+        // Note that it's not expected anymore to connect Stripe if you're not an host
+        // await collective.becomeHost({ remoteUser: { id: CreatedByUserId } });
+
+        await collective.setCurrency(account.default_currency.toUpperCase());
+
         collective.timezone = collective.timezone || account.timezone;
-        collective.becomeHost(); // adds the opencollective payment method to enable the host to allocate funds to collectives
+
         return collective.save();
       };
 
@@ -186,7 +194,8 @@ export default {
   webhook: requestBody => {
     // Stripe sends test events to production as well
     // don't do anything if the event is not livemode
-    if (process.env.NODE_ENV === 'production' && !requestBody.livemode) {
+    // NOTE: not using config.env because of ugly tests
+    if (process.env.OC_ENV === 'production' && !requestBody.livemode) {
       return Promise.resolve();
     }
     /**

@@ -1,8 +1,10 @@
-import { GraphQLString, GraphQLObjectType } from 'graphql';
+import { GraphQLList, GraphQLObjectType, GraphQLString } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
-import { Account } from '../interface/Account';
-import { getIdEncodeResolver } from '../identifiers';
+import { GraphQLJSON } from 'graphql-type-json';
+
 import { collectiveResolver, fromCollectiveResolver, getStripTagsResolver } from '../../common/comment';
+import { getIdEncodeResolver } from '../identifiers';
+import { Account } from '../interface/Account';
 
 const Comment = new GraphQLObjectType({
   name: 'Comment',
@@ -30,6 +32,22 @@ const Comment = new GraphQLObjectType({
       account: {
         type: Account,
         resolve: collectiveResolver,
+      },
+      reactions: {
+        type: GraphQLJSON,
+        description: 'Returns a map of reactions counts for this comment',
+        async resolve(comment, args, req) {
+          return await req.loaders.Comment.reactionsByCommentId.load(comment.id);
+        },
+      },
+      userReactions: {
+        type: new GraphQLList(GraphQLString),
+        description: 'Returns the list of reactions added to this comment by logged in user',
+        async resolve(comment, args, req) {
+          if (req.remoteUser) {
+            return req.loaders.Comment.remoteUserReactionsByCommentId.load(comment.id);
+          }
+        },
       },
       // Deprecated
       fromCollective: {
