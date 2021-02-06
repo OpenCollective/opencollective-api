@@ -7,11 +7,11 @@
 import sinon from 'sinon';
 import { v4 as uuid } from 'uuid';
 
-/* Libraries that create the objects */
-import models from '../../server/models';
 import * as expenses from '../../server/graphql/v1/mutations/expenses';
 import * as libpayments from '../../server/lib/payments';
-
+/* Libraries that create the objects */
+import models from '../../server/models';
+import { randStr } from '../test-helpers/fake-data';
 import * as utils from '../utils';
 
 /** Randomize email since it's a unique key in the database
@@ -27,9 +27,7 @@ import * as utils from '../utils';
  */
 export function randEmail(email = 'test-user@emailprovider.com') {
   const [user, domain] = email.replace(/\s/g, '-').split('@');
-  const rand = Math.random()
-    .toString(36)
-    .substring(2, 15);
+  const rand = Math.random().toString(36).substring(2, 15);
   return `${user}-${rand}@${domain}`;
 }
 
@@ -154,7 +152,7 @@ export async function newOrganization(orgData, adminUser) {
  *  `hostAdmin`, and `collective`.
  */
 export async function newCollectiveWithHost(name, currency, hostCurrency, hostFee, user = null, data = {}) {
-  name = name || uuid();
+  name = name || randStr();
   const { hostAdmin, hostCollective } = await newHost(`${name} Host`, hostCurrency, hostFee, { currency });
   const slug = slugify(name);
   const { hostFeePercent } = hostCollective;
