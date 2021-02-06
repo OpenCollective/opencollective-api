@@ -1,10 +1,8 @@
-import fs from 'fs';
-
 import config from 'config';
 import HelloWorks from 'helloworks-sdk';
 import { get } from 'lodash';
 
-import s3 from '../lib/awsS3';
+import { uploadToS3 } from '../lib/awsS3';
 import { secretbox } from '../lib/encryption';
 import logger from '../lib/logger';
 import models from '../models';
@@ -23,6 +21,14 @@ const HELLO_WORKS_WORKFLOW_ID = get(config, 'helloworks.workflowId');
 
 const HELLO_WORKS_S3_BUCKET = get(config, 'helloworks.aws.s3.bucket');
 const ENCRYPTION_KEY = get(config, 'helloworks.documentEncryptionKey');
+
+// Put legacy workflows here
+const SUPPORTED_WORKFLOWS = new Set([
+  HELLO_WORKS_WORKFLOW_ID,
+  'MfmOZErmhz1qPgMp',
+  'MkFBvG39RIA61OnD',
+  'qdUbX5nw8sMZzykz',
+]);
 
 function processMetadata(metadata) {
   // Check if metadata is malformed
@@ -53,7 +59,7 @@ async function callback(req, res) {
   } = req;
 
   const metadata = processMetadata(metadataReceived);
-  if (status && status === 'completed' && workflowId == HELLO_WORKS_WORKFLOW_ID) {
+  if (status && status === 'completed' && SUPPORTED_WORKFLOWS.has(workflowId)) {
     const { userId, accountId, email, year } = metadata;
     const documentId = Object.keys(data)[0];
     const documentType = US_TAX_FORM;
@@ -92,7 +98,7 @@ async function callback(req, res) {
     return client.workflowInstances
       .getInstanceDocument({ instanceId: id, documentId })
       .then(buff => Promise.resolve(secretbox.encrypt(buff, ENCRYPTION_KEY)))
-      .then(buffer => uploadToS3(buffer, { id: collective.name, year, documentType: US_TAX_FORM }))
+      .then(buffer => uploadTaxFormToS3(buffer, { id: collective.name, year, documentType: US_TAX_FORM }))
       .then(({ Location: location }) => {
         doc.requestStatus = RECEIVED;
         doc.documentLink = location;
@@ -110,31 +116,11 @@ async function callback(req, res) {
   }
 }
 
-function uploadToS3(buffer, { id, year, documentType }) {
+function uploadTaxFormToS3(buffer, { id, year, documentType }) {
   const bucket = HELLO_WORKS_S3_BUCKET;
   const key = createTaxFormFilename({ id, year, documentType });
 
-  if (!s3) {
-    // s3 may not be set in a dev env
-    logger.error('s3 is not set, saving file to temp folder. This should only be done in development');
-    saveFileToTempStorage({ filename: key, buffer });
-    return Promise.resolve({ Location: key });
-  }
-
-  return new Promise((resolve, reject) => {
-    s3.upload({ Body: buffer, Bucket: bucket, Key: key }, (err, data) => {
-      if (err) {
-        logger.error('error uploading file to s3: ', err);
-        reject();
-      } else {
-        resolve(data);
-      }
-    });
-  });
-}
-
-function saveFileToTempStorage({ buffer, filename }) {
-  fs.writeFile(`/tmp/${filename}`, buffer, logger.info);
+  return uploadToS3({ Body: buffer, Bucket: bucket, Key: key });
 }
 
 function createTaxFormFilename({ id, year, documentType }) {

@@ -8,6 +8,7 @@ import {
 } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
 
+import orderStatus from '../../../constants/order_status';
 import models from '../../../models';
 import * as TransactionLib from '../../common/transactions';
 import { TransactionType } from '../enum/TransactionType';
@@ -22,7 +23,7 @@ import { Account } from './Account';
 const TransactionPermissions = new GraphQLObjectType({
   name: 'TransactionPermissions',
   description: 'Fields for the user permissions on an transaction',
-  fields: {
+  fields: () => ({
     canRefund: {
       type: new GraphQLNonNull(GraphQLBoolean),
       description: 'Whether the current user can edit the transaction',
@@ -33,7 +34,12 @@ const TransactionPermissions = new GraphQLObjectType({
       description: "Whether the current user can download this transaction's invoice",
       resolve: TransactionLib.canDownloadInvoice,
     },
-  },
+    canReject: {
+      type: new GraphQLNonNull(GraphQLBoolean),
+      description: 'Whether the current user can reject the transaction',
+      resolve: TransactionLib.canReject,
+    },
+  }),
 });
 
 export const Transaction = new GraphQLInterfaceType({
@@ -112,6 +118,12 @@ export const Transaction = new GraphQLInterfaceType({
       },
       permissions: {
         type: TransactionPermissions,
+      },
+      isOrderRejected: {
+        type: new GraphQLNonNull(GraphQLBoolean),
+      },
+      refundTransaction: {
+        type: Transaction,
       },
     };
   },
@@ -271,6 +283,23 @@ export const TransactionFields = () => {
         return transaction.UsingVirtualCardFromCollectiveId
           ? await req.loaders.Collective.byId.load(transaction.UsingVirtualCardFromCollectiveId)
           : null;
+      },
+    },
+    isOrderRejected: {
+      type: new GraphQLNonNull(GraphQLBoolean),
+      async resolve(transaction, _, req) {
+        if (transaction.OrderId) {
+          const order = await req.loaders.Order.byId.load(transaction.OrderId);
+          return order.status === orderStatus.REJECTED;
+        } else {
+          return false;
+        }
+      },
+    },
+    refundTransaction: {
+      type: Transaction,
+      resolve(transaction) {
+        return transaction.getRefundTransaction();
       },
     },
   };

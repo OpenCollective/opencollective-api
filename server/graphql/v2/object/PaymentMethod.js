@@ -64,7 +64,18 @@ export const PaymentMethod = new GraphQLObjectType({
       account: {
         type: Account,
         resolve(paymentMethod, _, req) {
-          return req.loaders.Collective.byId.load(paymentMethod.CollectiveId);
+          if (paymentMethod.CollectiveId) {
+            return req.loaders.Collective.byId.load(paymentMethod.CollectiveId);
+          }
+        },
+      },
+      sourcePaymentMethod: {
+        type: PaymentMethod,
+        description: 'For gift cards, this field will return to the source payment method',
+        resolve(paymentMethod, _, req) {
+          if (paymentMethod.SourcePaymentMethodId && req.remoteUser?.isAdmin(paymentMethod.CollectiveId)) {
+            return req.loaders.PaymentMethod.byId.load(paymentMethod.SourcePaymentMethodId);
+          }
         },
       },
       data: {
@@ -76,7 +87,7 @@ export const PaymentMethod = new GraphQLObjectType({
 
           // Protect and whitelist fields for virtualcard
           if (paymentMethod.type === 'virtualcard') {
-            if (!req.remoteUser || !req.remoteUser.isAdmin(paymentMethod.CollectiveId)) {
+            if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(paymentMethod.CollectiveId)) {
               return null;
             }
             return pick(paymentMethod.data, ['email']);

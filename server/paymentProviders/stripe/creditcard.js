@@ -3,7 +3,7 @@ import { get, result } from 'lodash';
 
 import * as constants from '../../constants/transactions';
 import logger from '../../lib/logger';
-import * as paymentsLib from '../../lib/payments';
+import { createRefundTransaction, getHostFee, getPlatformFee } from '../../lib/payments';
 import stripe, { extractFees } from '../../lib/stripe';
 import models from '../../models';
 
@@ -110,8 +110,13 @@ const getOrCreateCustomerOnHostAccount = async (hostStripeAccount, { paymentMeth
  * See: Shared Customers: https://stripe.com/docs/connect/shared-customers
  */
 const createChargeAndTransactions = async (hostStripeAccount, { order, hostStripeCustomer }) => {
+  const host = await order.collective.getHostCollective();
+  const hostPlan = await host.getPlan();
+  const isSharedRevenue = !!hostPlan.hostFeeSharePercent;
+
   // Read or compute Platform Fee
-  const platformFee = paymentsLib.getPlatformFee(order);
+  const platformFee = await getPlatformFee(order.totalAmount, order, host, { hostPlan });
+  const platformTip = order.data?.platformFee;
 
   // Make sure data is available (breaking in some old tests)
   order.data = order.data || {};
@@ -175,13 +180,6 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
     throw new Error(UNKNOWN_ERROR_MSG);
   }
 
-  // Success: delete reference to paymentIntent
-  // TODO: paymentIntent should be later removed anyway on success, see subscriptions.js and orders.js
-  if (order.data.paymentIntent) {
-    delete order.data.paymentIntent;
-    await order.update({ data: order.data });
-  }
-
   const charge = paymentIntent.charges.data[0];
 
   const balanceTransaction = await stripe.balanceTransactions.retrieve(charge.balance_transaction, {
@@ -190,9 +188,24 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
 
   // Create a Transaction
   const fees = extractFees(balanceTransaction);
-  const hostFeePercent = get(order, 'data.hostFeePercent', order.collective.hostFeePercent);
-  const feeOnTop = order.data?.platformFee || 0;
-  const hostFeeInHostCurrency = paymentsLib.calcFee(balanceTransaction.amount - feeOnTop, hostFeePercent);
+  const hostFeeInHostCurrency = await getHostFee(balanceTransaction.amount, order);
+  const data = {
+    charge,
+    balanceTransaction,
+    isFeesOnTop: order.data?.isFeesOnTop,
+    isSharedRevenue,
+    settled: true,
+    platformFee: platformFee,
+    platformTip,
+  };
+
+  let platformFeeInHostCurrency = fees.applicationFee;
+  if (isSharedRevenue) {
+    // Platform Fee In Host Currency makes no sense in the shared revenue model.
+    platformFeeInHostCurrency = platformTip || 0;
+    data.hostFeeSharePercent = hostPlan.hostFeeSharePercent;
+  }
+
   const payload = {
     CreatedByUserId: order.CreatedByUserId,
     FromCollectiveId: order.FromCollectiveId,
@@ -206,12 +219,12 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
       hostCurrency: balanceTransaction.currency,
       amountInHostCurrency: balanceTransaction.amount,
       hostCurrencyFxRate: balanceTransaction.amount / order.totalAmount,
-      hostFeeInHostCurrency,
-      platformFeeInHostCurrency: fees.applicationFee,
       paymentProcessorFeeInHostCurrency: fees.stripeFee,
       taxAmount: order.taxAmount,
       description: order.description,
-      data: { charge, balanceTransaction, isFeesOnTop: order.data?.isFeesOnTop },
+      hostFeeInHostCurrency,
+      platformFeeInHostCurrency,
+      data,
     },
   };
 
@@ -302,8 +315,9 @@ export default {
         'Your card was declined.',
         'Your card does not support this type of purchase.',
         'Your card has expired.',
-        "Your card's security code is incorrect",
+        "Your card's security code is incorrect.",
         'Your card number is incorrect.',
+        'The zip code you supplied failed validation.',
         'Invalid amount.',
         'Payment Intent require action',
       ];
@@ -317,7 +331,7 @@ export default {
         // This object cannot be accessed right now because another API request or Stripe process is currently accessing it.
         // If you see this error intermittently, retry the request.
         // If you see this error frequently and are making multiple concurrent requests to a single object, make your requests serially or at a lower rate.
-        'This object cannot be accessed right now because another API request.':
+        'This object cannot be accessed right now because another API request or Stripe process is currently accessing it.':
           'Payment Processing error (API request).',
         // You cannot confirm this PaymentIntent because it's missing a payment method.
         // To confirm the PaymentIntent with cus_9cNHqpdWYOV4aH, specify a payment method attached to this customer along with the customer ID.
@@ -326,6 +340,12 @@ export default {
         // You have exceeded the maximum number of declines on this card in the last 24 hour period.
         // Please contact us via https://support.stripe.com/contact if you need further assistance.
         'You have exceeded the maximum number of declines on this card': 'Your card was declined.',
+        // An error occurred while processing your card. Try again in a little bit.
+        'An error occurred while processing your card.': 'Payment Processing error (API error).',
+        // This account cannot currently make live charges.
+        // If you are a customer trying to make a purchase, please contact the owner of this site.
+        // Your transaction has not been processed.
+        'This account cannot currently make live charges.': 'Payment Processing error (Host error).',
       };
       const errorKey = Object.keys(identifiedErrors).find(errorMessage => error.message.includes(errorMessage));
       if (errorKey) {
@@ -368,7 +388,7 @@ export default {
     const fees = extractFees(refundBalance);
 
     /* Create negative transactions for the received transaction */
-    return await paymentsLib.createRefundTransaction(
+    return await createRefundTransaction(
       transaction,
       fees.stripeFee,
       {
@@ -405,7 +425,7 @@ export default {
     const fees = extractFees(refundBalance);
 
     /* Create negative transactions for the received transaction */
-    return await paymentsLib.createRefundTransaction(
+    return await createRefundTransaction(
       transaction,
       fees.stripeFee,
       { ...transaction.data, charge, refund, balanceTransaction: refundBalance },
