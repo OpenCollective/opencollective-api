@@ -89,6 +89,7 @@ export const fakeCollective = async (collectiveData = {}) => {
     hostFeePercent: 10,
     tags: [randStr(), randStr()],
     isActive: true,
+    approvedAt: collectiveData.HostCollectiveId ? new Date() : null,
     ...collectiveData,
   });
 
@@ -423,6 +424,7 @@ export const fakeTransaction = async (transactionData = {}) => {
     hostCurrencyFxRate: 1,
     netAmountInCollectiveCurrency: amount,
     amountInHostCurrency: amount,
+    TransactionGroup: uuid(),
     ...transactionData,
     amount,
     CreatedByUserId,

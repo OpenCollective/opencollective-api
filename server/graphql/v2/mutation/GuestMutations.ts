@@ -3,7 +3,7 @@ import { GraphQLBoolean, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQL
 
 import { TOKEN_EXPIRATION_SESSION } from '../../../lib/auth';
 import emailLib from '../../../lib/email';
-import { confirmGuestAccount } from '../../../lib/guest-accounts';
+import { confirmGuestAccountByEmail } from '../../../lib/guest-accounts';
 import RateLimit from '../../../lib/rate-limit';
 import models from '../../../models';
 import { BadRequest, NotFound, RateLimitExceeded } from '../../errors';
@@ -13,7 +13,7 @@ import EmailAddress from '../scalar/EmailAddress';
 const ConfirmGuestAccountResponse = new GraphQLObjectType({
   name: 'ConfirmGuestAccountResponse',
   description: 'Response for the confirmGuestAccount mutation',
-  fields: {
+  fields: () => ({
     account: {
       type: new GraphQLNonNull(Account),
       description: 'The validated account',
@@ -22,7 +22,7 @@ const ConfirmGuestAccountResponse = new GraphQLObjectType({
       type: new GraphQLNonNull(GraphQLString),
       description: 'A token that can be used to sign in',
     },
-  },
+  }),
 });
 
 const guestMutations = {
@@ -82,11 +82,16 @@ const guestMutations = {
 
       // Send email
       const encodedEmail = encodeURIComponent(user.email);
-      await emailLib.send('confirm-guest-account', user.email, {
-        email: user.email,
-        verifyAccountLink: `${config.host.website}/confirm/guest/${user.emailConfirmationToken}?email=${encodedEmail}`,
-        clientIp: req.ip,
-      });
+      await emailLib.send(
+        'confirm-guest-account',
+        user.email,
+        {
+          email: user.email,
+          verifyAccountLink: `${config.host.website}/confirm/guest/${user.emailConfirmationToken}?email=${encodedEmail}`,
+          clientIp: req.ip,
+        },
+        { sendEvenIfNotProduction: true },
+      );
 
       return true;
     },
@@ -129,7 +134,7 @@ const guestMutations = {
         throw new Error('Cannot link more than 30 profiles at the same time');
       }
 
-      const { user, collective } = await confirmGuestAccount(
+      const { user, collective } = await confirmGuestAccountByEmail(
         <string>args.email,
         <string>args.emailConfirmationToken,
         <string[]>args.guestTokens,

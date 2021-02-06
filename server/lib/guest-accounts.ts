@@ -4,7 +4,7 @@ import { isEmpty } from 'lodash';
 import { v4 as uuid } from 'uuid';
 
 import { types as COLLECTIVE_TYPE } from '../constants/collectives';
-import { BadRequest, InvalidToken, NotFound } from '../graphql/errors';
+import { BadRequest, InvalidToken, NotFound, Unauthorized } from '../graphql/errors';
 import models, { Op, sequelize } from '../models';
 
 import { mergeCollectives } from './collectivelib';
@@ -59,37 +59,47 @@ const createGuestProfile = (
   }
 
   return sequelize.transaction(async transaction => {
-    // Create the public guest profile
-    const collective = await models.Collective.create(
-      {
-        type: COLLECTIVE_TYPE.USER,
-        slug: `guest-${uuid().split('-')[0]}`,
-        name: name ?? DEFAULT_GUEST_NAME,
-        data: { isGuest: true },
-        address: location?.address,
-        countryISO: location?.country,
-      },
-      { transaction },
-    );
-
     // Create (or fetch) the user associated with the email
-    let user = await models.User.findOne({ where: { email } }, { transaction });
+    let user, collective;
+    user = await models.User.findOne({ where: { email } }, { transaction });
     if (!user) {
       user = await models.User.create(
         {
           email,
           confirmedAt: null,
-          CollectiveId: collective.id,
           emailConfirmationToken,
         },
         { transaction },
       );
     } else if (user.confirmedAt) {
       // We only allow to re-use the same User without token if it's not verified.
-      throw new Error('An account already exists for this email, please sign in.');
+      throw new Unauthorized(
+        'An account already exists for this email, please sign in.',
+        'ACCOUNT_EMAIL_ALREADY_EXISTS',
+      );
+    } else if (user.CollectiveId) {
+      collective = await models.Collective.findByPk(user.CollectiveId, { transaction });
     }
 
-    await collective.update({ CreatedByUserId: user.id }, { transaction });
+    // Create the public guest profile
+    if (!collective) {
+      collective = await models.Collective.create(
+        {
+          type: COLLECTIVE_TYPE.USER,
+          slug: `guest-${uuid().split('-')[0]}`,
+          name: name || DEFAULT_GUEST_NAME,
+          data: { isGuest: true },
+          address: location?.address,
+          countryISO: location?.country,
+          CreatedByUserId: user.id,
+        },
+        { transaction },
+      );
+    }
+
+    if (!user.CollectiveId) {
+      await user.update({ CollectiveId: collective.id }, { transaction });
+    }
 
     // Create the token that will be used to authenticate future contributions for
     // this guest profile
@@ -130,7 +140,7 @@ const getGuestProfileFromToken = async (tokenValue, { email, name, location }): 
 
   if (user.confirmedAt) {
     // Account exists & user is confirmed => need to sign in
-    throw new Error('An account already exists for this email, please sign in.');
+    throw new Unauthorized('An account already exists for this email, please sign in.', 'ACCOUNT_EMAIL_ALREADY_EXISTS');
   } else if (email && user.email !== email.trim()) {
     // The user is making a new guest contribution from the same browser but with
     // a different email. For now the behavior is to ignore the existing guest profile
@@ -172,15 +182,14 @@ export const getOrCreateGuestProfile = async ({
 };
 
 export const confirmGuestAccount = async (
-  email: string,
-  emailConfirmationToken: string,
+  user: typeof models.User,
   guestTokensValues?: string[] | null,
 ): Promise<{
   collective: typeof models.Collective;
   user: typeof models.User;
 }> => {
   // 1. Mark user as confirmed
-  const user = await markUserAsConfirmed(email, emailConfirmationToken);
+  await user.update({ emailConfirmationToken: null, confirmedAt: new Date() });
 
   // 2. Update the profile (collective)
   const userCollective = await user.getCollective();
@@ -205,7 +214,14 @@ export const confirmGuestAccount = async (
   return { user, collective: userCollective };
 };
 
-const markUserAsConfirmed = async (email, emailConfirmationToken) => {
+export const confirmGuestAccountByEmail = async (
+  email: string,
+  emailConfirmationToken: string,
+  guestTokensValues?: string[] | null,
+): Promise<{
+  collective: typeof models.Collective;
+  user: typeof models.User;
+}> => {
   const user = await models.User.findOne({ where: { email } });
   if (!user) {
     throw new NotFound(`No account found for ${email}`, null, { internalData: { emailConfirmationToken } });
@@ -219,7 +235,7 @@ const markUserAsConfirmed = async (email, emailConfirmationToken) => {
     });
   }
 
-  return user.update({ emailConfirmationToken: null, confirmedAt: new Date() });
+  return confirmGuestAccount(user, guestTokensValues);
 };
 
 const linkOtherGuestProfiles = async (user, userCollective, guestTokensValues) => {

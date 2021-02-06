@@ -1,3 +1,7 @@
+import fs from 'fs';
+import path from 'path';
+
+import bayes from 'bayes';
 import { clamp } from 'lodash';
 
 import slackLib, { OPEN_COLLECTIVE_SLACK_CHANNEL } from '../lib/slack';
@@ -16,6 +20,13 @@ export type SpamAnalysisReport = {
   keywords: string[];
   /** Detected blocked domains */
   domains: string[];
+  /** Result of the Bayes check, spam or ham */
+  bayes: string;
+};
+
+export type BayesClassifier = {
+  /** Categorize a content string */
+  categorize: Function;
 };
 
 // Watched content
@@ -71,14 +82,17 @@ export const SPAMMERS_DOMAINS = [
   'allnutritionhub.com',
   'allsupplementshop.com',
   'amazonhealthmart.com',
+  'anyflip.com',
   'apnews.com',
   'atozfitnesstalks.com',
   'avengersdiet.com',
+  'bebee.com',
   'benzinga.com',
   'bhitmagazine.com.ng',
   'biznutra.com',
   'biznutrition.com',
   'bollyshake.com',
+  'bonfire.com',
   'bumpsweat.com',
   'buypurelifeketo.com',
   'buzrush.com',
@@ -91,6 +105,7 @@ export const SPAMMERS_DOMAINS = [
   'completefoods.co',
   'consultbestastro.com',
   'copymethat.com',
+  'coub.com',
   'create.arduino.cc',
   'creativehealthcart.com',
   'csopartnership.org',
@@ -106,7 +121,9 @@ export const SPAMMERS_DOMAINS = [
   'dragonsdenketo.com',
   'dridainfotech.com',
   'edu-24.info',
+  'elitecaretreatment.com',
   'faqssupplement.com',
+  'feedsfloor.com',
   'fitcareketo.com',
   'fitdiettrends.com',
   'fitnesscarezone.com',
@@ -114,15 +131,19 @@ export const SPAMMERS_DOMAINS = [
   'fitnessmegamart.com',
   'fitnessprocentre.com',
   'fitpedia.org',
+  'getyouroffers.xyz',
   'givebutter.com',
   'health4trend.com',
+  'healthcarthub.com',
   'healthline.com',
   'healthlinenutrition.com',
   'healthmassive.com',
+  'healthmife.com',
   'healthonlinecare.com',
   'healthsupplementcart.com',
   'healthtalkrev.blogspot.com',
   'healthtalkrev.com',
+  'healthtalkrevfacts.blogspot.com',
   'healthverbs.com',
   'healthyaustralia.com.au',
   'healthycliq.com',
@@ -140,6 +161,7 @@ export const SPAMMERS_DOMAINS = [
   'identifyscam.com',
   'innovationdiet.com',
   'insta-keto.org',
+  'ipsnews.net',
   'isajain.com',
   'janvhikapoor.com',
   'justgiving.com',
@@ -154,6 +176,7 @@ export const SPAMMERS_DOMAINS = [
   'ketofasttrim.com',
   'ketofitstore.com',
   'ketogenicdietpills.com',
+  'ketogenicsupplementsreview.com',
   'ketohour.com',
   'ketopiller.com',
   'ketoplanusa.com',
@@ -166,6 +189,9 @@ export const SPAMMERS_DOMAINS = [
   'ketotrin.info',
   'ketovatrudiet.info',
   'ketoviante.info',
+  'ktc.instructure.com',
+  'lakubet.co',
+  'lunaireketobhb.blogspot.com',
   'mafiatek.my.id',
   'maleenhancementtips.com',
   'mariamd.com',
@@ -176,15 +202,19 @@ export const SPAMMERS_DOMAINS = [
   'merchantcircle.com',
   'minimore.com',
   'morioh.com',
+  'mrxmaleenhancement-point.blogspot.com',
   'muckrack.com',
   'myfitnesspharm.com',
   'myshorturl.net',
   'myunbiasedreview.wordpress.com',
   'naturalketopill.com',
+  'netchorus.com',
+  'norton.com',
   'nutraplatform.com',
   'nutrifitweb.com',
   'nutritioun.com',
   'offer4cart.com',
+  'office.com',
   'officemaster.ae',
   'onlineairlinesbooking.com',
   'onlinereservationbooking.com',
@@ -192,16 +222,23 @@ export const SPAMMERS_DOMAINS = [
   'orderfitness.org',
   'organicsupplementdietprogram.com',
   'ourunbiasedreview.blogspot.com',
+  'paper.li',
   'patch.com',
+  'penzu.com',
   'petsaw.com',
   'pharmacistreviews.com',
   'pillsfact.com',
   'pillsfect.com',
+  'pillsmumy.com',
+  'pillsvibe.com',
   'pilsadiet.com',
   'plarium.com',
   'pornlike.net',
   'praltrix.info',
+  'products99.com',
+  'pubhtml5.com',
   'publons.com',
+  'purefiter.com',
   'purefitketopills.com',
   'purnimasingh.com',
   'rembachduong.vn',
@@ -227,6 +264,7 @@ export const SPAMMERS_DOMAINS = [
   'streetinsider.com',
   'sunnyspotrealty.net',
   'supplement4muscle.com',
+  'supplementarmy.com',
   'supplementblend.com',
   'supplementdose.com',
   'supplementgear.com',
@@ -258,18 +296,24 @@ export const SPAMMERS_DOMAINS = [
   'totaldiet4you.com',
   'totalketopills.com',
   'trentandallievan.com',
+  'tripoto.com',
   'trippleresult.com',
+  'tryittoday.xyz',
   'trypurenutrition.com',
   'uchearts.com',
+  'udaipurqueen.com',
   'usahealthpills.com',
   'videa.hu',
   'webcampornodirecto.es',
   'weddingwire.us',
   'wellnessketoz.com',
+  'wfmj.com',
   'wheretocare.com',
   'wintersupplement.com',
+  'wiseintro.co',
   'works.bepress.com',
   'worldgymdiet.com',
+  'wow-keto.com',
   'zobuz.com',
 ];
 
@@ -358,11 +402,40 @@ const getSpamDomains = (content: string): string[] => {
   }, []);
 };
 
+let bayesClassifier;
+
+const getBayesClassifier = async (): Promise<BayesClassifier> => {
+  if (!bayesClassifier) {
+    const bayesClassifierPath = path.join(__dirname, '..', '..', 'config', `collective-spam-bayes.json`);
+    const bayesClassifierJson = await fs.promises.readFile(bayesClassifierPath, 'utf-8');
+    bayesClassifier = bayes.fromJson(bayesClassifierJson);
+  }
+  return bayesClassifier;
+};
+
+export const collectiveBayesCheck = async (collective: any, extraString: string): Promise<string> => {
+  const content = `${collective.slug.split('-').join(' ')} ${collective.name} ${collective.description} ${
+    collective.longDescription
+  } ${collective.website} ${extraString}`;
+
+  const classifier = await getBayesClassifier();
+
+  return classifier.categorize(content);
+};
+
 /**
  * Checks the values for this collective to try to determinate if it's a spammy profile.
  */
-export const collectiveSpamCheck = (collective: any, context: string): SpamAnalysisReport => {
+export const collectiveSpamCheck = async (collective: any, context: string): Promise<SpamAnalysisReport> => {
   const result = { score: 0, keywords: new Set<string>(), domains: new Set<string>() };
+
+  let bayesCheck = null;
+  if (collective.description || collective.longDescription) {
+    bayesCheck = await collectiveBayesCheck(collective, '');
+    if (bayesCheck === 'spam') {
+      result.score += 0.5;
+    }
+  }
 
   ANALYZED_FIELDS.forEach(field => {
     // Check each field for SPAM keywords
@@ -383,6 +456,7 @@ export const collectiveSpamCheck = (collective: any, context: string): SpamAnaly
   return {
     date: new Date().toISOString(),
     score: clamp(result.score, 0, 1),
+    bayes: bayesCheck,
     keywords: Array.from(result.keywords),
     domains: Array.from(result.domains),
     data: collective.info || collective,
@@ -400,25 +474,5 @@ export const notifyTeamAboutSuspiciousCollective = async (report: SpamAnalysisRe
   message = addLine(`Score: ${score}`);
   message = addLine(keywords.length > 0 && `Keywords: \`${keywords.toString()}\``);
   message = addLine(domains.length > 0 && `Domains: \`${domains.toString()}\``);
-  return slackLib.postMessageToOpenCollectiveSlack(message, OPEN_COLLECTIVE_SLACK_CHANNEL.ABUSE);
-};
-
-/**
- * Post a message on Slack if the collective is suspicious
- */
-export const notifyTeamAboutPreventedCollectiveCreate = async (
-  report: SpamAnalysisReport,
-  user: any | null,
-): Promise<void> => {
-  const { keywords, domains } = report;
-  let message = `A collective creation was prevented and the user has been put in limited mode.`;
-  const addLine = (line: string): string => (line ? `${message}\n${line}` : message);
-  if (user) {
-    message = addLine(`UserId: ${user.id}`);
-  }
-  message = addLine(keywords.length > 0 && `Keywords: \`${keywords.toString()}\``);
-  message = addLine(domains.length > 0 && `Domains: \`${domains.toString()}\``);
-  message = addLine(`Collective data:`);
-  message = addLine(`> ${JSON.stringify(report.data)}`);
   return slackLib.postMessageToOpenCollectiveSlack(message, OPEN_COLLECTIVE_SLACK_CHANNEL.ABUSE);
 };

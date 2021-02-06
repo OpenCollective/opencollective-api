@@ -355,12 +355,12 @@ export async function createOrder(order, loaders, remoteUser, reqIp) {
         throw new Error(`From collective id ${order.fromCollective.id} not found`);
       }
 
-      const possibleRoles = [roles.ADMIN];
+      const possibleRoles = [];
       if (fromCollective.type === types.ORGANIZATION) {
         possibleRoles.push(roles.MEMBER);
       }
 
-      if (!remoteUser?.hasRole(possibleRoles, order.fromCollective.id)) {
+      if (!remoteUser?.isAdminOfCollective(fromCollective) && !remoteUser?.hasRole(possibleRoles, fromCollective.id)) {
         // We only allow to add funds on behalf of a collective if the user is an admin of that collective or an admin of the host of the collective that receives the money
         const HostId = await collective.getHostCollectiveId();
         if (!remoteUser?.isAdmin(HostId)) {
@@ -880,12 +880,17 @@ export async function addFundsToCollective(order, remoteUser) {
     fromCollective = await models.Collective.findByPk(order.fromCollective.id);
     if (!fromCollective) {
       throw new Error(`From collective id ${order.fromCollective.id} not found`);
-    } else if ([types.COLLECTIVE, types.EVENT].includes(fromCollective.type)) {
+    } else if (fromCollective.hasBudget()) {
+      // Make sure logged in user is admin of the source profile, unless it doesn't have a budget (user
+      // or host organization without budget activated). It's not an ideal solution though, as spammy
+      // hosts could still use this to pollute user's ledgers.
       const isAdminOfFromCollective = remoteUser.isRoot() || remoteUser.isAdmin(fromCollective.id);
       if (!isAdminOfFromCollective && fromCollective.HostCollectiveId !== host.id) {
         const fromCollectiveHostId = await fromCollective.getHostCollectiveId();
-        if (!remoteUser.isAdmin(fromCollectiveHostId)) {
-          throw new Error("You don't have the permission to add funds from collectives you don't own or host.");
+        if (!remoteUser.isAdmin(fromCollectiveHostId) && !host.data?.allowAddFundsFromAllAccounts) {
+          throw new Error(
+            "You don't have the permission to add funds from accounts you don't own or host. Please contact support@opencollective.com if you want to enable this.",
+          );
         }
       }
     }

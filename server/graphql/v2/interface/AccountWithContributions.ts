@@ -1,20 +1,14 @@
 import config from 'config';
 import { GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLString } from 'graphql';
-import { assign, isNil } from 'lodash';
+import { isNil } from 'lodash';
 
-import { types } from '../../../constants/collectives';
 import { getPaginatedContributorsForCollective } from '../../../lib/contributors';
-import models, { Op } from '../../../models';
+import models from '../../../models';
 import { ContributorCollection } from '../collection/ContributorCollection';
 import { TierCollection } from '../collection/TierCollection';
-import { UpdateCollection } from '../collection/UpdateCollection';
 import { AccountType, MemberRole } from '../enum';
 
 import { CollectionArgs } from './Collection';
-
-const hasBudget = account => {
-  return account.type !== types.ORGANIZATION || (account.isHostAccount && account.isActive);
-};
 
 export const AccountWithContributionsFields = {
   totalFinancialContributors: {
@@ -27,7 +21,7 @@ export const AccountWithContributionsFields = {
       },
     },
     async resolve(account, args, req): Promise<number> {
-      if (!hasBudget(account)) {
+      if (!account.hasBudget()) {
         return 0;
       }
 
@@ -44,7 +38,7 @@ export const AccountWithContributionsFields = {
   tiers: {
     type: new GraphQLNonNull(TierCollection),
     async resolve(account): Promise<object> {
-      if (!hasBudget(account)) {
+      if (!account.hasBudget()) {
         return [];
       }
 
@@ -76,7 +70,7 @@ export const AccountWithContributionsFields = {
     description:
       'Returns true if a custom contribution to Open Collective can be submitted for contributions made to this account',
     resolve(account): boolean {
-      return account.platformFeePercent === 0;
+      return account.platformFeePercent === 0 && Boolean(account.data?.disablePlatformTips) !== true;
     },
   },
   balance: {
@@ -89,30 +83,6 @@ export const AccountWithContributionsFields = {
   },
   contributionPolicy: {
     type: GraphQLString,
-  },
-  updates: {
-    type: new GraphQLNonNull(UpdateCollection),
-    args: {
-      ...CollectionArgs,
-      onlyPublishedUpdates: { type: GraphQLBoolean },
-    },
-    async resolve(collective, { limit, offset, onlyPublishedUpdates }) {
-      let where = {
-        CollectiveId: collective.id,
-      };
-      if (onlyPublishedUpdates) {
-        where = assign(where, { publishedAt: { [Op.ne]: null } });
-      }
-      const query = {
-        where,
-        order: [['createdAt', 'DESC']],
-        limit,
-        offset,
-      };
-
-      const result = await models.Update.findAndCountAll(query);
-      return { nodes: result.rows, totalCount: result.count, limit, offset };
-    },
   },
 };
 
