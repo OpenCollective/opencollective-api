@@ -5,6 +5,7 @@ import { PAYMENT_METHOD_SERVICE, PAYMENT_METHOD_TYPE } from '../../../constants/
 import models, { Op, sequelize } from '../../../models';
 import { PayoutMethodTypes } from '../../../models/PayoutMethod';
 import TransferwiseLib from '../../../paymentProviders/transferwise';
+import { Unauthorized } from '../../errors';
 import { HostApplicationCollection } from '../collection/HostApplicationCollection';
 import { PaymentMethodType, PayoutMethodType } from '../enum';
 import { ChronologicalOrderInput } from '../input/ChronologicalOrderInput';
@@ -69,8 +70,8 @@ export const Host = new GraphQLObjectType({
             description: "Superior date limit in which we're calculating the metrics",
           },
         },
-        resolve(host, args) {
-          const metrics = host.getHostMetrics(args?.from, args?.to);
+        async resolve(host, args) {
+          const metrics = await host.getHostMetrics(args?.from, args?.to);
           const toAmount = value => ({ value, currency: host.currency });
           return mapValues(metrics, (value, key) => (key.includes('Percent') ? value : toAmount(value)));
         },
@@ -171,7 +172,11 @@ export const Host = new GraphQLObjectType({
             description: 'Order of the results',
           },
         },
-        resolve: async (host, args) => {
+        resolve: async (host, args, req) => {
+          if (!req.remoteUser?.isAdmin(host.id)) {
+            throw new Unauthorized('You need to be logged in as an admin of the host to see its pending application');
+          }
+
           const where = { HostCollectiveId: host.id, approvedAt: null };
           const sanitizedSearch = args.searchTerm?.replace(/(_|%|\\)/g, '\\$1');
 
