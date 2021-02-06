@@ -3,18 +3,14 @@ import config from 'config';
 import sinon from 'sinon';
 
 import slackLib from '../../../server/lib/slack';
-import {
-  collectiveSpamCheck,
-  notifyTeamAboutPreventedCollectiveCreate,
-  notifyTeamAboutSuspiciousCollective,
-} from '../../../server/lib/spam';
+import { collectiveSpamCheck, notifyTeamAboutSuspiciousCollective } from '../../../server/lib/spam';
 import { fakeCollective } from '../../test-helpers/fake-data';
 
 describe('server/lib/spam', () => {
   let clock;
 
   before(() => {
-    clock = sinon.useFakeTimers(new Date('2020-01-01'));
+    clock = sinon.useFakeTimers(new Date('2020-01-01T00:00:00.000Z'));
   });
 
   after(() => {
@@ -36,49 +32,53 @@ describe('server/lib/spam', () => {
       });
 
       // Long description
-      expect(await collectiveSpamCheck({ longDescription: 'Some PORN stuff' })).to.deep.eq({
+      const collectiveWithBadLongDescription = await fakeCollective({ longDescription: 'Some PORN stuff' });
+      expect(await collectiveSpamCheck(collectiveWithBadLongDescription)).to.deep.eq({
         score: 0.2,
         keywords: ['porn'],
         domains: [],
         bayes: 'ham',
         context: undefined,
         date: '2020-01-01T00:00:00.000Z',
-        data: { longDescription: 'Some PORN stuff' },
+        data: collectiveWithBadLongDescription.info,
       });
 
       // Website
-      expect(await collectiveSpamCheck({ website: 'https://maxketo.com' })).to.deep.eq({
+      const collectiveWithBadWebsite = await fakeCollective({ website: 'https://maxketo.com' });
+      expect(await collectiveSpamCheck(collectiveWithBadWebsite)).to.deep.eq({
         score: 0.3,
         keywords: ['keto'],
         domains: [],
-        bayes: null,
+        bayes: 'ham',
         context: undefined,
         date: '2020-01-01T00:00:00.000Z',
-        data: { website: 'https://maxketo.com' },
+        data: collectiveWithBadWebsite.info,
       });
 
       // Name
-      expect(await collectiveSpamCheck({ name: 'BEST KeTo!!!' })).to.deep.eq({
+      const collectiveWithBadName = await fakeCollective({ name: 'BEST KeTo!!!' });
+      expect(await collectiveSpamCheck(collectiveWithBadName)).to.deep.eq({
         score: 0.3,
         keywords: ['keto'],
         domains: [],
-        bayes: null,
+        bayes: 'ham',
         context: undefined,
         date: '2020-01-01T00:00:00.000Z',
-        data: { name: 'BEST KeTo!!!' },
+        data: collectiveWithBadName.info,
       });
     });
 
     it('detects blocked websites', async () => {
       // Website
-      expect(await collectiveSpamCheck({ website: 'https://supplementslove.com/promotion' })).to.deep.eq({
+      const collectiveWithBlockedWebsite = await fakeCollective({ website: 'https://supplementslove.com/promotion' });
+      expect(await collectiveSpamCheck(collectiveWithBlockedWebsite)).to.deep.eq({
         score: 1,
         keywords: [],
         domains: ['supplementslove.com'],
-        bayes: null,
+        bayes: 'ham',
         context: undefined,
         date: '2020-01-01T00:00:00.000Z',
-        data: { website: 'https://supplementslove.com/promotion' },
+        data: collectiveWithBlockedWebsite.info,
       });
     });
   });
@@ -102,30 +102,6 @@ describe('server/lib/spam', () => {
       const args = slackPostMessageStub.getCall(0).args;
       expect(args[0]).to.eq(
         '*Suspicious collective data was submitted for collective:* https://opencollective.com/ketoooo\nScore: 0.3\nKeywords: `keto`',
-      );
-      expect(args[1]).to.eq(config.slack.webhooks.abuse);
-    });
-  });
-
-  describe('notifyTeamAboutPreventedCollectiveCreate', () => {
-    let slackPostMessageStub = null;
-
-    before(() => {
-      slackPostMessageStub = sinon.stub(slackLib, 'postMessage');
-    });
-
-    after(() => {
-      slackPostMessageStub.restore();
-    });
-
-    it('notifies Slack with the report info', async () => {
-      const report = await collectiveSpamCheck({ name: 'Keto stuff', slug: 'ketoooo' });
-      await notifyTeamAboutPreventedCollectiveCreate(report);
-      expect(slackPostMessageStub.calledOnce).to.be.true;
-
-      const args = slackPostMessageStub.getCall(0).args;
-      expect(args[0]).to.eq(
-        'A collective creation was prevented and the user has been put in limited mode.\nKeywords: `keto`\nCollective data:\n> {"name":"Keto stuff","slug":"ketoooo"}',
       );
       expect(args[1]).to.eq(config.slack.webhooks.abuse);
     });

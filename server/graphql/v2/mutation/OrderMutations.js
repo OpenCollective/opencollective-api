@@ -4,9 +4,10 @@ import { isNil, isNull, isUndefined } from 'lodash';
 import activities from '../../../constants/activities';
 import status from '../../../constants/order_status';
 import models from '../../../models';
-import { NotFound, Unauthorized } from '../../errors';
+import { BadRequest, NotFound, Unauthorized, ValidationFailed } from '../../errors';
 import { confirmOrder as confirmOrderLegacy, createOrder as createOrderLegacy } from '../../v1/mutations/orders';
 import { getIntervalFromContributionFrequency } from '../enum/ContributionFrequency';
+import { ProcessOrderAction } from '../enum/ProcessOrderAction';
 import { getDecodedId } from '../identifiers';
 import { fetchAccountWithReference } from '../input/AccountReferenceInput';
 import { AmountInput, getValueInCentsFromAmountInput } from '../input/AmountInput';
@@ -26,7 +27,7 @@ const modelArray = [
 
 const OrderWithPayment = new GraphQLObjectType({
   name: 'OrderWithPayment',
-  fields: {
+  fields: () => ({
     order: {
       type: new GraphQLNonNull(Order),
       description: 'The order created',
@@ -40,7 +41,7 @@ const OrderWithPayment = new GraphQLObjectType({
       description:
         'This field will be set if the order was created but there was an error with Stripe during the payment',
     },
-  },
+  }),
 });
 
 const orderMutations = {
@@ -125,7 +126,9 @@ const orderMutations = {
       if (!order) {
         throw new NotFound('Recurring contribution not found');
       }
-      if (!req.remoteUser.isAdmin(order.FromCollectiveId)) {
+
+      const fromCollective = await req.loaders.Collective.byId.load(order.FromCollectiveId);
+      if (!req.remoteUser.isAdminOfCollective(fromCollective)) {
         throw new Unauthorized("You don't have permission to cancel this recurring contribution");
       }
       if (!order.Subscription.isActive && order.status === status.CANCELLED) {
@@ -189,7 +192,9 @@ const orderMutations = {
       if (!order) {
         throw new NotFound('Order not found');
       }
-      if (!req.remoteUser.isAdmin(order.FromCollectiveId)) {
+
+      const fromCollective = await req.loaders.Collective.byId.load(order.FromCollectiveId);
+      if (!req.remoteUser.isAdminOfCollective(fromCollective)) {
         throw new Unauthorized("You don't have permission to update this order");
       }
       if (!order.Subscription.isActive) {
@@ -201,7 +206,8 @@ const orderMutations = {
         // unlike v1 we don't have to check/assign new payment method, that will be taken care of in another mutation
         const newPaymentMethod = await fetchPaymentMethodWithReference(args.paymentMethod);
 
-        if (!req.remoteUser.isAdmin(newPaymentMethod.CollectiveId)) {
+        const newPaymentMethodCollective = await req.loaders.Collective.byId.load(newPaymentMethod.CollectiveId);
+        if (!req.remoteUser.isAdminOfCollective(newPaymentMethodCollective)) {
           throw new Unauthorized("You don't have permission to use this payment method");
         }
 
@@ -276,6 +282,37 @@ const orderMutations = {
         stripeError: updatedOrder.stripeError,
         guestToken: args.guestToken,
       };
+    },
+  },
+  processPendingOrder: {
+    type: new GraphQLNonNull(Order),
+    description: 'A mutation for the host to approve or reject an order',
+    args: {
+      order: {
+        type: new GraphQLNonNull(OrderReferenceInput),
+      },
+      action: {
+        type: new GraphQLNonNull(ProcessOrderAction),
+      },
+    },
+    async resolve(_, args, req) {
+      const order = await fetchOrderWithReference(args.order);
+      const toAccount = await req.loaders.Collective.byId.load(order.CollectiveId);
+
+      if (!req.remoteUser?.isAdmin(toAccount.HostCollectiveId)) {
+        throw new Unauthorized('Only host admins can process orders');
+      } else if (order.status !== status.PENDING) {
+        throw new ValidationFailed(`Only pending orders can be processed, this one is ${order.status}`);
+      }
+
+      switch (args.action) {
+        case 'MARK_AS_PAID':
+          return order.markAsPaid(req.remoteUser);
+        case 'MARK_AS_EXPIRED':
+          return order.markAsExpired();
+        default:
+          throw new BadRequest(`Unknown action ${args.action}`);
+      }
     },
   },
 };
