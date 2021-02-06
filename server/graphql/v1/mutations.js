@@ -1,97 +1,88 @@
-import { pick } from 'lodash';
-import {
-  claimCollective,
-  createCollective,
-  editCollective,
-  deleteEventCollective,
-  deleteCollective,
-  deleteUserCollective,
-  approveCollective,
-  createCollectiveFromGithub,
-  archiveCollective,
-  unarchiveCollective,
-  sendMessageToCollective,
-  rejectCollective,
-} from './mutations/collectives';
-import {
-  createOrder,
-  confirmOrder,
-  cancelSubscription,
-  updateSubscription,
-  refundTransaction,
-  addFundsToOrg,
-  addFundsToCollective,
-  completePledge,
-  markOrderAsPaid,
-  markPendingOrderAsExpired,
-} from './mutations/orders';
-
-import { editPublicMessage } from './mutations/members';
-import { editTiers, editTier } from './mutations/tiers';
-import { editConnectedAccount } from './mutations/connectedAccounts';
-import { createWebhook, deleteNotification, editWebhooks } from './mutations/notifications';
-import {
-  createExpense,
-  editExpense,
-  updateExpenseStatus,
-  payExpense,
-  deleteExpense,
-  markExpenseAsUnpaid,
-} from './mutations/expenses';
-import * as paymentMethodsMutation from './mutations/paymentMethods';
-import * as updateMutations from './mutations/updates';
-import * as commentMutations from './mutations/comments';
-import * as applicationMutations from './mutations/applications';
-import * as backyourstackMutations from './mutations/backyourstack';
-import { updateUserEmail, confirmUserEmail } from './mutations/users';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
 
 import statuses from '../../constants/expense_status';
+import models from '../../models';
+import { bulkCreateVirtualCards, createVirtualCardsForEmails } from '../../paymentProviders/opencollective/virtualcard';
+import { editPublicMessage } from '../common/members';
+import * as updateMutations from '../common/update';
+import { createUser } from '../common/user';
+import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../errors';
 
-import { GraphQLNonNull, GraphQLList, GraphQLString, GraphQLInt, GraphQLBoolean, GraphQLObjectType } from 'graphql';
-
+import * as applicationMutations from './mutations/applications';
+import * as backyourstackMutations from './mutations/backyourstack';
 import {
-  OrderType,
-  TierType,
-  MemberType,
-  ExpenseType,
-  UpdateType,
-  CommentType,
-  ConnectedAccountType,
-  PaymentMethodType,
-  UserType,
-  NotificationType,
-} from './types';
-
+  activateBudget,
+  activateCollectiveAsHost,
+  approveCollective,
+  archiveCollective,
+  createCollective,
+  createCollectiveFromGithub,
+  deactivateBudget,
+  deactivateCollectiveAsHost,
+  deleteCollective,
+  deleteUserCollective,
+  editCollective,
+  rejectCollective,
+  sendMessageToCollective,
+  unarchiveCollective,
+} from './mutations/collectives';
+import * as commentMutations from './mutations/comments';
+import { editConnectedAccount } from './mutations/connectedAccounts';
+import {
+  createExpense,
+  deleteExpense,
+  editExpense,
+  markExpenseAsUnpaid,
+  payExpense,
+  updateExpenseStatus,
+} from './mutations/expenses';
+import { createWebhook, deleteNotification, editWebhooks } from './mutations/notifications';
+import {
+  addFundsToCollective,
+  addFundsToOrg,
+  confirmOrder,
+  createOrder,
+  markOrderAsPaid,
+  markPendingOrderAsExpired,
+  refundTransaction,
+} from './mutations/orders';
+import * as paymentMethodsMutation from './mutations/paymentMethods';
+import { editTier, editTiers } from './mutations/tiers';
+import { confirmUserEmail, updateUserEmail } from './mutations/users';
+import { ApplicationInputType, ApplicationType } from './Application';
 import { CollectiveInterfaceType } from './CollectiveInterface';
-
-import { TransactionInterfaceType } from './TransactionInterface';
-
-import { ApplicationType, ApplicationInputType } from './Application';
-
 import {
   CollectiveInputType,
-  OrderInputType,
-  ConfirmOrderInputType,
-  TierInputType,
-  ExpenseInputType,
-  UpdateInputType,
-  UpdateAttributesInputType,
-  CommentInputType,
   CommentAttributesInputType,
+  CommentInputType,
+  ConfirmOrderInputType,
   ConnectedAccountInputType,
-  PaymentMethodInputType,
-  PaymentMethodDataVirtualCardInputType,
-  UserInputType,
-  StripeCreditCardDataInputType,
-  NotificationInputType,
+  ExpenseInputType,
   MemberInputType,
+  NotificationInputType,
+  OrderInputType,
+  PaymentMethodDataVirtualCardInputType,
+  PaymentMethodInputType,
+  StripeCreditCardDataInputType,
+  TierInputType,
+  UpdateAttributesInputType,
+  UpdateInputType,
+  UserInputType,
 } from './inputTypes';
-import { createVirtualCardsForEmails, bulkCreateVirtualCards } from '../../paymentProviders/opencollective/virtualcard';
-import models, { sequelize } from '../../models';
-import emailLib from '../../lib/email';
-import roles from '../../constants/roles';
-import errors from '../../lib/errors';
-import { Unauthorized, ValidationFailed, Forbidden } from '../errors';
+import { TransactionInterfaceType } from './TransactionInterface';
+import {
+  CommentType,
+  ConnectedAccountType,
+  ExpenseType,
+  MemberType,
+  NotificationType,
+  OrderType,
+  PaymentMethodType,
+  TierType,
+  UpdateAudienceTypeEnum,
+  UpdateType,
+  UserType,
+} from './types';
 
 const mutations = {
   createCollective: {
@@ -121,15 +112,6 @@ const mutations = {
       return editCollective(_, args, req);
     },
   },
-  deleteEventCollective: {
-    type: CollectiveInterfaceType,
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(_, args, req) {
-      return deleteEventCollective(_, args, req);
-    },
-  },
   deleteCollective: {
     type: CollectiveInterfaceType,
     args: {
@@ -148,18 +130,10 @@ const mutations = {
       return deleteUserCollective(_, args, req);
     },
   },
-  claimCollective: {
-    type: CollectiveInterfaceType,
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(...args) {
-      return claimCollective(...args);
-    },
-  },
   approveCollective: {
     type: CollectiveInterfaceType,
     description: 'Approve a collective',
+    deprecationReason: '2020-11-16: Please use API V2',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
@@ -170,6 +144,7 @@ const mutations = {
   rejectCollective: {
     type: CollectiveInterfaceType,
     description: 'Reject a collective',
+    deprecationReason: '2020-11-16: Please use API V2',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
       rejectionReason: { type: GraphQLString },
@@ -250,35 +225,17 @@ const mutations = {
         defaultValue: true,
       },
     },
-    resolve(_, args) {
-      return sequelize.transaction(async transaction => {
-        let user = await models.User.findOne({ where: { email: args.user.email.toLowerCase() } }, { transaction });
-        let organization = null;
-
-        if (args.throwIfExists && user) {
-          throw new Error('User already exists for given email');
-        } else if (!user) {
-          // Create user
-          user = await models.User.createUserWithCollective(args.user, transaction);
-        }
-
-        // Create organization
-        if (args.organization) {
-          const organizationParams = {
-            type: 'ORGANIZATION',
-            ...pick(args.organization, ['name', 'website', 'twitterHandle', 'githubHandle']),
-          };
-          organization = await models.Collective.create(organizationParams, { transaction });
-          await organization.addUserWithRole(user, roles.ADMIN, { CreatedByUserId: user.id }, {}, transaction);
-        }
-
-        // Sent signIn link
-        if (args.sendSignInLink) {
-          const loginLink = user.generateLoginLink(args.redirect, args.websiteUrl);
-          emailLib.send('user.new.token', user.email, { loginLink }, { sendEvenIfNotProduction: true });
-        }
-
-        return { user, organization };
+    resolve(_, args, req) {
+      return createUser(args.user, {
+        organizationData: args.organization,
+        sendSignInLink: args.sendSignInLink,
+        throwIfExists: args.throwIfExists,
+        redirect: args.redirect,
+        websiteUrl: args.websiteUrl,
+        creationRequest: {
+          ip: req.ip,
+          userAgent: req.header('user-agent'),
+        },
       });
     },
   },
@@ -319,20 +276,22 @@ const mutations = {
   },
   approveExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return updateExpenseStatus(req.remoteUser, args.id, statuses.APPROVED);
+      return updateExpenseStatus(req, args.id, statuses.APPROVED);
     },
   },
   unapproveExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return updateExpenseStatus(req.remoteUser, args.id, statuses.PENDING);
+      return updateExpenseStatus(req, args.id, statuses.PENDING);
     },
   },
   rejectExpense: {
@@ -341,11 +300,12 @@ const mutations = {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return updateExpenseStatus(req.remoteUser, args.id, statuses.REJECTED);
+      return updateExpenseStatus(req, args.id, statuses.REJECTED);
     },
   },
   payExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
       paymentProcessorFeeInCollectiveCurrency: { type: GraphQLInt },
@@ -355,9 +315,13 @@ const mutations = {
         type: GraphQLBoolean,
         description: 'Force expense with paypal method to be paid manually',
       },
+      twoFactorAuthenticatorCode: {
+        type: GraphQLString,
+        description: '2FA code for if the host account has 2FA for payouts turned on.',
+      },
     },
     resolve(_, args, req) {
-      return payExpense(req.remoteUser, args);
+      return payExpense(req, args);
     },
   },
   markOrderAsPaid: {
@@ -380,6 +344,7 @@ const mutations = {
   },
   createExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-09-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       expense: { type: new GraphQLNonNull(ExpenseInputType) },
     },
@@ -389,30 +354,33 @@ const mutations = {
   },
   editExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       expense: { type: new GraphQLNonNull(ExpenseInputType) },
     },
     resolve(_, args, req) {
-      return editExpense(req.remoteUser, args.expense);
+      return editExpense(req, args.expense);
     },
   },
   deleteExpense: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return deleteExpense(req.remoteUser, args.id);
+      return deleteExpense(req, args.id);
     },
   },
   markExpenseAsUnpaid: {
     type: ExpenseType,
+    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
     args: {
       id: { type: new GraphQLNonNull(GraphQLInt) },
       processorFeeRefunded: { type: new GraphQLNonNull(GraphQLBoolean) },
     },
     resolve(_, args, req) {
-      return markExpenseAsUnpaid(req.remoteUser, args.id, args.processorFeeRefunded);
+      return markExpenseAsUnpaid(req, args.id, args.processorFeeRefunded);
     },
   },
   editTier: {
@@ -448,9 +416,9 @@ const mutations = {
     async resolve(_, args, req) {
       const collective = await models.Collective.findByPk(args.collectiveId);
       if (!collective) {
-        throw new errors.NotFound();
-      } else if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
-        throw new errors.Unauthorized();
+        throw new NotFound();
+      } else if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
+        throw new Unauthorized();
       } else {
         await collective.editMembers(args.members, {
           CreatedByUserId: req.remoteUser.id,
@@ -472,13 +440,15 @@ const mutations = {
   },
   createOrder: {
     type: OrderType,
+    deprecationReason: '2020-10-13: This endpoint has been moved to GQLV2',
     args: {
       order: {
         type: new GraphQLNonNull(OrderInputType),
       },
     },
-    resolve(_, args, req) {
-      return createOrder(args.order, req.loaders, req.remoteUser, req.ip);
+    async resolve(_, args, req) {
+      const { order } = await createOrder(args.order, req.loaders, req.remoteUser, req.ip);
+      return order;
     },
   },
   confirmOrder: {
@@ -503,20 +473,9 @@ const mutations = {
       return addFundsToCollective(args.order, req.remoteUser);
     },
   },
-  updateOrder: {
-    // TODO: Should be renamed to completePledge.
-    type: OrderType,
-    args: {
-      order: {
-        type: new GraphQLNonNull(OrderInputType),
-      },
-    },
-    resolve(_, args, req) {
-      return completePledge(req.remoteUser, args.order);
-    },
-  },
   createUpdate: {
     type: UpdateType,
+    deprecationReason: 'This endpoint has been moved to GQLV2',
     args: {
       update: {
         type: new GraphQLNonNull(UpdateInputType),
@@ -542,6 +501,9 @@ const mutations = {
     args: {
       id: {
         type: new GraphQLNonNull(GraphQLInt),
+      },
+      notificationAudience: {
+        type: new GraphQLNonNull(UpdateAudienceTypeEnum),
       },
     },
     resolve(_, args, req) {
@@ -577,7 +539,13 @@ const mutations = {
         type: new GraphQLNonNull(CommentInputType),
       },
     },
-    resolve: commentMutations.createComment,
+    resolve: (_, args, req) => {
+      if (args['UpdateId']) {
+        throw new Error('Use QPI V2 to post comments on updates');
+      }
+
+      return commentMutations.createComment(_, args, req);
+    },
   },
   editComment: {
     type: CommentType,
@@ -596,26 +564,6 @@ const mutations = {
       },
     },
     resolve: commentMutations.deleteComment,
-  },
-  cancelSubscription: {
-    type: OrderType,
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(_, args, req) {
-      return cancelSubscription(req.remoteUser, args.id);
-    },
-  },
-  updateSubscription: {
-    type: OrderType,
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-      paymentMethod: { type: PaymentMethodInputType },
-      amount: { type: GraphQLInt },
-    },
-    async resolve(_, args, req) {
-      return await updateSubscription(req.remoteUser, args);
-    },
   },
   refundTransaction: {
     type: TransactionInterfaceType,
@@ -675,6 +623,7 @@ const mutations = {
       limitedToCollectiveIds: {
         type: new GraphQLList(GraphQLInt),
         description: 'Limit this payment method to make donations to those collectives',
+        deprecationReason: '2020-08-11: This field does not exist anymore',
       },
       limitedToHostCollectiveIds: {
         type: new GraphQLList(GraphQLInt),
@@ -719,6 +668,20 @@ const mutations = {
       );
     },
   },
+  replaceCreditCard: {
+    type: PaymentMethodType,
+    description: 'Replace a payment method',
+    args: {
+      id: { type: new GraphQLNonNull(GraphQLInt) },
+      CollectiveId: { type: new GraphQLNonNull(GraphQLInt) },
+      name: { type: new GraphQLNonNull(GraphQLString) },
+      token: { type: new GraphQLNonNull(GraphQLString) },
+      data: { type: new GraphQLNonNull(StripeCreditCardDataInputType) },
+    },
+    resolve: async (_, args, req) => {
+      return paymentMethodsMutation.replaceCreditCard(args, req.remoteUser);
+    },
+  },
   createVirtualCards: {
     type: new GraphQLList(PaymentMethodType),
     args: {
@@ -752,6 +715,7 @@ const mutations = {
       limitedToCollectiveIds: {
         type: new GraphQLList(GraphQLInt),
         description: 'Limit this payment method to make donations to those collectives',
+        deprecationReason: '2020-08-11: This field does not exist anymore',
       },
       limitedToHostCollectiveIds: {
         type: new GraphQLList(GraphQLInt),
@@ -785,7 +749,7 @@ const mutations = {
         });
         if (!openSourceHost) {
           throw new Error(
-            'Cannot find the host "Open Source Collective". You can disable the opensource-only limitation, or contact us at info@opencollective.com if this keeps happening',
+            'Cannot find the host "Open Source Collective". You can disable the opensource-only limitation, or contact us at support@opencollective.com if this keeps happening',
           );
         }
         args.limitedToHostCollectiveIds = [openSourceHost.id];
@@ -888,13 +852,9 @@ const mutations = {
 
       const invitation = await models.MemberInvitation.findByPk(args.invitationId);
       if (!invitation) {
-        return new ValidationFailed({
-          message: "This invitation doesn't exist or a reply has already been given to it",
-        });
+        return new ValidationFailed("This invitation doesn't exist or a reply has already been given to it");
       } else if (!req.remoteUser.isAdmin(invitation.MemberCollectiveId)) {
-        return new Forbidden({
-          message: 'Only admin of the invited collective can reply to the invitation',
-        });
+        return new Forbidden('Only admin of the invited collective can reply to the invitation');
       }
 
       if (args.accept) {
@@ -920,6 +880,58 @@ const mutations = {
     },
     resolve(_, args) {
       return backyourstackMutations.dispatchOrder(args.id);
+    },
+  },
+  activateCollectiveAsHost: {
+    type: CollectiveInterfaceType,
+    description: 'Activate a collective as Host.',
+    args: {
+      id: {
+        type: new GraphQLNonNull(GraphQLInt),
+        description: 'ID of the collective (Organization or User)',
+      },
+    },
+    resolve(_, args, req) {
+      return activateCollectiveAsHost(_, args, req);
+    },
+  },
+  deactivateCollectiveAsHost: {
+    type: CollectiveInterfaceType,
+    description: 'Deactivate a collective as Host.',
+    args: {
+      id: {
+        type: new GraphQLNonNull(GraphQLInt),
+        description: 'ID of the collective (Organization or User)',
+      },
+    },
+    resolve(_, args, req) {
+      return deactivateCollectiveAsHost(_, args, req);
+    },
+  },
+  activateBudget: {
+    type: CollectiveInterfaceType,
+    description: 'Activate budget (For Host Organizations only)',
+    args: {
+      id: {
+        type: new GraphQLNonNull(GraphQLInt),
+        description: 'ID of the "collective" (Host Organization)',
+      },
+    },
+    resolve(_, args, req) {
+      return activateBudget(_, args, req);
+    },
+  },
+  deactivateBudget: {
+    type: CollectiveInterfaceType,
+    description: 'Deactivate budget (For Host Organizations only)',
+    args: {
+      id: {
+        type: new GraphQLNonNull(GraphQLInt),
+        description: 'ID of the "collective" (Host Organization)',
+      },
+    },
+    resolve(_, args, req) {
+      return deactivateBudget(_, args, req);
     },
   },
 };
