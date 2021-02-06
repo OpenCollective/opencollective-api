@@ -1,6 +1,6 @@
 import Promise from 'bluebird';
 import debugLib from 'debug';
-import { defaultsDeep, get, isUndefined } from 'lodash';
+import { defaultsDeep, get, isNull, isUndefined, pick } from 'lodash';
 import moment from 'moment';
 import { v4 as uuid } from 'uuid';
 
@@ -47,7 +47,14 @@ export default (Sequelize, DataTypes) => {
         },
         onDelete: 'SET NULL',
         onUpdate: 'CASCADE',
-        allowNull: false,
+        allowNull: true, // we allow CreatedByUserId to be null but only on refund transactions
+        validate: {
+          isValid(value) {
+            if (isNull(value) && this.isRefund === false) {
+              throw new Error('Only refund transactions can have null user.');
+            }
+          },
+        },
       },
 
       // Source of the money for a DEBIT
@@ -154,6 +161,16 @@ export default (Sequelize, DataTypes) => {
         references: { model: 'Transactions', key: 'id' },
       },
 
+      PlatformTipForTransactionGroup: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+
+      isRefund: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+      },
+
       createdAt: {
         type: DataTypes.DATE,
         defaultValue: Sequelize.NOW,
@@ -205,6 +222,8 @@ export default (Sequelize, DataTypes) => {
             amountSentToHostInHostCurrency: this.amountSentToHostInHostCurrency,
             hostCurrency: this.hostCurrency,
             ExpenseId: this.ExpenseId,
+            OrderId: this.OrderId,
+            isRefund: this.isRefund,
           };
         },
       },
@@ -286,6 +305,22 @@ export default (Sequelize, DataTypes) => {
     return Transaction.findByPk(this.RefundTransactionId);
   };
 
+  Transaction.prototype.hasPlatformTip = function () {
+    return this.data?.isFeesOnTop ? true : false;
+  };
+
+  Transaction.prototype.getPlatformTipTransaction = function () {
+    if (this.hasPlatformTip()) {
+      return models.Transaction.findOne({
+        where: {
+          ...pick(FEES_ON_TOP_TRANSACTION_PROPERTIES, ['CollectiveId']),
+          type: this.type,
+          PlatformTipForTransactionGroup: this.TransactionGroup,
+        },
+      });
+    }
+  };
+
   /**
    * Class Methods
    */
@@ -334,6 +369,7 @@ export default (Sequelize, DataTypes) => {
           'hostFeeInHostCurrency',
           'platformFeeInHostCurrency',
           'netAmountInHostCurrency',
+          'amountInHostCurrency',
         ].indexOf(attr) !== -1
       ) {
         return value / 100; // converts cents
@@ -347,6 +383,7 @@ export default (Sequelize, DataTypes) => {
       'type',
       'CollectiveId',
       'amount',
+      'amountInHostCurrency',
       'currency',
       'description',
       'netAmountInCollectiveCurrency',
@@ -357,6 +394,8 @@ export default (Sequelize, DataTypes) => {
       'platformFeeInHostCurrency',
       'netAmountInHostCurrency',
       'Expense.privateMessage',
+      'source',
+      'isRefund',
     ];
 
     // We only add tax amount for european hosts
@@ -403,7 +442,7 @@ export default (Sequelize, DataTypes) => {
   Transaction.createDoubleEntry = async transaction => {
     transaction.type = transaction.amount > 0 ? TransactionTypes.CREDIT : TransactionTypes.DEBIT;
     transaction.netAmountInCollectiveCurrency = transaction.netAmountInCollectiveCurrency || transaction.amount;
-    transaction.TransactionGroup = uuid();
+    transaction.TransactionGroup = transaction.TransactionGroup || uuid();
     transaction.hostCurrencyFxRate = transaction.hostCurrencyFxRate || 1;
 
     if (!isUndefined(transaction.amountInHostCurrency)) {
@@ -519,9 +558,11 @@ export default (Sequelize, DataTypes) => {
         ),
         // This is always 1 because OpenCollective and OpenCollective Inc (Host) are in USD.
         hostCurrencyFxRate: 1,
+        PlatformTipForTransactionGroup: transaction.TransactionGroup,
         data: {
           hostToPlatformFxRate: await getFxRate(transaction.hostCurrency, FEES_ON_TOP_TRANSACTION_PROPERTIES.currency),
           feeOnTopPaymentProcessorFee,
+          settled: transaction.data?.settled,
         },
       },
       transaction,
@@ -534,8 +575,9 @@ export default (Sequelize, DataTypes) => {
       transaction.paymentProcessorFeeInHostCurrency - feeOnTopPaymentProcessorFee;
     // Recalculate amount
     transaction.amountInHostCurrency = transaction.amountInHostCurrency + transaction.platformFeeInHostCurrency;
-    transaction.amount =
-      transaction.amount + transaction.platformFeeInHostCurrency / (transaction.hostCurrencyFxRate || 1);
+    transaction.amount = Math.round(
+      transaction.amount + transaction.platformFeeInHostCurrency / (transaction.hostCurrencyFxRate || 1),
+    );
     // Reset the platformFee because we're accounting for this value in a separate set of transactions
     transaction.platformFeeInHostCurrency = 0;
 
@@ -563,6 +605,7 @@ export default (Sequelize, DataTypes) => {
     transaction.CreatedByUserId = CreatedByUserId;
     transaction.FromCollectiveId = FromCollectiveId;
     transaction.CollectiveId = CollectiveId;
+    transaction.TransactionGroup = uuid();
     transaction.PaymentMethodId = transaction.PaymentMethodId || PaymentMethodId;
     transaction.type = transaction.amount > 0 ? TransactionTypes.CREDIT : TransactionTypes.DEBIT;
     transaction.hostFeeInHostCurrency = toNegative(transaction.hostFeeInHostCurrency);

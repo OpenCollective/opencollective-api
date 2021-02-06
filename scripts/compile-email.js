@@ -130,10 +130,10 @@ data['github.signup'] = {
     slug: 'webpack',
   },
 };
-data['collective.created.the-social-change-agency'] = data['collective.approved.the-social-change-agency'] = {
+data['collective.created.the-social-change-nest'] = data['collective.approved.the-social-change-nest'] = {
   host: {
-    slug: 'the-social-change-agency',
-    name: 'The Social Change Agency',
+    slug: 'the-social-change-nest',
+    name: 'The Social Change Nest',
   },
   collective: {
     slug: 'coinbase',
@@ -453,7 +453,7 @@ data['user.monthlyreport'] = {
       backgroundImage: 'http://opencollective.com/proxy/images/?src=https://cldup.com/Gj243bgI0f.jpg&width=1024',
       slug: 'cyclejs',
       name: 'Cycle.js',
-      mission: 'We are on a mission to provide a framework for clean code, easy debugging experience, and fun.',
+      description: 'We are on a mission to provide a framework for clean code, easy debugging experience, and fun.',
       // totalDonations: 41,
       tier: 'backer',
       yearlyIncome: 6271 * 100,
@@ -465,7 +465,7 @@ data['user.monthlyreport'] = {
       backgroundImage: 'http://opencollective.com/proxy/images/?src=https://cldup.com/Gj243bgI0f.jpg&width=1024',
       slug: 'cyclejs',
       name: 'Cycle.js',
-      mission: 'We are on a mission to provide a framework for clean code, easy debugging experience, and fun.',
+      description: 'We are on a mission to provide a framework for clean code, easy debugging experience, and fun.',
       // totalDonations: 41,
       tier: 'backer',
       yearlyIncome: 6271 * 100,
@@ -477,7 +477,7 @@ data['user.monthlyreport'] = {
       backgroundImage: 'http://opencollective.com/proxy/images/?src=https://cldup.com/Gj243bgI0f.jpg&width=1024',
       slug: 'cyclejs',
       name: 'Cycle.js',
-      mission: 'We are on a mission to provide a framework for clean code, easy debugging experience, and fun.',
+      description: 'We are on a mission to provide a framework for clean code, easy debugging experience, and fun.',
       // totalDonations: 41,
       tier: 'backer',
       yearlyIncome: 6271 * 100,

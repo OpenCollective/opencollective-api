@@ -3,7 +3,7 @@ import { get, pick } from 'lodash';
 
 import activities from '../../../constants/activities';
 import roles from '../../../constants/roles';
-import { purgeCacheForPage } from '../../../lib/cloudflare';
+import { purgeCacheForCollective } from '../../../lib/cache';
 import { isCollectiveSlugReserved } from '../../../lib/collectivelib';
 import models from '../../../models';
 import { Unauthorized, ValidationFailed } from '../../errors';
@@ -13,7 +13,29 @@ import { Fund } from '../object/Fund';
 
 const DEFAULT_COLLECTIVE_SETTINGS = {
   features: { conversations: false },
-  collectivePage: { sections: ['budget', 'projects', 'about'] },
+  collectivePage: {
+    useNewSections: true,
+    sections: [
+      {
+        name: 'BUDGET',
+        type: 'CATEGORY',
+        isEnabled: true,
+        sections: [{ name: 'budget', type: 'SECTION', isEnabled: true, restrictedTo: null }],
+      },
+      {
+        name: 'CONTRIBUTE',
+        type: 'CATEGORY',
+        isEnabled: true,
+        sections: [{ type: 'SECTION', name: 'projects', isEnabled: true, restrictedTo: null }],
+      },
+      {
+        name: 'ABOUT',
+        type: 'CATEGORY',
+        isEnabled: true,
+        sections: [{ type: 'SECTION', name: 'about', isEnabled: true, restrictedTo: null }],
+      },
+    ],
+  },
 };
 
 async function createFund(_, args, req) {
@@ -59,12 +81,13 @@ async function createFund(_, args, req) {
   // Add the host if any
   if (host) {
     await fund.addHost(host, remoteUser);
-    purgeCacheForPage(`/${host.slug}`);
+    purgeCacheForCollective(host.slug);
   }
 
   // Will send an email to the authenticated user
-  // - tell them that their collective was successfully created
-  // - tell them that their collective is pending validation (which might be wrong if it was automatically approved)
+  // - tell them that their fund was successfully created
+  // - tell them which fiscal host they picked, if any
+  // - tell them the status of their host application
   const remoteUserCollective = await loaders.Collective.byId.load(remoteUser.CollectiveId);
   models.Activity.create({
     type: activities.COLLECTIVE_CREATED,
@@ -73,6 +96,8 @@ async function createFund(_, args, req) {
     data: {
       collective: fund.info,
       host: get(host, 'info'),
+      hostPending: fund.approvedAt ? false : true,
+      accountType: 'fund',
       user: {
         email: remoteUser.email,
         collective: remoteUserCollective.info,

@@ -7,11 +7,14 @@ import { TransferwiseError } from '../../graphql/errors';
 import cache from '../../lib/cache';
 import * as transferwise from '../../lib/transferwise';
 import models from '../../models';
-import { Quote, RecipientAccount, Transfer } from '../../types/transferwise';
+import { ConnectedAccount } from '../../types/ConnectedAccount';
+import { Balance, Quote, RecipientAccount, Transfer } from '../../types/transferwise';
 
 const hashObject = obj => crypto.createHash('sha1').update(JSON.stringify(obj)).digest('hex').slice(0, 7);
 
+export const blockedCurrencies = ['NGN'];
 export const blockedCurrenciesForBusinesProfiles = ['BRL', 'PKR'];
+export const currenciesThatRequireReference = ['RUB'];
 
 async function populateProfileId(connectedAccount): Promise<void> {
   if (!connectedAccount.data?.id) {
@@ -84,11 +87,16 @@ async function payExpense(
     ...payoutMethod.data,
   });
 
-  const transfer = await transferwise.createTransfer(connectedAccount.token, {
+  const transferOptions: transferwise.CreateTransfer = {
     accountId: recipient.id,
     quoteId: quote.id,
     uuid: uuid(),
-  });
+  };
+  // Append reference to currencies that require it.
+  if (currenciesThatRequireReference.includes(payoutMethod.data.currency)) {
+    transferOptions.details = { reference: `${expense.id}` };
+  }
+  const transfer = await transferwise.createTransfer(connectedAccount.token, transferOptions);
 
   let fund;
   try {
@@ -104,29 +112,38 @@ async function payExpense(
   return { quote, recipient, transfer, fund };
 }
 
-async function getAvailableCurrencies(host: any): Promise<{ code: string; minInvoiceAmount: number }[]> {
-  const cacheKey = `transferwise_available_currencies_${host.id}`;
-  const fromCache = await cache.get(cacheKey);
-  if (fromCache) {
-    return fromCache;
-  }
-
+async function getAvailableCurrencies(
+  host: any,
+  ignoreBlockedCurrencies = true,
+): Promise<{ code: string; minInvoiceAmount: number }[]> {
   const connectedAccount = await models.ConnectedAccount.findOne({
     where: { service: 'transferwise', CollectiveId: host.id },
   });
   if (!connectedAccount) {
     throw new TransferwiseError('Host is not connected to Transferwise', 'transferwise.error.notConnected');
   }
+
+  let currencyBlockList = [];
+  if (ignoreBlockedCurrencies) {
+    currencyBlockList = blockedCurrencies;
+    if (connectedAccount.data?.type === 'business') {
+      currencyBlockList = [...currencyBlockList, ...blockedCurrenciesForBusinesProfiles];
+    }
+  }
+
+  const cacheKey = `transferwise_available_currencies_${host.id}`;
+  const fromCache = await cache.get(cacheKey);
+  if (fromCache) {
+    return fromCache.filter(c => !currencyBlockList.includes(c.code));
+  }
+
   await populateProfileId(connectedAccount);
-  const currencyBlockList = connectedAccount.data?.type === 'business' ? blockedCurrenciesForBusinesProfiles : [];
 
   const pairs = await transferwise.getCurrencyPairs(connectedAccount.token);
   const source = pairs.sourceCurrencies.find(sc => sc.currencyCode === host.currency);
-  const currencies = source.targetCurrencies
-    .filter(c => !currencyBlockList.includes(c.currencyCode))
-    .map(c => ({ code: c.currencyCode, minInvoiceAmount: c.minInvoiceAmount }));
+  const currencies = source.targetCurrencies.map(c => ({ code: c.currencyCode, minInvoiceAmount: c.minInvoiceAmount }));
   cache.set(cacheKey, currencies, 24 * 60 * 60 /* a whole day and we could probably increase */);
-  return currencies;
+  return currencies.filter(c => !currencyBlockList.includes(c.code));
 }
 
 async function getRequiredBankInformation(host: any, currency: string, accountDetails?: any): Promise<any> {
@@ -168,9 +185,16 @@ async function getRequiredBankInformation(host: any, currency: string, accountDe
   return requiredFields;
 }
 
+async function getAccountBalances(connectedAccount: ConnectedAccount): Promise<Balance[]> {
+  await populateProfileId(connectedAccount);
+  const account = await transferwise.getBorderlessAccount(connectedAccount.token, connectedAccount.data.id);
+  return account?.balances || [];
+}
+
 export default {
   getAvailableCurrencies,
   getRequiredBankInformation,
+  getAccountBalances,
   getTemporaryQuote,
   quoteExpense,
   payExpense,

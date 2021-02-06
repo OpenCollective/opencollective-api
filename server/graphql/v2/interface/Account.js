@@ -1,14 +1,16 @@
 import { GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLString } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
 import GraphQLJSON from 'graphql-type-json';
-import { invert } from 'lodash';
+import { assign, get, invert } from 'lodash';
 
 import models, { Op } from '../../../models';
 import { NotFound } from '../../errors';
+import { CollectiveFeatures } from '../../v1/CollectiveInterface.js';
 import { ConversationCollection } from '../collection/ConversationCollection';
 import { MemberCollection, MemberOfCollection } from '../collection/MemberCollection';
 import { OrderCollection } from '../collection/OrderCollection';
 import { TransactionCollection } from '../collection/TransactionCollection';
+import { UpdateCollection } from '../collection/UpdateCollection';
 import {
   AccountOrdersFilter,
   AccountType,
@@ -19,6 +21,7 @@ import {
   TransactionType,
 } from '../enum';
 import { idEncode } from '../identifiers';
+import { AccountReferenceInput } from '../input/AccountReferenceInput';
 import { ChronologicalOrderInput } from '../input/ChronologicalOrderInput';
 import { HasMembersFields } from '../interface/HasMembers';
 import { IsMemberOfFields } from '../interface/IsMemberOf';
@@ -29,6 +32,8 @@ import { PaymentMethod } from '../object/PaymentMethod';
 import PayoutMethod from '../object/PayoutMethod';
 import { TagStats } from '../object/TagStats';
 import { TransferWise } from '../object/TransferWise';
+
+import { CollectionArgs } from './Collection';
 
 const accountFieldsDefinition = () => ({
   id: {
@@ -139,9 +144,25 @@ const accountFieldsDefinition = () => ({
       limit: { type: GraphQLInt, defaultValue: 100 },
       offset: { type: GraphQLInt, defaultValue: 0 },
       role: { type: new GraphQLList(MemberRole) },
+      isApproved: {
+        type: GraphQLBoolean,
+        description: 'Filter on (un)approved collectives',
+      },
+      isArchived: {
+        type: GraphQLBoolean,
+        description: 'Filter on archived collectives',
+      },
       accountType: {
         type: new GraphQLList(AccountType),
         description: 'Type of accounts (BOT/COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)',
+      },
+      account: {
+        type: AccountReferenceInput,
+        description: 'Specific account to query the membership of.',
+      },
+      orderBy: {
+        type: new GraphQLNonNull(ChronologicalOrderInput),
+        defaultValue: ChronologicalOrderInput.defaultValue,
       },
     },
   },
@@ -157,10 +178,16 @@ const accountFieldsDefinition = () => ({
       orderBy: {
         type: ChronologicalOrderInput,
       },
+      includeIncognitoTransactions: {
+        type: new GraphQLNonNull(GraphQLBoolean),
+        defaultValue: false,
+        description:
+          'If the account is a user and this field is true, contributions from the incognito profile will be included too (admins only)',
+      },
     },
   },
   orders: {
-    type: OrderCollection,
+    type: new GraphQLNonNull(OrderCollection),
     args: {
       limit: { type: GraphQLInt, defaultValue: 100 },
       offset: { type: GraphQLInt, defaultValue: 0 },
@@ -244,8 +271,43 @@ const accountFieldsDefinition = () => ({
     type: Location,
     description: 'The address associated to this account. This field is always public for collectives and events.',
   },
+  categories: {
+    type: new GraphQLNonNull(new GraphQLList(GraphQLString)),
+    description: 'Categories set by Open Collective to help moderation.',
+  },
   stats: {
     type: AccountStats,
+    resolve(collective) {
+      return collective;
+    },
+  },
+  updates: {
+    type: new GraphQLNonNull(UpdateCollection),
+    args: {
+      ...CollectionArgs,
+      onlyPublishedUpdates: { type: GraphQLBoolean },
+    },
+    async resolve(collective, { limit, offset, onlyPublishedUpdates }) {
+      let where = {
+        CollectiveId: collective.id,
+      };
+      if (onlyPublishedUpdates) {
+        where = assign(where, { publishedAt: { [Op.ne]: null } });
+      }
+      const query = {
+        where,
+        order: [['createdAt', 'DESC']],
+        limit,
+        offset,
+      };
+
+      const result = await models.Update.findAndCountAll(query);
+      return { nodes: result.rows, totalCount: result.count, limit, offset };
+    },
+  },
+  features: {
+    type: new GraphQLNonNull(CollectiveFeatures),
+    description: 'Describes the features enabled and available for this collective',
     resolve(collective) {
       return collective;
     },
@@ -259,7 +321,7 @@ export const Account = new GraphQLInterfaceType({
 });
 
 const accountTransactions = {
-  type: TransactionCollection,
+  type: new GraphQLNonNull(TransactionCollection),
   args: {
     type: { type: TransactionType },
     limit: { type: GraphQLInt, defaultValue: 100 },
@@ -268,9 +330,23 @@ const accountTransactions = {
       type: ChronologicalOrderInput,
       defaultValue: ChronologicalOrderInput.defaultValue,
     },
+    includeIncognitoTransactions: {
+      type: new GraphQLNonNull(GraphQLBoolean),
+      defaultValue: false,
+      description:
+        'If the account is a user and this field is true, contributions from the incognito profile will be included too (admins only)',
+    },
   },
-  async resolve(collective, args) {
+  async resolve(collective, args, req) {
     const where = { CollectiveId: collective.id };
+
+    // When users are admins, also fetch their incognito contributions
+    if (args.includeIncognitoTransactions && req.remoteUser?.isAdminOfCollective(collective)) {
+      const incognitoProfile = await req.remoteUser.getIncognitoProfile();
+      if (incognitoProfile) {
+        where.CollectiveId = { [Op.or]: [collective.id, incognitoProfile.id] };
+      }
+    }
 
     if (args.type) {
       where.type = args.type;
@@ -288,7 +364,7 @@ const accountTransactions = {
 };
 
 const accountOrders = {
-  type: OrderCollection,
+  type: new GraphQLNonNull(OrderCollection),
   args: {
     limit: { type: GraphQLInt, defaultValue: 100 },
     offset: { type: GraphQLInt, defaultValue: 0 },
@@ -327,6 +403,7 @@ const accountOrders = {
       where.TierId = tier.id;
     }
 
+    // Pagination
     if (args.limit <= 0 || args.limit > 1000) {
       args.limit = 100;
     }
@@ -474,7 +551,7 @@ export const AccountFields = {
     type: new GraphQLList(PayoutMethod),
     description: 'The list of payout methods that this collective can use to get paid',
     async resolve(collective, _, req) {
-      if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+      if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
         return null;
       } else {
         return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
@@ -516,11 +593,17 @@ export const AccountFields = {
     description: 'The list of connected accounts (Stripe, Twitter, etc ...)',
     // Only for admins, no pagination
     async resolve(collective, _, req) {
-      if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+      if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
         return null;
       } else {
         return req.loaders.Collective.connectedAccounts.load(collective.id);
       }
+    },
+  },
+  categories: {
+    type: new GraphQLNonNull(new GraphQLList(GraphQLString)),
+    resolve(collective) {
+      return get(collective.data, 'categories', []);
     },
   },
 };

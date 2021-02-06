@@ -1,15 +1,20 @@
 import { GraphQLFloat, GraphQLInt, GraphQLObjectType } from 'graphql';
+import { isNil } from 'lodash';
 
 import { Currency } from '../enum/Currency';
 
 export const Amount = new GraphQLObjectType({
   name: 'Amount',
   description: 'A financial amount.',
-  fields: {
+  fields: () => ({
     value: {
       type: GraphQLFloat,
       resolve(amount) {
-        return parseInt(amount.value, 10) / 100;
+        if (isNil(amount.value)) {
+          return null;
+        } else {
+          return parseInt(amount.value, 10) / 100;
+        }
       },
     },
     currency: {
@@ -21,8 +26,12 @@ export const Amount = new GraphQLObjectType({
     valueInCents: {
       type: GraphQLInt,
       resolve(amount) {
-        return parseInt(amount.value, 10);
+        if (isNil(amount.value)) {
+          return null;
+        } else {
+          return parseInt(amount.value, 10);
+        }
       },
     },
-  },
+  }),
 });

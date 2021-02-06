@@ -6,6 +6,12 @@
       "benchmark": true
     }
   },
+  "fees": {
+    "default": {
+      "hostPercent": 5,
+      "platformPercent": 5
+    }
+  },
   "maintenancedb": {
     "url": "postgres://postgres@localhost:5432/postgres"
   },
@@ -23,6 +29,11 @@
   "aws": {
     "s3": {
       "bucket": "opencollective-test"
+    }
+  },
+  "slack": {
+    "webhooks": {
+      "abuse": "SLACK_ABUSE_TEST_URL"
     }
   },
   "mailgun": {

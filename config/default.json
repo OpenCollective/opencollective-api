@@ -32,7 +32,13 @@
     "api": "http://localhost:3060",
     "website": "http://localhost:3000",
     "images": "https://images-staging.opencollective.com",
-    "invoices": "https://invoices-staging.opencollective.com"
+    "pdf": "https://pdf-staging.opencollective.com"
+  },
+  "fees": {
+    "default": {
+      "hostPercent": 0,
+      "platformPercent": 0
+    }
   },
   "limits": {
     "ordersPerHour": {
@@ -49,12 +55,18 @@
       "update": 10,
       "confirmToken": 15
     },
+    "sendGuestConfirmPerMinutePerEmail": 1,
+    "sendGuestConfirmPerMinutePerIp": 2,
+    "confirmGuestAccountPerMinutePerIp": 5,
     "maxNumberOfAppsPerUser": 15,
     "maxWebhooksPerUserPerCollective": 50,
     "searchEmailPerHour": 150,
     "searchEmailPerHourPerIp": 50,
     "collectiveEmailMessagePerHour": 5,
     "maxMemberInvitationsPerCollective": 50
+  },
+  "guestContributions": {
+    "enable": true
   },
   "email": {
     "from": "Open Collective <info@opencollective.com>"
@@ -92,9 +104,6 @@
     "clientID": "UNDEFINED_GITHUB_CLIENT_ID",
     "clientSecret": "UNDEFINED_GITHUB_CLIENT_SECRET"
   },
-  "algolia": {
-    "index": "dvl_collectives"
-  },
   "stripe": {
     "accountId": "acct_15vekcDjPFcHOcTm",
     "clientId": "ca_68FQcZXEcV66Kjg7egLnR1Ce87cqwoue",
@@ -103,9 +112,9 @@
     "redirectUri": "http://localhost:3060/connected-accounts/stripe/callback"
   },
   "slack": {
-    "privateActivityChannel": "#activity-private-test",
-    "publicActivityChannel": "#activity-public-test",
-    "abuseChannel": "#abuse"
+    "webhooks": {
+      "abuse": null
+    }
   },
   "recaptcha": {
     "siteKey": "6LcyeXoUAAAAAFtdHDZfsxncFUkD9NqydqbIFcCK",
@@ -114,7 +123,7 @@
   "helloworks": {
     "key": "RO7aWNLJx6CzhRix",
     "secret": "FanG4FjeV3aGHjpS2A1YckyWuhvxfKHoZN5Q5bHO",
-    "workflowId": "qdUbX5nw8sMZzykz",
+    "workflowId": "MfmOZErmhz1qPgMp",
     "callbackPath": "/helloworks/callback",
     "documentEncryptionKey": "Pz/LnMPzhxQqsbXZ0SCb3sP0uhw8dCxspoAXLXO4CV8=",
     "aws": {
@@ -142,5 +151,14 @@
   "dbEncryption": {
     "secretKey": "guineapigs",
     "cipher": "DES"
+  },
+  "graphql": {
+    "cache": {
+      "enabled": false,
+      "ttl": 300
+    }
+  },
+  "pdfService": {
+    "fetchTransactionsReceipts": false
   }
 }

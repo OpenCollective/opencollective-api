@@ -1,9 +1,11 @@
-import { isNumber, pick } from 'lodash';
+import { pick } from 'lodash';
 
 import { maxInteger } from '../../constants/math';
-import { HOST_FEE_PERCENT, TransactionTypes } from '../../constants/transactions';
-import { createRefundTransaction } from '../../lib/payments';
+import { TransactionTypes } from '../../constants/transactions';
+import { FEATURE, hasOptedInForFeature } from '../../lib/allowed-features';
+import { createRefundTransaction, getHostFee, getPlatformFee } from '../../lib/payments';
 import models from '../../models';
+
 /**
  * Manual Payment method
  * This payment method enables a host to manually receive donations (e.g. by wire directly to the host's bank account)
@@ -28,56 +30,21 @@ async function processOrder(order) {
   const payload = pick(order, ['CreatedByUserId', 'FromCollectiveId', 'CollectiveId', 'PaymentMethodId']);
   const host = await order.collective.getHostCollective();
 
-  if (host.currency !== order.currency) {
+  if (host.currency !== order.currency && !hasOptedInForFeature(host, FEATURE.CROSS_CURRENCY_MANUAL_TRANSACTIONS)) {
     throw Error(
       `Cannot manually record a transaction in a different currency than the currency of the host ${host.currency}`,
     );
   }
 
-  // Pick the first that is set as a Number
-  const platformFeePercent = [
-    // Fixed in the Order (special tiers: BackYourStack, Pre-Paid)
-    order.data?.hostFeePercent,
-    // Fixed for Bank Transfers at collective level
-    order.collective.data?.bankTransfersPlatformFeePercent,
-    // Fixed for Bank Transfers at host level
-    // As of August 2020, this will be only set on a selection of Hosts (opensource 5%)
-    host.data?.bankTransfersPlatformFeePercent,
-    // Default for Collective (skipped for now)
-    // order.collective.platformFeePercent,
-    // Default to 0
-    0,
-  ].find(isNumber);
-
-  // Pick the first that is set as a Number
-  const hostFeePercent = [
-    // Fixed in the Order (special tiers: BackYourStack, Pre-Paid)
-    order.data?.hostFeePercent,
-    // Fixed for Bank Transfers at collective level
-    // As of August 2020, this will be only set on a selection of Collective (some foundation collectives 5%)
-    order.collective.data?.bankTransfersHostFeePercent,
-    // Fixed for Bank Transfers at host level
-    // As of August 2020, this will be only set on a selection of Hosts (foundation 8%)
-    host.data?.bankTransfersHostFeePercent,
-    // Default for Collective
-    order.collective.hostFeePercent,
-    // Just in case, default on the platform
-    HOST_FEE_PERCENT,
-  ].find(isNumber);
-
-  const isFeesOnTop = order.data?.isFeesOnTop || false;
-  const feeOnTop = order.data?.platformFee || 0;
-
-  let platformFeeInHostCurrency;
-  if (isFeesOnTop) {
-    // If it's "Fees On Top", we're just using that
-    platformFeeInHostCurrency = feeOnTop;
-  } else {
-    //  Otherwise, use platformFeePercent
-    platformFeeInHostCurrency = -Math.round((platformFeePercent / 100) * order.totalAmount);
+  // In some tests, we don't have an order.paymentMethod set ...
+  if (!order.paymentMethod) {
+    order.paymentMethod = { service: 'opencollective', type: 'manual' };
   }
 
-  const hostFeeInHostCurrency = -Math.round((hostFeePercent / 100) * (order.totalAmount - feeOnTop));
+  const platformFeeInHostCurrency = await getPlatformFee(order.totalAmount, order, host);
+  const hostFeeInHostCurrency = await getHostFee(order.totalAmount, order, host);
+
+  const isFeesOnTop = order.data?.isFeesOnTop || false;
 
   const paymentProcessorFeeInHostCurrency = 0;
 
@@ -96,11 +63,12 @@ async function processOrder(order) {
     taxAmount: order.taxAmount,
     description: order.description,
     data: {
-      isFeesOnTop: order.data?.isFeesOnTop,
+      isFeesOnTop,
     },
   };
 
   const creditTransaction = await models.Transaction.createFromPayload(payload);
+
   return creditTransaction;
 }
 

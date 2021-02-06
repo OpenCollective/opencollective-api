@@ -267,7 +267,11 @@ export const loaders = req => {
       .then(results => {
         return tierIds.map(tierId => {
           const result = results.find(({ id }) => id === tierId);
-          return result ? result.availableQuantity : maxInteger;
+          if (result) {
+            return result.availableQuantity > 0 ? result.availableQuantity : 0;
+          } else {
+            return null;
+          }
         });
       }),
   );
@@ -331,7 +335,7 @@ export const loaders = req => {
         `
         SELECT "Order"."TierId" AS "TierId", COALESCE(SUM("Transaction"."netAmountInCollectiveCurrency"), 0) AS "totalDonated"
         FROM "Transactions" AS "Transaction"
-        INNER JOIN "Orders" AS "Order" ON "Transaction"."OrderId" = "Order"."id" AND ("Order"."deletedAt" IS NULL)
+        INNER JOIN "Orders" AS "Order" ON "Transaction"."OrderId" = "Order"."id" AND "Transaction"."CollectiveId" = "Order"."CollectiveId" AND ("Order"."deletedAt" IS NULL)
         WHERE "TierId" IN (?)
         AND "Transaction"."deletedAt" IS NULL
         AND "Transaction"."RefundTransactionId" IS NULL
@@ -465,12 +469,12 @@ export const loaders = req => {
     }).then(results => sortResults(combinedKeys, results, 'CollectiveId:FromCollectiveId', [])),
   );
 
-  // Order - findPendingOrdersForCollective
-  context.loaders.Order.findPendingOrdersForCollective = new DataLoader(CollectiveIds =>
+  // Order - findPledgedOrdersForCollective
+  context.loaders.Order.findPledgedOrdersForCollective = new DataLoader(CollectiveIds =>
     models.Order.findAll({
       where: {
         CollectiveId: { [Op.in]: CollectiveIds },
-        status: 'PENDING',
+        status: 'PLEDGED',
       },
       order: [['createdAt', 'DESC']],
     }).then(results => sortResults(CollectiveIds, results, 'CollectiveId', [])),
@@ -520,6 +524,12 @@ export const loaders = req => {
 
   /** *** Transaction *****/
   context.loaders.Transaction = {
+    byOrderId: new DataLoader(async keys => {
+      const where = { OrderId: { [Op.in]: keys } };
+      const order = [['createdAt', 'ASC']];
+      const transactions = await models.Transaction.findAll({ where, order });
+      return sortResults(keys, transactions, 'OrderId', []);
+    }),
     findByOrderId: options =>
       createDataLoaderWithOptions(
         (OrderIds, options) => {

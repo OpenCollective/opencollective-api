@@ -1,7 +1,7 @@
-import { GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLList, GraphQLNonNull } from 'graphql';
+import config from 'config';
+import { GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLList, GraphQLNonNull, GraphQLString } from 'graphql';
 import { isNil } from 'lodash';
 
-import { OC_FEE_PERCENT } from '../../../constants/transactions';
 import { getPaginatedContributorsForCollective } from '../../../lib/contributors';
 import models from '../../../models';
 import { ContributorCollection } from '../collection/ContributorCollection';
@@ -21,6 +21,10 @@ export const AccountWithContributionsFields = {
       },
     },
     async resolve(account, args, req): Promise<number> {
+      if (!account.hasBudget()) {
+        return 0;
+      }
+
       const stats = await req.loaders.Collective.stats.backers.load(account.id);
       if (!args.accountType) {
         return stats.all || 0;
@@ -34,6 +38,10 @@ export const AccountWithContributionsFields = {
   tiers: {
     type: new GraphQLNonNull(TierCollection),
     async resolve(account): Promise<object> {
+      if (!account.hasBudget()) {
+        return [];
+      }
+
       const query = { where: { CollectiveId: account.id }, order: [['amount', 'ASC']] };
       const result = await models.Tier.findAndCountAll(query);
       return { nodes: result.rows, totalCount: result.count };
@@ -54,7 +62,7 @@ export const AccountWithContributionsFields = {
     type: new GraphQLNonNull(GraphQLInt),
     description: 'How much platform fees are charged for this account',
     resolve(account): number {
-      return isNil(account.platformFeePercent) ? OC_FEE_PERCENT : account.platformFeePercent;
+      return isNil(account.platformFeePercent) ? config.fees.default.platformPercent : account.platformFeePercent;
     },
   },
   platformContributionAvailable: {
@@ -62,7 +70,7 @@ export const AccountWithContributionsFields = {
     description:
       'Returns true if a custom contribution to Open Collective can be submitted for contributions made to this account',
     resolve(account): boolean {
-      return account.platformFeePercent === 0;
+      return account.platformFeePercent === 0 && Boolean(account.data?.disablePlatformTips) !== true;
     },
   },
   balance: {
@@ -72,6 +80,9 @@ export const AccountWithContributionsFields = {
     resolve(account, _, req): Promise<number> {
       return req.loaders.Collective.balance.load(account.id);
     },
+  },
+  contributionPolicy: {
+    type: GraphQLString,
   },
 };
 

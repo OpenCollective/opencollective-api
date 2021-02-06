@@ -127,7 +127,7 @@ describe('server/graphql/v1/createOrder', () => {
         currency: 'eur',
         status: 'succeeded',
       },
-      paymentIntent: {
+      paymentIntentConfirmed: {
         charges: { data: [{ id: 'ch_1AzPXHD8MNtzsDcgXpUhv4pm', currency: 'eur', status: 'succeeded' }] },
         status: 'succeeded',
       },
@@ -145,6 +145,7 @@ describe('server/graphql/v1/createOrder', () => {
       slug: 'test',
       name: 'test',
       isActive: false,
+      isPledged: true,
       website: 'https://github.com/opencollective/frontend',
     });
     const thisOrder = cloneDeep(baseOrder);
@@ -169,7 +170,7 @@ describe('server/graphql/v1/createOrder', () => {
     res.errors && console.error(res.errors);
     expect(res.errors).to.not.exist;
 
-    expect(res.data.createOrder.status).to.equal('PENDING');
+    expect(res.data.createOrder.status).to.equal('PLEDGED');
   });
 
   it('creates a pending order (pledge) with inactive subscription if interval is included and collective is not active', async () => {
@@ -177,6 +178,7 @@ describe('server/graphql/v1/createOrder', () => {
       slug: 'test',
       name: 'test',
       isActive: false,
+      isPledged: true,
       website: 'https://github.com/opencollective/frontend',
     });
     const thisOrder = cloneDeep(baseOrder);
@@ -202,15 +204,20 @@ describe('server/graphql/v1/createOrder', () => {
     res.errors && console.error(res.errors);
     expect(res.errors).to.not.exist;
 
-    expect(res.data.createOrder.status).to.equal('PENDING');
+    expect(res.data.createOrder.status).to.equal('PLEDGED');
     expect(res.data.createOrder.subscription.interval).to.equal('month');
   });
 
   it('creates a pending order if the collective is active and the payment method type is manual', async () => {
-    const hostAdmin = await models.User.create({ email: store.randEmail(), name: '_____' });
+    const hostAdmin = await models.User.createUserWithCollective({
+      firstName: 'Mike',
+      lastName: 'Doe',
+      email: store.randEmail(),
+    });
     const host = await models.Collective.create({
       slug: 'host-collective',
       name: 'Open Collective 501c3',
+      type: 'ORGANIZATION',
       currency: 'USD',
       CreatedByUserId: hostAdmin.id,
       settings: {
@@ -222,6 +229,8 @@ describe('server/graphql/v1/createOrder', () => {
         },
       },
     });
+    await host.addUserWithRole(hostAdmin, 'ADMIN', { CreatedByUserId: hostAdmin.id });
+
     const collective = await models.Collective.create({
       slug: 'webpack',
       name: 'test',
@@ -244,6 +253,12 @@ describe('server/graphql/v1/createOrder', () => {
     });
     await collective.addHost(host, hostAdmin, { shouldAutomaticallyApprove: true });
     await collective.update({ isActive: true });
+
+    await utils.waitForCondition(() => emailSendMessageSpy.callCount === 1, {
+      tag: 'fearlesscitiesbrussels would love to be hosted ',
+    });
+    emailSendMessageSpy.resetHistory();
+
     const thisOrder = cloneDeep(baseOrder);
     delete thisOrder.paymentMethod;
     thisOrder.paymentMethod = { type: 'manual' };
@@ -274,11 +289,8 @@ describe('server/graphql/v1/createOrder', () => {
       where: { OrderId: res.data.createOrder.id },
     });
     expect(transactionsCount).to.equal(0);
-    await utils.waitForCondition(() => emailSendMessageSpy.callCount == 3);
-    expect(emailSendMessageSpy.callCount).to.equal(3);
-
-    const hostEmailArgs = emailSendMessageSpy.args.find(callArgs => callArgs[1].includes('would love to be hosted'));
-    expect(hostEmailArgs).to.exist;
+    await utils.waitForCondition(() => emailSendMessageSpy.callCount == 2);
+    expect(emailSendMessageSpy.callCount).to.equal(2);
 
     const pendingEmailArgs = emailSendMessageSpy.args.find(callArgs =>
       callArgs[1].includes('New pending financial contribution'),
@@ -291,7 +303,7 @@ describe('server/graphql/v1/createOrder', () => {
     expect(actionRequiredEmailArgs[0]).to.equal(remoteUser.email);
     expect(actionRequiredEmailArgs[2]).to.match(/IBAN 1234567890987654321/);
     expect(actionRequiredEmailArgs[2]).to.match(
-      /for the amount of \$20 with the mention: webpack event backer order: [0-9]+/,
+      /for the amount of \$20\.00 with the mention: webpack event backer order: [0-9]+/,
     );
     expect(actionRequiredEmailArgs[1]).to.equal('ACTION REQUIRED: your $20 registration to meetup is pending');
   });
@@ -444,7 +456,9 @@ describe('server/graphql/v1/createOrder', () => {
 
     // Then there should be errors
     expect(res.errors).to.exist;
-    expect(res.errors[0].message).to.equal('You need to be authenticated to perform this action');
+    expect(res.errors[0].message).to.equal(
+      'You need to provide a guest profile with an email for logged out contributions',
+    );
   });
 
   it("doesn't store the payment method for user if order fail", async () => {

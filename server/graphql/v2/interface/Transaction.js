@@ -1,6 +1,14 @@
-import { GraphQLBoolean, GraphQLInterfaceType, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
+import {
+  GraphQLBoolean,
+  GraphQLInt,
+  GraphQLInterfaceType,
+  GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLString,
+} from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
 
+import orderStatus from '../../../constants/order_status';
 import models from '../../../models';
 import * as TransactionLib from '../../common/transactions';
 import { TransactionType } from '../enum/TransactionType';
@@ -15,7 +23,7 @@ import { Account } from './Account';
 const TransactionPermissions = new GraphQLObjectType({
   name: 'TransactionPermissions',
   description: 'Fields for the user permissions on an transaction',
-  fields: {
+  fields: () => ({
     canRefund: {
       type: new GraphQLNonNull(GraphQLBoolean),
       description: 'Whether the current user can edit the transaction',
@@ -26,7 +34,12 @@ const TransactionPermissions = new GraphQLObjectType({
       description: "Whether the current user can download this transaction's invoice",
       resolve: TransactionLib.canDownloadInvoice,
     },
-  },
+    canReject: {
+      type: new GraphQLNonNull(GraphQLBoolean),
+      description: 'Whether the current user can reject the transaction',
+      resolve: TransactionLib.canReject,
+    },
+  }),
 });
 
 export const Transaction = new GraphQLInterfaceType({
@@ -34,11 +47,11 @@ export const Transaction = new GraphQLInterfaceType({
   description: 'Transaction interface shared by all kind of transactions (Debit, Credit)',
   fields: () => {
     return {
-      // _internal_id: {
-      //   type: GraphQLInt,
-      // },
       id: {
-        type: GraphQLString,
+        type: new GraphQLNonNull(GraphQLString),
+      },
+      legacyId: {
+        type: new GraphQLNonNull(GraphQLInt),
       },
       uuid: {
         type: GraphQLString,
@@ -50,13 +63,19 @@ export const Transaction = new GraphQLInterfaceType({
         type: GraphQLString,
       },
       amount: {
-        type: Amount,
+        type: new GraphQLNonNull(Amount),
+      },
+      amountInHostCurrency: {
+        type: new GraphQLNonNull(Amount),
       },
       netAmount: {
-        type: Amount,
+        type: new GraphQLNonNull(Amount),
+      },
+      taxAmount: {
+        type: new GraphQLNonNull(Amount),
       },
       platformFee: {
-        type: Amount,
+        type: new GraphQLNonNull(Amount),
       },
       hostFee: {
         type: Amount,
@@ -71,6 +90,9 @@ export const Transaction = new GraphQLInterfaceType({
         type: Account,
       },
       toAccount: {
+        type: Account,
+      },
+      giftCardEmitterAccount: {
         type: Account,
       },
       createdAt: {
@@ -88,11 +110,20 @@ export const Transaction = new GraphQLInterfaceType({
       isRefunded: {
         type: GraphQLBoolean,
       },
+      isRefund: {
+        type: GraphQLBoolean,
+      },
       paymentMethod: {
         type: PaymentMethod,
       },
       permissions: {
         type: TransactionPermissions,
+      },
+      isOrderRejected: {
+        type: new GraphQLNonNull(GraphQLBoolean),
+      },
+      refundTransaction: {
+        type: Transaction,
       },
     };
   },
@@ -100,16 +131,16 @@ export const Transaction = new GraphQLInterfaceType({
 
 export const TransactionFields = () => {
   return {
-    // _internal_id: {
-    //   type: GraphQLInt,
-    //   resolve(transaction) {
-    //     return transaction.id;
-    //   },
-    // },
     id: {
-      type: GraphQLString,
+      type: new GraphQLNonNull(GraphQLString),
       resolve(transaction) {
         return idEncode(transaction.id, 'transaction');
+      },
+    },
+    legacyId: {
+      type: new GraphQLNonNull(GraphQLInt),
+      resolve(transaction) {
+        return transaction.id;
       },
     },
     uuid: {
@@ -128,13 +159,19 @@ export const TransactionFields = () => {
       },
     },
     amount: {
-      type: Amount,
+      type: new GraphQLNonNull(Amount),
       resolve(transaction) {
         return { value: transaction.amount, currency: transaction.currency };
       },
     },
+    amountInHostCurrency: {
+      type: new GraphQLNonNull(Amount),
+      resolve(transaction) {
+        return { value: transaction.amountInHostCurrency, currency: transaction.hostCurrency };
+      },
+    },
     netAmount: {
-      type: Amount,
+      type: new GraphQLNonNull(Amount),
       resolve(transaction) {
         return {
           value: transaction.netAmountInCollectiveCurrency,
@@ -142,8 +179,17 @@ export const TransactionFields = () => {
         };
       },
     },
+    taxAmount: {
+      type: new GraphQLNonNull(Amount),
+      resolve(transaction) {
+        return {
+          value: Math.abs(transaction.taxAmount),
+          currency: transaction.currency,
+        };
+      },
+    },
     platformFee: {
-      type: Amount,
+      type: new GraphQLNonNull(Amount),
       resolve(transaction) {
         return {
           value: transaction.platformFeeInHostCurrency || 0,
@@ -152,7 +198,7 @@ export const TransactionFields = () => {
       },
     },
     hostFee: {
-      type: Amount,
+      type: new GraphQLNonNull(Amount),
       resolve(transaction) {
         return {
           value: transaction.hostFeeInHostCurrency || 0,
@@ -161,7 +207,7 @@ export const TransactionFields = () => {
       },
     },
     paymentProcessorFee: {
-      type: Amount,
+      type: new GraphQLNonNull(Amount),
       resolve(transaction) {
         return {
           value: transaction.paymentProcessorFeeInHostCurrency || 0,
@@ -214,6 +260,9 @@ export const TransactionFields = () => {
         return transaction.RefundTransactionId !== null;
       },
     },
+    isRefund: {
+      type: GraphQLBoolean,
+    },
     paymentMethod: {
       type: PaymentMethod,
       resolve(transaction) {
@@ -225,6 +274,32 @@ export const TransactionFields = () => {
       description: 'The permissions given to current logged in user for this transaction',
       async resolve(transaction) {
         return transaction; // Individual fields are set by TransactionPermissions's resolvers
+      },
+    },
+    giftCardEmitterAccount: {
+      type: Account,
+      description: 'Account that emitted the gift card used for this transaction (if any)',
+      async resolve(transaction, _, req) {
+        return transaction.UsingVirtualCardFromCollectiveId
+          ? await req.loaders.Collective.byId.load(transaction.UsingVirtualCardFromCollectiveId)
+          : null;
+      },
+    },
+    isOrderRejected: {
+      type: new GraphQLNonNull(GraphQLBoolean),
+      async resolve(transaction, _, req) {
+        if (transaction.OrderId) {
+          const order = await req.loaders.Order.byId.load(transaction.OrderId);
+          return order.status === orderStatus.REJECTED;
+        } else {
+          return false;
+        }
+      },
+    },
+    refundTransaction: {
+      type: Transaction,
+      resolve(transaction) {
+        return transaction.getRefundTransaction();
       },
     },
   };

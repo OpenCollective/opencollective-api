@@ -1,4 +1,5 @@
 import Promise from 'bluebird';
+import config from 'config';
 import debugLib from 'debug';
 import { get, intersection } from 'lodash';
 import { Op } from 'sequelize';
@@ -180,7 +181,7 @@ export default function (Sequelize, DataTypes) {
               throw new Error(`${instance.service} payment method requires a token`);
             }
             if (instance.service === 'stripe' && !instance.token.match(/^(tok|src|pm)_[a-zA-Z0-9]{24}/)) {
-              if (process.env.NODE_ENV !== 'production' && isTestToken(instance.token)) {
+              if (config.env !== 'production' && isTestToken(instance.token)) {
                 // test token for end to end tests
               } else {
                 throw new Error(`Invalid Stripe token ${instance.token}`);
@@ -294,15 +295,17 @@ export default function (Sequelize, DataTypes) {
         );
       }
     } else {
+      const collective = await models.Collective.findByPk(this.CollectiveId);
+
       // If there is a monthly limit per member, the user needs to be a member or admin of the collective that owns the payment method
-      if (this.monthlyLimitPerMember && !user.isMember(this.CollectiveId)) {
+      if (this.monthlyLimitPerMember && !user.isMemberOfCollective(collective)) {
         throw new Error(
           "You don't have enough permissions to use this payment method (you need to be a member or an admin of the collective that owns this payment method)",
         );
       }
 
       // If there is no monthly limit, the user needs to be an admin of the collective that owns the payment method
-      if (!this.monthlyLimitPerMember && !user.isAdmin(this.CollectiveId) && this.type !== 'manual') {
+      if (!this.monthlyLimitPerMember && !user.isAdminOfCollective(collective) && this.type !== 'manual') {
         throw new Error(
           "You don't have enough permissions to use this payment method (you need to be an admin of the collective that owns this payment method)",
         );

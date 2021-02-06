@@ -10,13 +10,14 @@ import activities from '../../../constants/activities';
 import { types } from '../../../constants/collectives';
 import FEATURE from '../../../constants/feature';
 import roles from '../../../constants/roles';
-import { purgeCacheForPage } from '../../../lib/cloudflare';
+import { purgeCacheForCollective } from '../../../lib/cache';
 import emailLib from '../../../lib/email';
 import * as github from '../../../lib/github';
 import { handleHostCollectivesLimit } from '../../../lib/plans';
 import { canUseFeature } from '../../../lib/user-permissions';
 import { defaultHostCollective } from '../../../lib/utils';
 import models, { Op } from '../../../models';
+import { HostApplicationStatus } from '../../../models/HostApplication';
 import { FeatureNotAllowedForUser, NotFound, RateLimitExceeded, Unauthorized, ValidationFailed } from '../../errors';
 
 const DEFAULT_COLLECTIVE_SETTINGS = {
@@ -32,6 +33,11 @@ export async function createCollective(_, args, req) {
     throw new ValidationFailed('collective.name required');
   }
 
+  // TODO: enable me when Cypress helpers are migrated to v2
+  // if (args.collective.type === types.COLLECTIVE) {
+  //   throw new ValidationFailed('This mutation should not be used to create Collectives, use GraphQL v2.');
+  // }
+
   let hostCollective, parentCollective, collective;
 
   const collectiveData = {
@@ -44,6 +50,7 @@ export async function createCollective(_, args, req) {
   if (location) {
     collectiveData.locationName = location.name;
     collectiveData.address = location.address;
+    collectiveData.countryISO = location.country;
     if (location.lat) {
       collectiveData.geoLocationLatLong = {
         type: 'Point',
@@ -127,20 +134,7 @@ export async function createCollective(_, args, req) {
 
   // We add the admins of the parent collective as admins
   if (collectiveData.type === types.EVENT) {
-    promises.push(collective.addUserWithRole(req.remoteUser, roles.ADMIN, { CreatedByUserId: req.remoteUser.id }));
-    const admins = await models.Member.findAll({ where: { CollectiveId: parentCollective.id, role: roles.ADMIN } });
-    admins.forEach(member => {
-      if (member.MemberCollectiveId !== req.remoteUser.CollectiveId) {
-        promises.push(
-          models.Member.create({
-            CreatedByUserId: req.remoteUser.id,
-            CollectiveId: collective.id,
-            MemberCollectiveId: member.MemberCollectiveId,
-            role: roles.ADMIN,
-          }),
-        );
-      }
-    });
+    // Nothing needed, ADMINS of the Parent are Admins of the Event and that's it
   } else if (collectiveData.members) {
     promises.push(
       collective.editMembers(collectiveData.members, {
@@ -156,10 +150,10 @@ export async function createCollective(_, args, req) {
 
   // Purge cache for parent collective (for events) and hosts
   if (parentCollective) {
-    purgeCacheForPage(`/${parentCollective.slug}`);
+    purgeCacheForCollective(parentCollective.slug);
   }
   if (hostCollective) {
-    purgeCacheForPage(`/${hostCollective.slug}`);
+    purgeCacheForCollective(hostCollective.slug);
   }
 
   // Inherit fees from parent collective after setting its host (events)
@@ -167,24 +161,7 @@ export async function createCollective(_, args, req) {
     await collective.update({ hostFeePercent: parentCollective.hostFeePercent });
   }
 
-  // if the type of collective is an organization or an event, we don't notify the host
-  if (collective.type !== types.COLLECTIVE) {
-    return collective;
-  }
-  const remoteUserCollective = await models.Collective.findByPk(req.remoteUser.CollectiveId);
-  models.Activity.create({
-    type: activities.COLLECTIVE_CREATED,
-    UserId: req.remoteUser.id,
-    CollectiveId: get(hostCollective, 'id'),
-    data: {
-      collective: collective.info,
-      host: get(hostCollective, 'info'),
-      user: {
-        email: req.remoteUser.email,
-        collective: remoteUserCollective.info,
-      },
-    },
-  });
+  // if the type of collective is an organization or an event, we don't send notification
 
   return collective;
 }
@@ -207,7 +184,7 @@ export async function createCollectiveFromGithub(_, args, req) {
   };
 
   // For e2e testing, we enable testuser+(admin|member)@opencollective.com to create collective without github validation
-  if (process.env.NODE_ENV !== 'production' && user.email.match(/.*test.*@opencollective.com$/)) {
+  if (config.env !== 'production' && user.email.match(/.*test.*@opencollective.com$/)) {
     const existingCollective = models.Collective.findOne({
       where: { slug: collectiveData.slug.toLowerCase() },
     });
@@ -316,7 +293,7 @@ export function editCollective(_, args, req) {
   }
 
   const newCollectiveData = {
-    ...omit(args.collective, ['location', 'type', 'ParentCollectiveId']),
+    ...omit(args.collective, ['location', 'type', 'ParentCollectiveId', 'data']),
     LastEditedByUserId: req.remoteUser.id,
   };
 
@@ -419,7 +396,7 @@ export function editCollective(_, args, req) {
     })
     .then(() => {
       // Ask cloudflare to refresh the cache for this collective's page
-      purgeCacheForPage(`/${collective.slug}`);
+      purgeCacheForCollective(collective.slug);
       return collective;
     });
 }
@@ -452,7 +429,26 @@ export async function approveCollective(remoteUser, CollectiveId) {
   // Check limits
   await handleHostCollectivesLimit(host, { throwHostException: true, notifyAdmins: true });
 
-  models.Activity.create({
+  // Approve all events and projects created by this collective
+  const events = await collective.getEvents();
+  await Promise.all(
+    events.map(event => {
+      event.update({ isActive: true, approvedAt: new Date() });
+    }),
+  );
+  const projects = await collective.getProjects();
+  await Promise.all(
+    projects.map(project => {
+      project.update({ isActive: true, approvedAt: new Date() });
+    }),
+  );
+
+  purgeCacheForCollective(collective.slug);
+
+  // Approve the collective and return it
+  await collective.update({ isActive: true, approvedAt: new Date() });
+  await models.HostApplication.updatePendingApplications(host, collective, HostApplicationStatus.APPROVED);
+  await models.Activity.create({
     type: activities.COLLECTIVE_APPROVED,
     UserId: remoteUser.id,
     CollectiveId: host.id,
@@ -465,17 +461,7 @@ export async function approveCollective(remoteUser, CollectiveId) {
     },
   });
 
-  // Approve all events created by this collective
-  const events = await collective.getEvents();
-  await Promise.all(
-    events.map(event => {
-      event.update({ isActive: true, approvedAt: new Date() });
-    }),
-  );
-
-  purgeCacheForPage(`/${collective.slug}`);
-  // Approve the collective and return it
-  return collective.update({ isActive: true, approvedAt: new Date() });
+  return collective;
 }
 
 export async function archiveCollective(_, args, req) {
@@ -516,9 +502,11 @@ export async function archiveCollective(_, args, req) {
     membership.destroy();
   }
 
-  if (collective.type === types.EVENT) {
+  if (collective.type === types.EVENT || collective.type === types.PROJECT) {
     return collective.update({ isActive: false, deactivatedAt: Date.now() });
   }
+
+  // TODO: cascade deactivation to EVENTs and PROJECTs?
 
   return collective.update({ isActive: false, deactivatedAt: Date.now(), approvedAt: null, HostCollectiveId: null });
 }
@@ -602,7 +590,9 @@ export async function deleteCollective(_, args, req) {
   }
 
   return models.Member.findAll({
-    where: { CollectiveId: collective.id },
+    where: {
+      [Op.or]: [{ CollectiveId: collective.id }, { MemberCollectiveId: collective.id }],
+    },
   })
     .then(members => {
       return map(
@@ -885,7 +875,9 @@ export async function rejectCollective(_, args, req) {
   const rejectionReason =
     args.rejectionReason && sanitize(args.rejectionReason, { allowedTags: [], allowedAttributes: {} }).trim();
 
-  models.Activity.create({
+  await collective.changeHost(null, req.remoteUser);
+  await models.HostApplication.updatePendingApplications(hostCollective, collective, HostApplicationStatus.REJECTED);
+  await models.Activity.create({
     type: activities.COLLECTIVE_REJECTED,
     UserId: req.remoteUser.id,
     CollectiveId: hostCollective.id,
@@ -899,8 +891,8 @@ export async function rejectCollective(_, args, req) {
     },
   });
 
-  purgeCacheForPage(`/${collective.slug}`);
-  return collective.changeHost(null, req.remoteUser);
+  purgeCacheForCollective(collective.slug);
+  return collective;
 }
 
 export async function activateCollectiveAsHost(_, args, req) {
@@ -913,11 +905,11 @@ export async function activateCollectiveAsHost(_, args, req) {
     throw new NotFound(`Collective with id ${args.id} not found`);
   }
 
-  if (!req.remoteUser.isAdmin(collective.id)) {
+  if (!req.remoteUser.isAdminOfCollective(collective)) {
     throw new Unauthorized('You need to be logged in as an Admin.');
   }
 
-  return collective.becomeHost();
+  return collective.becomeHost({ remoteUser: req.remoteUser });
 }
 
 export async function deactivateCollectiveAsHost(_, args, req) {
@@ -930,11 +922,11 @@ export async function deactivateCollectiveAsHost(_, args, req) {
     throw new NotFound(`Collective with id ${args.id} not found`);
   }
 
-  if (!req.remoteUser.isAdmin(collective.id)) {
+  if (!req.remoteUser.isAdminOfCollective(collective)) {
     throw new Unauthorized('You need to be logged in as an Admin.');
   }
 
-  return collective.deactivateAsHost();
+  return collective.deactivateAsHost({ remoteUser: req.remoteUser });
 }
 
 export async function activateBudget(_, args, req) {
@@ -947,11 +939,11 @@ export async function activateBudget(_, args, req) {
     throw new NotFound(`Collective with id ${args.id} not found`);
   }
 
-  if (!req.remoteUser.isAdmin(collective.id)) {
+  if (!req.remoteUser.isAdminOfCollective(collective)) {
     throw new Unauthorized('You need to be logged in as an Admin.');
   }
 
-  return collective.activateBudget();
+  return collective.activateBudget({ remoteUser: req.remoteUser });
 }
 
 export async function deactivateBudget(_, args, req) {
@@ -964,9 +956,9 @@ export async function deactivateBudget(_, args, req) {
     throw new NotFound(`Collective with id ${args.id} not found`);
   }
 
-  if (!req.remoteUser.isAdmin(collective.id)) {
+  if (!req.remoteUser.isAdminOfCollective(collective)) {
     throw new Unauthorized('You need to be logged in as an Admin.');
   }
 
-  return collective.deactivateBudget();
+  return collective.deactivateBudget({ remoteUser: req.remoteUser });
 }

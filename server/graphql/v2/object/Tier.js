@@ -3,8 +3,9 @@ import GraphQLJSON from 'graphql-type-json';
 
 import models, { Op } from '../../../models';
 import { OrderCollection } from '../collection/OrderCollection';
-import { OrderStatus, TierAmountType, TierInterval, TierType } from '../enum';
+import { ContributionFrequency, OrderStatus, TierAmountType, TierInterval, TierType } from '../enum';
 import { idEncode } from '../identifiers';
+import ISODateTime from '../scalar/ISODateTime';
 
 import { Amount } from './Amount';
 
@@ -60,7 +61,7 @@ export const Tier = new GraphQLObjectType({
         },
       },
       amount: {
-        type: Amount,
+        type: new GraphQLNonNull(Amount),
         resolve(tier) {
           return { value: tier.amount, currency: tier.currency };
         },
@@ -70,12 +71,27 @@ export const Tier = new GraphQLObjectType({
       },
       interval: {
         type: TierInterval,
+        deprecationReason: '2020-08-24: Please use "frequency"',
+      },
+      frequency: {
+        type: ContributionFrequency,
       },
       presets: {
         type: new GraphQLList(GraphQLInt),
       },
       maxQuantity: {
         type: GraphQLInt,
+      },
+      availableQuantity: {
+        type: GraphQLInt,
+        description: 'Number of tickets available. Returns null if there is no limit.',
+        resolve(tier, _, req) {
+          if (!tier.maxQuantity) {
+            return null;
+          } else {
+            return req.loaders.Tier.availableQuantity.load(tier.id);
+          }
+        },
       },
       customFields: {
         type: GraphQLJSON,
@@ -84,10 +100,13 @@ export const Tier = new GraphQLObjectType({
         type: new GraphQLNonNull(TierAmountType),
       },
       minimumAmount: {
-        type: Amount,
+        type: new GraphQLNonNull(Amount),
         resolve(tier) {
           return { value: tier.minimumAmount };
         },
+      },
+      endsAt: {
+        type: ISODateTime,
       },
     };
   },
