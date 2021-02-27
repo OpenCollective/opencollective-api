@@ -1,15 +1,17 @@
 /** @module lib/subscriptions */
 
 import config from 'config';
+import { get } from 'lodash';
 import moment from 'moment';
 import { Op } from 'sequelize';
 
+import intervals from '../constants/intervals';
+import status from '../constants/order_status';
 import models from '../models';
+
 import emailLib from './email';
 import * as paymentsLib from './payments';
-import { getRecommendedCollectives } from './data';
-import status from '../constants/order_status';
-import intervals from '../constants/intervals';
+import { isHostPlan } from './plans';
 
 /** Maximum number of attempts before an order gets cancelled. */
 export const MAX_RETRIES = 5;
@@ -31,6 +33,7 @@ export async function ordersWithPendingCharges({ limit } = {}) {
       { model: models.Collective, as: 'collective' },
       { model: models.Collective, as: 'fromCollective' },
       { model: models.PaymentMethod, as: 'paymentMethod' },
+      { model: models.Tier, as: 'Tier' },
       {
         model: models.Subscription,
         where: {
@@ -332,8 +335,19 @@ export async function sendFailedEmail(order, lastAttempt) {
 /** Send `thankyou` email */
 export async function sendThankYouEmail(order, transaction) {
   const relatedCollectives = await order.collective.getRelatedCollectives(3, 0);
-  const recommendedCollectives = await getRecommendedCollectives(order.collective, 3);
   const user = order.createdByUser;
+
+  if (isHostPlan(order)) {
+    return emailLib.send(
+      'hostplan.renewal.thankyou',
+      user.email,
+      { plan: get(order, 'Tier.name') },
+      {
+        from: `${order.collective.name} <hello@${order.collective.slug}.opencollective.com>`,
+      },
+    );
+  }
+
   return emailLib.send(
     'thankyou',
     user.email,
@@ -345,7 +359,6 @@ export async function sendThankYouEmail(order, transaction) {
       collective: order.collective.info,
       fromCollective: order.fromCollective.minimal,
       relatedCollectives,
-      recommendedCollectives,
       config: { host: config.host },
       interval: order.Subscription.interval,
       subscriptionsLink: `${config.host.website}/${order.fromCollective.slug}/subscriptions`,

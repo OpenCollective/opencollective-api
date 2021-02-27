@@ -1,13 +1,13 @@
 import Promise from 'bluebird';
 import { get } from 'lodash';
 
-import logger from '../../lib/logger';
-import models, { sequelize } from '../../models';
+import { maxInteger } from '../../constants/math';
 import { TransactionTypes } from '../../constants/transactions';
 import { getFxRate } from '../../lib/currency';
+import logger from '../../lib/logger';
 import * as paymentsLib from '../../lib/payments';
 import { formatCurrency } from '../../lib/utils';
-import { maxInteger } from '../../constants/math';
+import models, { sequelize } from '../../models';
 
 const paymentMethodProvider = {};
 
@@ -36,8 +36,11 @@ paymentMethodProvider.getBalance = paymentMethod => {
     // If the collective is a host (USER or ORGANIZATION)
     if (collective.type === 'ORGANIZATION' || collective.type === 'USER') {
       return collective.isHost().then(isHost => {
-        if (!isHost) return 0;
-        else return maxInteger; // GraphQL doesn't like Infinity
+        if (!isHost) {
+          return 0;
+        } else {
+          return maxInteger;
+        } // GraphQL doesn't like Infinity
       });
     }
 
