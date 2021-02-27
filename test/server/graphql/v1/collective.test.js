@@ -2,12 +2,12 @@ import { expect } from 'chai';
 import { describe, it } from 'mocha';
 import sinon from 'sinon';
 
-import models from '../../../../server/models';
-import cache from '../../../../server/lib/cache';
 import * as expenses from '../../../../server/graphql/v1/mutations/expenses';
-
-import * as utils from '../../../utils';
+import cache from '../../../../server/lib/cache';
+import models, { Op } from '../../../../server/models';
 import * as store from '../../../stores';
+import { fakeUser } from '../../../test-helpers/fake-data';
+import * as utils from '../../../utils';
 
 describe('server/graphql/v1/collective', () => {
   beforeEach(async () => {
@@ -73,14 +73,15 @@ describe('server/graphql/v1/collective', () => {
       });
       // And given some expenses
       const expense = await store.createApprovedExpense(user, {
-        category: 'Engineering',
+        category: 'ENGINEERING',
         amount: 100 * (i + 1),
         description: 'test',
         currency,
-        payoutMethod: 'manual',
+        legacyPayoutMethod: 'manual',
+        items: [{ amount: 100 * (i + 1), url: store.randUrl() }],
         collective: { id: apex.id },
       });
-      await expenses.payExpense(hostAdmin, { id: expense.id });
+      await expenses.payExpense(utils.makeRequest(hostAdmin), { id: expense.id });
     }
 
     // When the following query is executed
@@ -212,7 +213,7 @@ describe('server/graphql/v1/collective', () => {
     });
 
     expect(collective.stats.topExpenses).to.deep.equal({
-      byCategory: [{ category: 'Engineering', count: 10, totalExpenses: 5500 }],
+      byCategory: [{ category: 'ENGINEERING', count: 10, totalExpenses: 5500 }],
       byCollective: [
         {
           slug: 'testuser9',
@@ -292,8 +293,9 @@ describe('server/graphql/v1/collective', () => {
       amount,
       description,
       currency: 'EUR',
-      payoutMethod: 'manual',
+      legacyPayoutMethod: 'manual',
       collective: { id: cid },
+      items: [{ url: store.randUrl(), amount }],
     });
 
     // And given that we add some expenses to brussels together:
@@ -816,6 +818,9 @@ describe('server/graphql/v1/collective', () => {
     });
 
     it('edits members', async () => {
+      const newUser1 = await fakeUser();
+      const newUser2 = await fakeUser();
+
       const collective = {
         id: pubnubCollective.id,
         slug: 'pubnub',
@@ -829,23 +834,17 @@ describe('server/graphql/v1/collective', () => {
           {
             id: adminMembership.id,
             role: 'ADMIN',
-            member: {
-              name: 'Xavier Damman',
-              email: null,
-            },
           },
           {
             role: 'MEMBER',
             member: {
-              name: 'member1',
-              email: 'member1@hail.com',
+              id: newUser1.collective.id,
             },
           },
           {
             role: 'ADMIN',
             member: {
-              name: 'member2',
-              email: 'member2@hail.com',
+              id: newUser2.collective.id,
             },
           },
         ],
@@ -877,29 +876,46 @@ describe('server/graphql/v1/collective', () => {
       res.errors && console.error(res.errors);
       expect(res.errors).to.not.exist;
       const members = res.data.editCollective.members;
-      expect(members.length).to.equal(4);
-      const member1 = members.find(m => m.member.name === 'member1');
-      expect(member1.role).to.equal('MEMBER');
-      expect(member1.member.name).to.equal('member1');
-      expect(member1.member.email).to.equal('member1@hail.com');
+      let coreContributors = members.filter(m => ['ADMIN', 'MEMBER'].includes(m.role));
+      expect(coreContributors.length).to.equal(1); // others need to accept the invitation
+      const invitations = await models.MemberInvitation.findAll({ where: { CollectiveId: collective.id } });
+      expect(invitations.length).to.equal(2);
+      await Promise.all(invitations.map(invitation => invitation.accept()));
 
-      const member = await models.User.findByPk(member1.member.createdByUser.id);
-      const res2 = await utils.graphqlQuery(query, { collective }, member);
+      coreContributors = await models.Member.findAll({
+        where: {
+          CollectiveId: collective.id,
+          role: { [Op.in]: ['ADMIN', 'MEMBER'] },
+        },
+      });
+
+      expect(coreContributors.length).to.equal(3);
+
+      const member1 = coreContributors.find(m => m.MemberCollectiveId === newUser1.CollectiveId);
+      expect(member1.role).to.equal('MEMBER');
+      const res2 = await utils.graphqlQuery(query, { collective }, newUser1);
       expect(res2.errors).to.exist;
       expect(res2.errors[0].message).to.equal(
         'You must be logged in as an admin or as the host of this collective collective to edit it',
       );
 
-      const member2 = members.find(m => m.member.name === 'member2');
-      const adminMember = await models.User.findByPk(member2.member.createdByUser.id);
-      const res3 = await utils.graphqlQuery(query, { collective }, adminMember);
+      const res3 = await utils.graphqlQuery(query, { collective }, newUser2);
       expect(res3.errors[0].message).to.equal(
         'You cannot remove yourself as a Collective admin. If you are the only admin, please add a new one and ask them to remove you.',
       );
     });
 
     it('apply to host', async () => {
-      const { hostCollective } = await store.newHost('brusselstogether', 'EUR', 5);
+      const { hostCollective } = await store.newHost(
+        'brusselstogether',
+        'EUR',
+        5,
+        {},
+        {
+          type: 'ORGANIZATION',
+          isHostAccount: true,
+        },
+      );
 
       const collective = {
         id: pubnubCollective.id,
@@ -960,6 +976,7 @@ describe('server/graphql/v1/collective', () => {
         amount: 20000,
       });
       const message = 'I am happy to support this collective!';
+      cacheDelSpy.resetHistory();
       const res = await utils.graphqlQuery(
         QUERY,
         {
@@ -1013,6 +1030,7 @@ describe('server/graphql/v1/collective', () => {
         },
       );
       expect(quantityUpdated).to.equal(2);
+      cacheDelSpy.resetHistory();
       const res = await utils.graphqlQuery(
         QUERY,
         {
