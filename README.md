@@ -1,9 +1,6 @@
 # Open Collective API
 
-[![Circle CI](https://circleci.com/gh/opencollective/opencollective-api/tree/master.svg?style=shield)](https://circleci.com/gh/opencollective/opencollective-api/tree/master)
-[![Slack Status](https://slack.opencollective.org/badge.svg)](https://slack.opencollective.org)
 [![Dependency Status](https://david-dm.org/opencollective/opencollective-api.svg)](https://david-dm.org/opencollective/opencollective-api)
-[![Coverage Status](https://coveralls.io/repos/github/OpenCollective/opencollective-api/badge.svg)](https://coveralls.io/github/OpenCollective/opencollective-api) [![Greenkeeper badge](https://badges.greenkeeper.io/opencollective/opencollective-api.svg)](https://greenkeeper.io/)
 
 ## Foreword
 
@@ -15,7 +12,7 @@ If you see a step below that could be improved (or is outdated), please update t
 
 1. Make sure you have Node.js version >= 10.
 
-- We recommend using [nvm](https://github.com/creationix/nvm): `nvm install`.
+- We recommend using [nvm](https://github.com/creationix/nvm): `nvm use`.
 
 2. Make sure you have a PostgreSQL database available
 
@@ -42,6 +39,9 @@ npm install
 ```
 npm run dev
 ```
+
+- API is started on http://localhost:3060
+- A local email inbox is started on http://localhost:1080
 
 #### Troubleshooting
 

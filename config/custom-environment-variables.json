@@ -1,5 +1,10 @@
 {
+  "port": "PORT",
   "env": "NODE_ENV",
+  "maildev": {
+    "client": "MAILDEV_CLIENT",
+    "server": "MAILDEV_SERVER"
+  },
   "database": {
     "url": "PG_URL",
     "override": {
@@ -16,6 +21,9 @@
       }
     }
   },
+  "graphql": {
+    "apolloEngineAPIKey": "APOLLO_ENGINE_API_KEY"
+  },
   "memcache": {
     "servers": "MEMCACHE_SERVERS",
     "username": "MEMCACHE_USERNAME",
@@ -29,19 +37,18 @@
       "apiKey": "API_KEY",
       "sessionSecret": "SESSION_SECRET",
       "jwtSecret": "JWT_SECRET",
+      "emailUnsubscribeSecret": "EMAIL_UNSUBSCRIBE_SECRET",
       "hashidSalt": "HASHID_SALT"
     }
   },
   "cache": {
-    "middleware": "CACHE_MIDDLEWARE",
-    "homepage": {
-      "disabled": "CACHE_HOMEPAGE_DISABLED",
-      "refreshInterval": "CACHE_HOMEPAGE_REFRESH_INTERVAL"
-    }
+    "middleware": "CACHE_MIDDLEWARE"
   },
   "log": {
     "level": "LOG_LEVEL",
-    "accessLogs": "ACCESS_LOGS"
+    "accessLogs": "ACCESS_LOGS",
+    "slowRequest": "SLOW_REQUEST",
+    "slowRequestThreshold": "SLOW_REQUEST_THRESHOLD"
   },
   "stripe": {
     "secret": "STRIPE_SECRET",
@@ -84,7 +91,6 @@
   "host": {
     "api": "API_URL",
     "images": "IMAGES_URL",
-    "webapp": "WEBAPP_URL",
     "frontend": "FRONTEND_URL",
     "website": "WEBSITE_URL",
     "invoices": "INVOICES_URL"
@@ -100,9 +106,6 @@
   },
   "slack": {
     "webhookUrl": "SLACK_HOOK_URL"
-  },
-  "clearbit": {
-    "key": "CLEARBIT_KEY"
   },
   "github": {
     "clientID": "GITHUB_CLIENT_ID",
@@ -128,12 +131,30 @@
     "siteKey": "RECAPTCHA_SITE_KEY",
     "secretKey": "RECAPTCHA_SECRET_KEY"
   },
-  "ledger": {
-    "url": "LEDGER_URL",
-    "transactionUrl": "LEDGER_TRANSACTION_URL"
+  "helloworks": {
+    "key": "HELLO_WORKS_KEY",
+    "secret": "HELLO_WORKS_SECRET",
+    "documentEncryptionKey": "HELLO_WORKS_DOCUMENT_ENCRYPTION_KEY",
+    "aws": {
+      "s3": {
+        "bucket": "HELLO_WORKS_AWS_S3_BUCKET"
+      }
+    }
   },
-  "ledgerQueue": {
-    "url": "LEDGER_QUEUE_URL",
-    "transactionQueue": "TRANSACTION_QUEUE_NAME"
+  "githubFlow": {
+    "minNbStars": "GITHUB_FLOW_MIN_NB_STARS"
+  },
+  "transferwise": {
+    "apiUrl": "TRANSFERWISE_API_URL"
+  },
+  "fixie": {
+    "url": "FIXIE_URL"
+  },
+  "hyperwatch": {
+    "enabled": "HYPERWATCH_ENABLED",
+    "path": "HYPERWATCH_PATH",
+    "realm": "HYPERWATCH_REALM",
+    "username": "HYPERWATCH_USERNAME",
+    "secret": "HYPERWATCH_SECRET"
   }
 }

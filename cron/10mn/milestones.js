@@ -3,14 +3,16 @@ import '../../server/env';
 
 process.env.PORT = 3066;
 
-import config from 'config';
 import Promise from 'bluebird';
+import config from 'config';
 import debugLib from 'debug';
-import models, { sequelize, Op } from '../../server/models';
-import twitter from '../../server/lib/twitter';
+import _, { get, pick, set } from 'lodash';
+
+import { types as collectiveTypes } from '../../server/constants/collectives';
 import slackLib from '../../server/lib/slack';
+import twitter from '../../server/lib/twitter';
 import { pluralize } from '../../server/lib/utils';
-import _, { pick, get, set } from 'lodash';
+import models, { Op, sequelize } from '../../server/models';
 
 const TenMinutesAgo = new Date();
 TenMinutesAgo.setMinutes(TenMinutesAgo.getMinutes() - 10);
@@ -31,7 +33,7 @@ const init = () => {
     },
     limit: 30,
     group: ['CollectiveId', 'collective.id'],
-    include: [{ model: models.Collective, as: 'collective' }],
+    include: [{ model: models.Collective, where: { type: { [Op.ne]: collectiveTypes.EVENT } }, as: 'collective' }],
   })
     .tap(transactionsGroups => {
       console.log(`${transactionsGroups.length} different collectives got new backers since ${TenMinutesAgo}`);
@@ -61,9 +63,7 @@ const notifyCollective = async (CollectiveId, milestone, collective) => {
   }
   if (!get(twitterAccount, `settings.${milestone}.active`)) {
     debug(
-      `${
-        collective.slug
-      }: the collective id ${CollectiveId} hasn't activated the ${milestone} milestone notification, skipping`,
+      `${collective.slug}: the collective id ${CollectiveId} hasn't activated the ${milestone} milestone notification, skipping`,
     );
     await postToSlack(tweet, slackAccount);
     return;
@@ -162,7 +162,8 @@ const compileTweet = async (collective, template, twitterAccount) => {
   }
 
   let tweet = twitter.compileTweet(template, replacements, get(twitterAccount, `settings.${template}.tweet`));
-  tweet += `\nhttps://opencollective.com/${collective.slug}`;
+  const path = await collective.getUrlPath();
+  tweet += `\nhttps://opencollective.com/${path}`;
   return tweet;
 };
 
@@ -198,10 +199,10 @@ const sendTweet = async (tweet, twitterAccount, template) => {
   console.log('>>> sending tweet:', tweet.length, tweet);
   if (process.env.NODE_ENV === 'production') {
     try {
-      // We thread the tweet with the previous milestone
-      const in_reply_to_status_id = get(twitterAccount, 'settings.milestones.lastTweetId');
       const res = await twitter.tweetStatus(twitterAccount, tweet, null, {
-        in_reply_to_status_id,
+        // We thread the tweet with the previous milestone
+        // eslint-disable-next-line camelcase
+        in_reply_to_status_id: get(twitterAccount, 'settings.milestones.lastTweetId'),
       });
 
       set(twitterAccount, 'settings.milestones.tweetId', res.id_str);

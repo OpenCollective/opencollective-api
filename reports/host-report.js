@@ -1,19 +1,16 @@
-import _ from 'lodash';
-import moment from 'moment';
 import Promise from 'bluebird';
-import debugLib from 'debug';
-import models, { sequelize, Op } from '../server/models';
-import emailLib from '../server/lib/email';
 import config from 'config';
-import { exportToPDF } from '../server/lib/utils';
+import debugLib from 'debug';
+import { keyBy, pick } from 'lodash';
+import moment from 'moment';
+
+import emailLib from '../server/lib/email';
+import { getBackersStats, getHostedCollectives, sumTransactions } from '../server/lib/hostlib';
 import { getTransactions } from '../server/lib/transactions';
-import { getHostedCollectives, getBackersStats, sumTransactions } from '../server/lib/hostlib';
+import { exportToPDF } from '../server/lib/utils';
+import models, { Op, sequelize } from '../server/models';
 
 const debug = debugLib('hostreport');
-
-if (process.env.SKIP_PLATFORM_STATS) {
-  console.log('Skipping computing platform stats');
-}
 
 const summary = {
   totalHosts: 0,
@@ -38,31 +35,31 @@ async function HostReport(year, month, hostId) {
     endDate = new Date(d.getFullYear(), d.getMonth() + 1, 1);
   } else {
     // yearly report
+    month = '';
     yearlyReport = true;
     startDate = new Date(d.getFullYear(), 0, 1);
     endDate = new Date(d.getFullYear() + 1, 0, 1);
   }
 
-  const endDateIncluded = moment(endDate)
-    .subtract(1, 'days')
-    .toDate();
+  const endDateIncluded = moment(endDate).subtract(1, 'days').toDate();
 
   const dateRange = {
     createdAt: { [Op.gte]: startDate, [Op.lt]: endDate },
   };
 
-  const emailTemplate = yearlyReport ? 'host.yearlyreport' : 'host.monthlyreport';
+  const emailTemplate = yearlyReport ? 'host.yearlyreport' : 'host.monthlyreport'; // NOTE: this will be later converted to 'host.report'
   const reportName = yearlyReport ? `${year} Yearly Host Report` : `${year}/${month + 1} Monthly Host Report`;
   const dateFormat = yearlyReport ? 'YYYY' : 'YYYYMM';
-  const csv_filename = `${moment(d).format(dateFormat)}-transactions.csv`;
-  const pdf_filename = `${moment(d).format(dateFormat)}-expenses.pdf`;
+  const csvFilename = `${moment(d).format(dateFormat)}-transactions.csv`;
+  const pdfFilename = `${moment(d).format(dateFormat)}-expenses.pdf`;
   console.log('startDate', startDate, 'endDate', endDate);
 
   year = year || startDate.getFullYear();
 
   let previewCondition = '';
-  if (process.env.DEBUG && process.env.DEBUG.match(/preview/))
-    previewCondition = 'AND c.id IN (11004, 9804, 9802, 9801)'; // open source collective host, wwcode host, brusselstogether, changex
+  if (process.env.DEBUG && process.env.DEBUG.match(/preview/)) {
+    previewCondition = 'AND c.id IN (11004, 9804, 9802, 9801)';
+  } // open source collective host, wwcode host, brusselstogether, changex
   // previewCondition = "AND c.id IN (9802)"; // brusselstogether
 
   if (hostId) {
@@ -72,11 +69,17 @@ async function HostReport(year, month, hostId) {
   if (process.env.SLUGS) {
     const slugs = process.env.SLUGS.split(',');
     previewCondition = `AND c.slug IN ('${slugs.join("','")}')`;
-    process.env.SKIP_PLATFORM_STATS = true;
+  }
+  if (process.env.SKIP_SLUGS) {
+    const slugs = process.env.SKIP_SLUGS.split(',');
+    previewCondition = `AND c.slug NOT IN ('${slugs.join("','")}')`;
   }
 
   const getHostStats = (host, collectiveids) => {
-    const where = { CollectiveId: { [Op.in]: collectiveids } };
+    // Since collectives can change host,
+    // we don't fetch transactions based on the CollectiveId but based on the HostCollectiveId
+    // at the time of the transaction
+    const where = { HostCollectiveId: host.id };
     const whereWithDateRange = { ...where, ...dateRange };
 
     const payoutProcessorFeesQuery = service => {
@@ -124,9 +127,33 @@ async function HostReport(year, month, hostId) {
         { where: { ...whereWithDateRange, type: 'DEBIT' } },
         host.currency,
       ), // total net amount paid out last month
-      totalHostFees: sumTransactions('hostFeeInHostCurrency', { where: whereWithDateRange }, host.currency),
+      totalTaxAmountCollected: sumTransactions(
+        'taxAmount',
+        { where: whereWithDateRange, type: 'CREDIT' },
+        host.currency,
+      ), // total tax collected
+      totalTaxAmountPaid: sumTransactions('taxAmount', { where: whereWithDateRange, type: 'DEBIT' }, host.currency), // total tax paid
+      // We only count HostFees on CREDIT transactions with an Order and on DEBIT transactions with an Expense
+      // (because the host fee of the destination host is recorded in the DEBIT transaction when making a donation to another host)
+      totalHostFees: sumTransactions(
+        'hostFeeInHostCurrency',
+        {
+          where: {
+            ...whereWithDateRange,
+            [Op.or]: [
+              { type: 'CREDIT', OrderId: { [Op.ne]: null } },
+              { type: 'DEBIT', ExpenseId: { [Op.ne]: null } },
+            ],
+          },
+        },
+        host.currency,
+      ),
       backers: getBackersStats(startDate, endDate, collectiveids),
-      platformFees: sumTransactions('platformFeeInHostCurrency', { where: whereWithDateRange }, host.currency),
+      platformFees: sumTransactions(
+        'platformFeeInHostCurrency',
+        { where: { ...whereWithDateRange, type: 'CREDIT' } },
+        host.currency,
+      ),
       paymentProcessorFees: sumTransactions(
         'paymentProcessorFeeInHostCurrency',
         { where: { ...whereWithDateRange, type: 'CREDIT' } },
@@ -157,15 +184,16 @@ async function HostReport(year, month, hostId) {
     let page = 1;
     let currentPage = 0;
 
-    data.host = host;
-    data.collective = host;
+    data.host = host.info;
+    data.collective = host.info;
     data.reportDate = endDate;
+    data.reportName = reportName;
     data.month = !yearlyReport && moment(startDate).format('MMMM');
     data.year = year;
     data.startDate = startDate;
     data.endDate = endDate;
     data.endDateIncluded = endDateIncluded;
-    data.config = _.pick(config, 'host');
+    data.config = pick(config, 'host');
     data.maxSlugSize = 0;
     data.notes = null;
     data.expensesPerPage = [[]];
@@ -194,7 +222,15 @@ async function HostReport(year, month, hostId) {
     };
 
     const processTransaction = transaction => {
-      const t = transaction;
+      const t = {
+        ...transaction.info,
+        Expense: transaction.Expense
+          ? {
+              ...transaction.Expense.info,
+              items: transaction.Expense.items.map(item => item.dataValues),
+            }
+          : null,
+      };
       t.collective = collectivesById[t.CollectiveId].dataValues;
       t.collective.shortSlug = t.collective.slug.replace(/^wwcode-?(.)/, '$1');
       t.notes = t.Expense && t.Expense.privateMessage;
@@ -231,14 +267,32 @@ async function HostReport(year, month, hostId) {
 
     return getHostedCollectives(host.id, endDate)
       .tap(collectives => {
-        collectivesById = _.keyBy(collectives, 'id');
-        data.stats.totalCollectives = Object.keys(collectivesById).length;
+        collectivesById = keyBy(collectives, 'id');
+        data.stats.totalCollectives = collectives.filter(c => c.type === 'COLLECTIVE').length;
         summary.totalCollectives += data.stats.totalCollectives;
         console.log(`>>> processing ${data.stats.totalCollectives} collectives`);
       })
       .then(() =>
         getTransactions(Object.keys(collectivesById), startDate, endDate, {
-          include: [{ model: models.Expense }, { model: models.User, as: 'createdByUser' }],
+          include: [
+            {
+              model: models.Expense,
+              include: [
+                'fromCollective',
+                {
+                  model: models.ExpenseItem,
+                  as: 'items',
+                  where: {
+                    url: { [Op.not]: null },
+                  },
+                },
+              ],
+            },
+            {
+              model: models.User,
+              as: 'createdByUser',
+            },
+          ],
         }),
       )
       .tap(transactions => {
@@ -251,21 +305,28 @@ async function HostReport(year, month, hostId) {
       .tap(transactions => {
         const csv = models.Transaction.exportCSV(transactions, collectivesById);
         attachments.push({
-          filename: csv_filename,
+          filename: `${host.slug}-${csvFilename}`,
           content: csv,
         });
       })
       .then(transactions => (data.transactions = transactions))
-      .then(() =>
-        exportToPDF('expenses', data, {
+      .then(() => {
+        // Don't generate PDF in email if it's the yearly report
+        if (yearlyReport || process.env.SKIP_PDF) {
+          return;
+        }
+        return exportToPDF('expenses', data, {
           paper: host.currency === 'USD' ? 'Letter' : 'A4',
-        }),
-      )
-      .then(pdf => {
-        attachments.push({
-          filename: pdf_filename,
-          content: pdf,
         });
+      })
+      .then(pdf => {
+        if (pdf) {
+          attachments.push({
+            filename: `${host.slug}-${pdfFilename}`,
+            content: pdf,
+          });
+          data.expensesPdf = true;
+        }
       })
       .then(() => getHostStats(host, Object.keys(collectivesById)))
       .then(stats => {
@@ -284,15 +345,18 @@ async function HostReport(year, month, hostId) {
         stats.totalHostRevenue = {
           totalInHostCurrency: stats.totalHostFees.totalInHostCurrency,
         };
+        // Total net amount received on the host's bank account = total amount - payment processor fees and platform fees
         stats.totalNetAmountReceived = {
           totalInHostCurrency:
-            stats.totalNetAmountReceivedForCollectives.totalInHostCurrency - stats.totalHostFees.totalInHostCurrency, // totalHostFees is negative
+            stats.totalAmountDonations.totalInHostCurrency +
+            stats.paymentProcessorFees.totalInHostCurrency +
+            stats.platformFees.totalInHostCurrency,
         };
 
         data.stats = {
           ...data.stats,
           ...stats,
-          totalActiveCollectives: Object.keys(_.keyBy(data.transactions, 'CollectiveId')).length,
+          totalActiveCollectives: Object.keys(keyBy(data.transactions, 'CollectiveId')).length,
           numberTransactions: data.transactions.length,
           numberDonations: data.transactions.length - data.stats.numberPaidExpenses,
         };
@@ -306,11 +370,16 @@ async function HostReport(year, month, hostId) {
         summary.numberDonations += data.stats.numberDonations;
         summary.numberPaidExpenses += data.stats.numberPaidExpenses;
         summary.totalAmountPaidExpenses += data.stats.totalAmountPaidExpenses;
+
+        // Don't send transactions in email if there is more than 1000
+        if (data.transactions.length > 1000) {
+          delete data.transactions;
+        }
       })
       .then(() => getHostAdminsEmails(host))
       .then(admins => sendEmail(admins, data, attachments))
       .catch(e => {
-        console.error(`Error in processing host ${host.slug}:`, e.message, e);
+        console.error(`Error in processing host ${host.slug}:`, e.message);
         debug(e);
       });
   };

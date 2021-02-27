@@ -5,10 +5,9 @@ import '../server/env';
  * Use ./scripts/watch_email_template.sh [template] to compile an email template
  */
 import config from 'config';
-import nodemailer from 'nodemailer';
-import { has, get } from 'lodash';
 import juice from 'juice';
 
+import { getMailer } from '../server/lib/email';
 import libEmailTemplates from '../server/lib/emailTemplates';
 
 const templateName = process.argv[2];
@@ -35,7 +34,6 @@ data['collective.expense.approved'] = {
   },
   collective: { slug: 'wwcodeaustin', name: 'Women Who Code Austin' },
   fromCollective: { slug: 'xdamman', name: 'Xavier Damman' },
-  user: { paypalEmail: 'email@paypal.com' },
   actions: {
     viewLatestExpenses: 'https://opencollective.com/wwcodeaustin/expenses',
   },
@@ -47,7 +45,6 @@ data['collective.expense.paid'] = {
     amount: 1250,
     currency: 'USD',
     privateMessage: 'Private instructions',
-    payoutMethod: 'PayPal (paypal@domain.tld)',
     attachment: 'https://opencollective-production.s3-us-west-1.amazonaws.com/5bdc1850-60d9-11e7-9f4e-6f8999022d4b.JPG',
   },
   collective: {
@@ -58,7 +55,6 @@ data['collective.expense.paid'] = {
     slug: 'xdamman',
     name: 'Xavier Damman',
   },
-  user: { paypalEmail: 'email@paypal.com' },
   actions: {
     viewLatestExpenses: 'https://opencollective.com/wwcodeaustin/expenses',
   },
@@ -127,12 +123,21 @@ data['ticket.confirmed'] = {
     currency: 'USD',
   },
 };
-data['ticket.confirmed.sustainoss'] = data['ticket.confirmed'];
 data['ticket.confirmed.fearlesscitiesbrussels'] = data['ticket.confirmed'];
 data['github.signup'] = {
   collective: {
     name: 'webpack',
     slug: 'webpack',
+  },
+};
+data['collective.created.the-social-change-agency'] = data['collective.approved.the-social-change-agency'] = {
+  host: {
+    slug: 'the-social-change-agency',
+    name: 'The Social Change Agency',
+  },
+  collective: {
+    slug: 'coinbase',
+    name: 'Coinbase',
   },
 };
 data['organization.collective.created'] = {
@@ -177,7 +182,7 @@ data['report.platform'] = {
   month: 'January',
   hosts: [
     {
-      host: 'opensourcecollective',
+      host: 'opensource',
       currency: 'USD',
       HostCollectiveId: 11004,
       backers: 2978,
@@ -521,10 +526,7 @@ const getTemplateAttributes = str => {
     }
   } while (tokens);
 
-  attributes.body = lines
-    .slice(index)
-    .join('\n')
-    .trim();
+  attributes.body = lines.slice(index).join('\n').trim();
   return attributes;
 };
 
@@ -535,10 +537,10 @@ if (!templateName) {
   console.log('./server/lib/emailTemplates\n');
   console.log('  Example 1: npm run -s compile:email user.monthlyreport\n');
   console.log('  Example 2: npm run -s compile:email email.approve > email-approve.html\n');
-  console.log('Note: `-s` switch is requried to suppress warnings from npm.');
+  console.log('Note: `-s` switch is required to suppress warnings from npm.');
   console.log('Note: Edit the script to specify the data that is passed to the template.');
 } else if (!data[templateName]) {
-  console.log('There is no mocked data defined for this template.');
+  console.log('There is no mocked data defined for this template:', templateName);
   console.log('Please add mocked data by editing `scripts/compile-email.js`.');
 } else {
   const template = libEmailTemplates[templateName];
@@ -549,26 +551,20 @@ if (!templateName) {
     if (libEmailTemplates[`${templateName}.text`]) {
       text = libEmailTemplates[`${templateName}.text`](emailData);
     }
-
-    if (has(config, 'mailgun.user') && has(config, 'mailgun.password')) {
+    const mailer = getMailer();
+    if (mailer) {
       const attributes = getTemplateAttributes(html);
-      const mailgun = nodemailer.createTransport({
-        service: 'Mailgun',
-        auth: {
-          user: get(config, 'mailgun.user'),
-          pass: get(config, 'mailgun.password'),
-        },
-      });
-      console.log('>>> Sending by email to ', process.env.ONLY);
-      mailgun.sendMail(
+      const to = process.env.ONLY || 'test@opencollective.com';
+      console.log('>>> Sending by email to ', to);
+      mailer.sendMail(
         {
           from: config.email.from,
-          to: process.env.ONLY,
+          to,
           subject: attributes.subject,
           text,
           html: attributes.body,
         },
-        (err, info) => {
+        () => {
           console.log('email sent');
         },
       );

@@ -1,8 +1,9 @@
-import models, { Op } from '../../models';
-import * as libpayments from '../../lib/payments';
-import * as currency from '../../lib/currency';
-import { TransactionTypes, OC_FEE_PERCENT } from '../../constants/transactions';
 import { get } from 'lodash';
+
+import { OC_FEE_PERCENT, TransactionTypes } from '../../constants/transactions';
+import * as currency from '../../lib/currency';
+import * as libpayments from '../../lib/payments';
+import models, { Op } from '../../models';
 
 /** Get the balance of a prepaid credit card
  *
@@ -66,13 +67,15 @@ async function processOrder(order) {
   } = order;
   // Making sure the paymentMethod has the information we need to
   // process a prepaid card
-  if (!get(data, 'HostCollectiveId'))
+  if (!get(data, 'HostCollectiveId')) {
     throw new Error('Prepaid payment method must have a value for `data.HostCollectiveId`');
+  }
 
   // Check that target Collective's Host is same as gift card issuer
   const hostCollective = await order.collective.getHostCollective();
-  if (hostCollective.id !== data.HostCollectiveId)
+  if (hostCollective.id !== data.HostCollectiveId) {
     throw new Error('Prepaid method can only be used in collectives from the same host');
+  }
 
   // Checking if balance is ok or will still be after completing the order
   const balance = await getBalance(order.paymentMethod);
@@ -80,9 +83,15 @@ async function processOrder(order) {
     throw new Error("This payment method doesn't have enough funds to complete this order");
   }
 
+  const defaultPlatformFee =
+    order.collective.platformFeePercent === null ? OC_FEE_PERCENT : order.collective.platformFeePercent;
+  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFee);
+  const platformFeeInHostCurrency = libpayments.calcFee(order.totalAmount, platformFeePercent);
+
+  const hostFeePercent = get(order, 'data.hostFeePercent', order.collective.hostFeePercent);
+  const hostFeeInHostCurrency = libpayments.calcFee(order.totalAmount, hostFeePercent);
+
   // Use the above payment method to donate to Collective
-  const hostFeeInHostCurrency = libpayments.calcFee(order.totalAmount, order.collective.hostFeePercent);
-  const platformFeeInHostCurrency = libpayments.calcFee(order.totalAmount, OC_FEE_PERCENT);
   const transactions = await models.Transaction.createFromPayload({
     CreatedByUserId: user.id,
     FromCollectiveId: order.FromCollectiveId,

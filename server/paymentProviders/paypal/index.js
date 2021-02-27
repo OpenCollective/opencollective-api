@@ -1,15 +1,16 @@
-import debug from 'debug';
 import config from 'config';
+import debug from 'debug';
+import { get } from 'lodash';
 import moment from 'moment';
 
-import models, { Op } from '../../models';
-import errors from '../../lib/errors';
-import paypalAdaptive from './adaptiveGateway';
 import { convertToCurrency } from '../../lib/currency';
+import errors from '../../lib/errors';
 import { formatCurrency } from '../../lib/utils';
+import models, { Op } from '../../models';
+
 import adaptive from './adaptive';
+import paypalAdaptive from './adaptiveGateway';
 import payment from './payment';
-import { get } from 'lodash';
 
 const debugPaypal = debug('paypal');
 
@@ -22,7 +23,7 @@ const debugPaypal = debug('paypal');
  * Confirms that the preapprovalKey has been approved by PayPal
  * and updates the paymentMethod
  */
-const getPreapprovalDetailsAndUpdatePaymentMethod = async function(paymentMethod) {
+const getPreapprovalDetailsAndUpdatePaymentMethod = async function (paymentMethod) {
   if (!paymentMethod) {
     return Promise.reject(new Error('No payment method provided to getPreapprovalDetailsAndUpdatePaymentMethod'));
   }
@@ -76,12 +77,8 @@ export default {
               currencyCode: 'USD', // collective.currency, // we should use the currency of the host collective but still waiting on PayPal to resolve that issue.
               startingDate: new Date().toISOString(),
               endingDate: expiryDate.toISOString(),
-              returnUrl: `${
-                config.host.api
-              }/connected-accounts/paypal/callback?paypalApprovalStatus=success&preapprovalKey=\${preapprovalKey}`,
-              cancelUrl: `${
-                config.host.api
-              }/connected-accounts/paypal/callback?paypalApprovalStatus=error&preapprovalKey=\${preapprovalKey}`,
+              returnUrl: `${config.host.api}/connected-accounts/paypal/callback?paypalApprovalStatus=success&preapprovalKey=\${preapprovalKey}`,
+              cancelUrl: `${config.host.api}/connected-accounts/paypal/callback?paypalApprovalStatus=error&preapprovalKey=\${preapprovalKey}`,
               displayMaxTotalAmount: false,
               feesPayer: 'SENDER',
               maxAmountPerPayment: 2000.0, // lowerLimit, // PayPal claims this can go up to $10k without needing additional permissions from them.
@@ -130,9 +127,7 @@ export default {
 
           if (req.query.paypalApprovalStatus !== 'success') {
             pm.destroy();
-            const redirect = `${
-              paymentMethod.data.redirect
-            }?status=error&service=paypal&error=User%20cancelled%20the%20request`;
+            const redirect = `${paymentMethod.data.redirect}?status=error&service=paypal&error=User%20cancelled%20the%20request`;
             return res.redirect(redirect);
           }
 

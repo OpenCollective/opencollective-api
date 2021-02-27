@@ -1,18 +1,19 @@
 import {
-  GraphQLInt,
-  GraphQLFloat,
   GraphQLBoolean,
-  GraphQLList,
-  GraphQLInputObjectType,
-  GraphQLNonNull,
-  GraphQLString,
-  GraphQLScalarType,
+  GraphQLEnumType,
   GraphQLError,
+  GraphQLFloat,
+  GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLScalarType,
+  GraphQLString,
 } from 'graphql';
-
 import GraphQLJSON from 'graphql-type-json';
 import { Kind } from 'graphql/language';
-import { IsoDateString, DateString } from './types';
+
+import { DateString, IsoDateString, PayoutMethodTypeEnum } from './types';
 
 const EmailType = new GraphQLScalarType({
   name: 'Email',
@@ -47,7 +48,7 @@ export const PaymentMethodInputType = new GraphQLInputObjectType({
     service: { type: GraphQLString },
     type: {
       type: GraphQLString,
-      description: 'creditcard, bitcoin, prepaid, manual',
+      description: 'creditcard, virtualcard, prepaid, manual...',
     },
     customerId: { type: GraphQLString },
     data: { type: GraphQLJSON },
@@ -64,6 +65,30 @@ export const PaymentMethodDataVirtualCardInputType = new GraphQLInputObjectType(
   description: 'Input for virtual card (meta)data',
   fields: () => ({
     email: { type: GraphQLString, description: 'The email virtual card is generated for' },
+  }),
+});
+
+const CustomFieldType = new GraphQLEnumType({
+  name: 'CustomFieldType',
+  description: 'Type of custom field',
+  values: {
+    number: {},
+    text: {},
+    email: {},
+    date: {},
+    radio: {},
+    url: {},
+  },
+});
+
+export const CustomFieldsInputType = new GraphQLInputObjectType({
+  name: 'CustomFieldsInputType',
+  description: 'Input for custom fields for order',
+  fields: () => ({
+    type: { type: CustomFieldType },
+    name: { type: GraphQLString },
+    label: { type: GraphQLString },
+    required: { type: GraphQLBoolean },
   }),
 });
 
@@ -97,7 +122,7 @@ export const UserInputType = new GraphQLInputObjectType({
     twitterHandle: { type: GraphQLString },
     githubHandle: { type: GraphQLString },
     website: { type: GraphQLString },
-    paypalEmail: { type: GraphQLString },
+    paypalEmail: { type: GraphQLString, deprecationReason: '2020-01-21: Replaced by PayoutMethods' },
     newsletterOptIn: { type: GraphQLBoolean },
   }),
 });
@@ -120,12 +145,8 @@ export const NotificationInputType = new GraphQLInputObjectType({
   description: 'Input type for NotificationType',
   fields: () => ({
     id: { type: GraphQLInt },
-    channel: { type: GraphQLString },
-    type: { type: GraphQLString },
-    active: { type: GraphQLBoolean },
+    type: { type: new GraphQLNonNull(GraphQLString) },
     webhookUrl: { type: GraphQLString },
-    UserId: { type: GraphQLInt },
-    CollectiveId: { type: GraphQLInt },
   }),
 });
 
@@ -145,10 +166,6 @@ export const CollectiveInputType = new GraphQLInputObjectType({
     longDescription: { type: GraphQLString },
     expensePolicy: { type: GraphQLString },
     location: { type: LocationInputType },
-    countryISO: {
-      type: GraphQLString,
-      deprecationReason: 'From 03/20/2019 - use `location.country` instead',
-    },
     startsAt: { type: GraphQLString },
     endsAt: { type: GraphQLString },
     timezone: { type: GraphQLString },
@@ -162,7 +179,6 @@ export const CollectiveInputType = new GraphQLInputObjectType({
     data: { type: GraphQLJSON },
     members: { type: new GraphQLList(MemberInputType) },
     notifications: { type: new GraphQLList(NotificationInputType) },
-    paymentMethods: { type: new GraphQLList(PaymentMethodInputType) },
     HostCollectiveId: { type: GraphQLInt },
     hostFeePercent: { type: GraphQLInt },
     ParentCollectiveId: { type: GraphQLInt },
@@ -170,6 +186,8 @@ export const CollectiveInputType = new GraphQLInputObjectType({
     email: { type: GraphQLString },
     firstName: { type: GraphQLString },
     lastName: { type: GraphQLString },
+    isIncognito: { type: GraphQLBoolean },
+    isActive: { type: GraphQLBoolean },
   }),
 });
 
@@ -201,16 +219,13 @@ export const CollectiveAttributesInputType = new GraphQLInputObjectType({
     twitterHandle: { type: GraphQLString },
     githubHandle: { type: GraphQLString },
     location: { type: LocationInputType },
-    countryISO: {
-      type: GraphQLString,
-      deprecationReason: 'From 03/20/2019 - use `location.country` instead',
-    },
     startsAt: { type: GraphQLString },
     endsAt: { type: GraphQLString },
     timezone: { type: GraphQLString },
     maxAmount: { type: GraphQLInt },
     currency: { type: GraphQLString },
     settings: { type: GraphQLJSON },
+    isIncognito: { type: GraphQLBoolean },
     tags: { type: new GraphQLList(GraphQLString) },
   }),
 });
@@ -254,9 +269,17 @@ export const TierInputType = new GraphQLInputObjectType({
       type: GraphQLString,
       description: 'A long, html-formatted description.',
     },
+    videoUrl: {
+      type: GraphQLString,
+      description: 'Link to a video (YouTube, Vimeo).',
+    },
     amount: {
       type: GraphQLInt,
       description: 'amount in the lowest unit of the currency of the host (ie. in cents)',
+    },
+    button: {
+      type: GraphQLString,
+      description: 'Button text',
     },
     currency: { type: GraphQLString },
     presets: { type: new GraphQLList(GraphQLInt) },
@@ -270,6 +293,7 @@ export const TierInputType = new GraphQLInputObjectType({
       description: 'amount that you are trying to raise with this tier',
     },
     password: { type: GraphQLString },
+    customFields: { type: new GraphQLList(CustomFieldsInputType) },
     startsAt: {
       type: GraphQLString,
       description: 'Start of the campaign',
@@ -293,24 +317,18 @@ export const OrderInputType = new GraphQLInputObjectType({
     totalAmount: { type: GraphQLInt },
     hostFeePercent: { type: GraphQLInt },
     platformFeePercent: { type: GraphQLInt },
+    platformFee: { type: GraphQLInt },
     currency: { type: GraphQLString },
     interval: { type: GraphQLString },
     description: { type: GraphQLString },
     publicMessage: { type: GraphQLString },
     privateMessage: { type: GraphQLString },
     paymentMethod: { type: PaymentMethodInputType },
-    matchingFund: {
-      type: GraphQLString,
-      description: 'The first part of the UUID of the PaymentMethod that can be used to match the donation',
-    },
-    referral: {
-      type: CollectiveAttributesInputType,
-      description: 'The referral collective',
-    },
     user: { type: UserInputType },
     fromCollective: { type: CollectiveAttributesInputType },
     collective: { type: new GraphQLNonNull(CollectiveAttributesInputType) },
     tier: { type: TierInputType },
+    customData: { type: GraphQLJSON },
     recaptchaToken: { type: GraphQLString },
     // For taxes
     taxAmount: {
@@ -329,17 +347,43 @@ export const OrderInputType = new GraphQLInputObjectType({
   }),
 });
 
+export const ConfirmOrderInputType = new GraphQLInputObjectType({
+  name: 'ConfirmOrderInputType',
+  description: 'Input type for ConfirmOrderType',
+  fields: () => ({
+    id: { type: GraphQLInt },
+  }),
+});
+
 export const CommentInputType = new GraphQLInputObjectType({
   name: 'CommentInputType',
   description: 'Input type for CommentType',
+  deprecationReason: 'Comments are now fully supported by API V2',
   fields: () => ({
     id: { type: GraphQLInt },
-    markdown: { type: GraphQLString },
+    markdown: { type: GraphQLString, deprecationReason: 'Markdown editor is deprecated, please use html instead.' },
     html: { type: GraphQLString },
-    FromCollectiveId: { type: new GraphQLNonNull(GraphQLInt) },
-    CollectiveId: { type: new GraphQLNonNull(GraphQLInt) },
-    ExpenseId: { type: GraphQLInt },
-    UpdateId: { type: GraphQLInt },
+    FromCollectiveId: {
+      type: GraphQLInt,
+      description: 'Not supported yet. Defaults to user collective ID.',
+    },
+    CollectiveId: {
+      type: GraphQLInt,
+      deprecationReason:
+        '2019-11-28: This field is not used by the query. Collective ID is automatically guessed from linked entity (expense, update or conversation)',
+    },
+    ExpenseId: {
+      type: GraphQLInt,
+      deprecationReason: '2020-03-18: Comments on expenses must use API V2',
+    },
+    UpdateId: {
+      type: GraphQLInt,
+      deprecationReason: '2020-03-18: Comments on updates are not yet supported',
+    },
+    ConversationId: {
+      type: GraphQLInt,
+      deprecationReason: '2020-03-18: Comments on conversations must use API V2',
+    },
   }),
 });
 
@@ -348,12 +392,15 @@ export const CommentAttributesInputType = new GraphQLInputObjectType({
   description: 'Input type for CommentType',
   fields: () => ({
     id: { type: GraphQLInt },
-    markdown: { type: GraphQLString },
+    markdown: {
+      deprecationReason: 'Deprecated since 2020-03-18: Please use html.',
+      type: GraphQLString,
+    },
     html: { type: GraphQLString },
-    FromCollectiveId: { type: GraphQLInt },
-    CollectiveId: { type: GraphQLInt },
-    ExpenseId: { type: GraphQLInt },
-    UpdateId: { type: GraphQLInt },
+    UpdateId: {
+      deprecationReason: 'Deprecated since 2020-03-18: This field has never been active and will be removed soon.',
+      type: GraphQLInt,
+    },
   }),
 });
 
@@ -367,6 +414,7 @@ export const UpdateInputType = new GraphQLInputObjectType({
     title: { type: GraphQLString },
     image: { type: GraphQLString },
     isPrivate: { type: GraphQLBoolean },
+    makePublicOn: { type: IsoDateString },
     markdown: { type: GraphQLString },
     html: { type: GraphQLString },
     fromCollective: { type: CollectiveAttributesInputType },
@@ -385,11 +433,36 @@ export const UpdateAttributesInputType = new GraphQLInputObjectType({
     title: { type: GraphQLString },
     image: { type: GraphQLString },
     isPrivate: { type: GraphQLBoolean },
+    makePublicOn: { type: IsoDateString },
     markdown: { type: GraphQLString },
     html: { type: GraphQLString },
     fromCollective: { type: CollectiveAttributesInputType },
     tier: { type: TierInputType },
   }),
+});
+
+export const ExpenseItemInputType = new GraphQLInputObjectType({
+  name: 'ExpenseItemInputType',
+  description: 'Fields for creating or editing an expense item',
+  deprecationReason: '2020-04-08: Please use API V2 to create expenses',
+  fields: {
+    id: { type: GraphQLInt },
+    url: { type: GraphQLString },
+    amount: { type: new GraphQLNonNull(GraphQLInt) },
+    incurredAt: { type: DateString },
+    description: { type: GraphQLString },
+  },
+});
+
+export const PayoutMethodInputType = new GraphQLInputObjectType({
+  name: 'PayoutMethodInput',
+  fields: {
+    id: { type: GraphQLInt },
+    data: { type: GraphQLJSON },
+    name: { type: GraphQLString },
+    isSaved: { type: GraphQLBoolean },
+    type: { type: PayoutMethodTypeEnum },
+  },
 });
 
 export const ExpenseInputType = new GraphQLInputObjectType({
@@ -399,19 +472,38 @@ export const ExpenseInputType = new GraphQLInputObjectType({
     return {
       id: { type: GraphQLInt },
       amount: { type: GraphQLInt },
-      currency: { type: GraphQLString },
+      currency: {
+        type: GraphQLString,
+        deprecationReason: '2020-01-16: Expense currency is based on collective currency',
+      },
       createdAt: { type: DateString },
       incurredAt: { type: DateString },
       description: { type: GraphQLString },
       category: { type: GraphQLString },
       status: { type: GraphQLString },
+      type: { type: GraphQLString },
       payoutMethod: {
         type: GraphQLString,
-        description: 'Can be paypal, donation, manual, other',
+        description: 'Can be: paypal, other. Also deprecated: donation, manual',
+        deprecationReason: '2020-21-01: Please use PayoutMethod',
+      },
+      PayoutMethod: {
+        type: PayoutMethodInputType,
       },
       privateMessage: { type: GraphQLString },
-      attachment: { type: GraphQLString },
-      user: { type: UserInputType },
+      attachment: {
+        type: GraphQLString,
+        deprecationReason: '2020-01-13 - Expenses now support multiple attachments. Please use attachments instead.',
+      },
+      attachments: {
+        type: new GraphQLList(ExpenseItemInputType),
+        deprecationReason: '2020-04-08 - Please use items instead.',
+      },
+      items: { type: new GraphQLList(ExpenseItemInputType) },
+      user: {
+        type: UserInputType,
+        deprecationReason: '2020-21-01: Please use PayoutMethod to pass the paypal email',
+      },
       collective: { type: CollectiveAttributesInputType },
     };
   },

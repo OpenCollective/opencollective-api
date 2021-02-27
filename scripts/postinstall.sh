@@ -2,8 +2,8 @@
 
 set -e
 
-if [ "$NODE_ENV" = "circleci" ]; then
-  echo "Skipping postinstall because NODE_ENV is \"circleci\""
+if [ "$NODE_ENV" = "ci" ]; then
+  echo "Skipping postinstall because NODE_ENV is \"ci\""
   exit $?; # exit with return code of previous command
 fi
 

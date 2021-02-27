@@ -10,14 +10,15 @@ if (process.env.NODE_ENV === 'production' && today.getDate() !== 1) {
 
 process.env.PORT = 3066;
 
-import config from 'config';
-import moment from 'moment';
 import Promise from 'bluebird';
+import config from 'config';
 import debugLib from 'debug';
-import models from '../../server/models';
+import _, { get, pick, set } from 'lodash';
+import moment from 'moment';
+
 import slackLib from '../../server/lib/slack';
 import twitter from '../../server/lib/twitter';
-import _, { pick, get, set } from 'lodash';
+import models from '../../server/models';
 const d = new Date();
 d.setMonth(d.getMonth() - 1);
 const month = moment(d).format('MMMM');
@@ -116,7 +117,6 @@ const processCollective = collective => {
     collective.getBackersStats(startDate, endDate),
     collective.getBackersCount({ since: startDate, until: endDate }),
     collective.getTopExpenseCategories(startDate, endDate),
-    collective.getTopVendors(startDate, endDate),
   ];
 
   return Promise.all(promises)
@@ -132,7 +132,6 @@ const processCollective = collective => {
       data.collective.stats.totalReceived = results[3];
       data.collective.stats.totalSpent = results[4];
       data.collective.stats.topExpenseCategories = results[7];
-      data.collective.stats.topVendors = results[8];
       return data;
     })
     .then(data => sendTweet(collective.twitterAccount, data))
@@ -174,6 +173,7 @@ const sendTweet = async (twitterAccount, data) => {
         ? 'none'
         : stats.topExpenseCategories
             .slice(0, 2)
+            // Notice: this category property is virtual, it actually corresponds to the first tag of the expense.
             .map(ec => ec.category)
             .join(' & ')
             .toLowerCase(),
@@ -182,11 +182,11 @@ const sendTweet = async (twitterAccount, data) => {
   const template = stats.totalReceived === 0 ? 'monthlyStatsNoNewDonation' : 'monthlyStats';
   const tweet = twitter.compileTweet(template, replacements);
 
-  // We thread the tweet with the previous monthly stats
-  const in_reply_to_status_id = get(twitterAccount, 'settings.monthlyStats.lastTweetId');
   try {
     const res = await twitter.tweetStatus(twitterAccount, tweet, `https://opencollective.com/${data.collective.slug}`, {
-      in_reply_to_status_id,
+      // We thread the tweet with the previous monthly stats
+      // eslint-disable-next-line camelcase
+      in_reply_to_status_id: get(twitterAccount, 'settings.monthlyStats.lastTweetId'),
     });
     const tweetUrl = `https://twitter.com/${res.user.screen_name}/status/${res.id_str}`;
     // publish to slack.opencollective.com

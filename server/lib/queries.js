@@ -3,15 +3,16 @@ import config from 'config';
 import { get, pick } from 'lodash';
 
 import { memoize } from './cache';
-import currencies from '../constants/currencies';
-import models, { sequelize, Op } from '../models';
+import { convertToCurrency } from './currency';
+import sequelize, { Op } from './sequelize';
 
 const twoHoursInSeconds = 2 * 60 * 60;
+const models = sequelize.models;
 
 /*
  * Hacky way to do currency conversion
  */
-const generateFXConversionSQL = aggregate => {
+const generateFXConversionSQL = async aggregate => {
   let currencyColumn = 't.currency';
   let amountColumn = 't."netAmountInCollectiveCurrency"';
 
@@ -20,45 +21,60 @@ const generateFXConversionSQL = aggregate => {
     amountColumn = 'SUM("t."netAmountInCollectiveCurrency"")';
   }
 
-  const fxConversion = [];
-  for (const currency in currencies) {
-    fxConversion.push([currency, currencies[currency].fxrate]);
-  }
+  const currencies = ['AUD', 'CAD', 'EUR', 'GBP', 'INR', 'MXN', 'SEK', 'USD', 'UYU'];
 
-  let sql = 'CASE ';
-  sql += fxConversion
-    .map(currency => `WHEN ${currencyColumn} = '${currency[0]}' THEN ${amountColumn} / ${currency[1]}`)
-    .join('\n');
-  sql += 'ELSE 0 END';
+  const result = await Promise.all(
+    currencies.map(async currency => {
+      const amount = await convertToCurrency(1, 'USD', currency);
+      return `WHEN ${currencyColumn} = '${currency}' THEN ${amountColumn} / ${amount}`;
+    }),
+  );
 
-  return sql;
+  return `CASE ${result.join('\n')}ELSE 0 END`;
 };
 
-const getPublicHostsByTotalCollectives = args => {
-  let conditions = '';
+const getHosts = async args => {
+  let hostConditions = '';
   if (args.tags && args.tags.length > 0) {
-    conditions = 'AND c.tags && $tags';
+    hostConditions = 'AND c.tags && $tags';
   }
   if (args.currency && args.currency.length === 3) {
-    conditions += ' AND c.currency=$currency';
+    hostConditions += ' AND c.currency=$currency';
   }
+  if (args.onlyOpenHosts) {
+    hostConditions += ` AND c."settings" #>> '{apply}' IS NOT NULL AND (c."settings" #>> '{apply}') != 'false'`;
+  }
+
   const query = `
-  WITH counts AS (
-    SELECT max(c.id) as "HostCollectiveId", count(m.id) as count FROM "Collectives" c
-    LEFT JOIN "Members" m ON m."MemberCollectiveId" = c.id AND m.role = 'HOST' AND m."deletedAt" IS NULL
-    WHERE c."settings" #>> '{apply}' IS NOT NULL
-      ${conditions}
-      AND c."deletedAt" IS NULL
+    WITH all_hosts AS (
+      SELECT max(c.id) as "HostCollectiveId", count(m.id) as count
+      FROM "Collectives" c
+      LEFT JOIN "Members" m ON m."MemberCollectiveId" = c.id AND m.role = 'HOST' AND m."deletedAt" IS NULL
+      WHERE c."deletedAt" IS NULL ${hostConditions}
+      GROUP BY c.id
+      HAVING count(m.id) >= $minNbCollectivesHosted
+    ) SELECT c.*, (SELECT COUNT(*) FROM all_hosts) AS __hosts_count__, SUM(all_hosts.count) as __members_count__
+    FROM "Collectives" c INNER JOIN all_hosts ON all_hosts."HostCollectiveId" = c.id
     GROUP BY c.id
-  )
-  SELECT counts.count as collectives, c.*
-  FROM "Collectives" c INNER JOIN counts ON counts."HostCollectiveId" = c.id
-  ORDER BY ${args.orderBy} ${args.orderDirection} LIMIT ${args.limit} OFFSET ${args.offset}
+    ORDER BY ${args.orderBy === 'collectives' ? '__members_count__' : args.orderBy} ${args.orderDirection}
+    LIMIT $limit
+    OFFSET $offset
   `;
-  return sequelize.query(query, {
-    bind: { tags: args.tags || [], currency: args.currency },
+
+  const result = await sequelize.query(query, {
+    bind: {
+      tags: args.tags || [],
+      currency: args.currency,
+      limit: args.limit,
+      offset: args.offset,
+      minNbCollectivesHosted: args.minNbCollectivesHosted,
+    },
     type: sequelize.QueryTypes.SELECT,
+    model: models.Collective,
+    mapToModel: true,
   });
+
+  return { collectives: result, total: get(result[0], 'dataValues.__hosts_count__', 0) };
 };
 
 const getTotalAnnualBudgetForHost = HostCollectiveId => {
@@ -114,13 +130,15 @@ const getTotalAnnualBudgetForHost = HostCollectiveId => {
     .then(res => Math.round(parseInt(res[0].yearlyIncome, 10)));
 };
 
-const getTotalAnnualBudget = () => {
+const getTotalAnnualBudget = async () => {
+  const fxConversionSQL = await generateFXConversionSQL();
+
   return sequelize
     .query(
       `
   SELECT
     (SELECT
-      COALESCE(SUM(${generateFXConversionSQL()} * 12),0)
+      COALESCE(SUM(${fxConversionSQL} * 12),0)
       FROM "Subscriptions" s
       LEFT JOIN "Orders" d ON s.id = d."SubscriptionId"
       LEFT JOIN "Transactions" t
@@ -133,7 +151,7 @@ const getTotalAnnualBudget = () => {
         AND s."deletedAt" IS NULL)
     +
     (SELECT
-      COALESCE(SUM(${generateFXConversionSQL()}),0) FROM "Transactions" t
+      COALESCE(SUM(${fxConversionSQL}),0) FROM "Transactions" t
       LEFT JOIN "Orders" d ON t."OrderId" = d.id
       LEFT JOIN "Subscriptions" s ON d."SubscriptionId" = s.id
       WHERE t.type='CREDIT' AND t."CollectiveId" != 1
@@ -142,7 +160,7 @@ const getTotalAnnualBudget = () => {
         AND ((s.interval = 'year' AND s."isActive" IS TRUE AND s."deletedAt" IS NULL) OR s.interval IS NULL))
     +
     (SELECT
-      COALESCE(SUM(${generateFXConversionSQL()}),0) FROM "Transactions" t
+      COALESCE(SUM(${fxConversionSQL}),0) FROM "Transactions" t
       LEFT JOIN "Orders" d on t."OrderId" = d.id
       LEFT JOIN "Subscriptions" s ON d."SubscriptionId" = s.id
       WHERE t.type='CREDIT' AND t."CollectiveId" != 1
@@ -193,11 +211,12 @@ const getTopDonorsForCollective = (CollectiveId, options = {}) => {
 };
 
 /**
- * Returns an array with the top (default 3) vendors for a given CollectiveId (where the money goes)
+ * Returns an array with the top (default 3) expense submitters by amount for
+ * a given CollectiveId.
  * @param {*} CollectiveId
  * @param {*} options
  */
-const getTopVendorsForCollective = (CollectiveId, options = {}) => {
+const getTopExpenseSubmitters = (CollectiveId, options = {}) => {
   options.limit = options.limit || 3;
   const since = options.since ? `AND t."createdAt" >= '${options.since.toISOString()}'` : '';
   const until = options.until ? `AND t."createdAt" < '${options.until.toISOString()}'` : '';
@@ -208,6 +227,7 @@ const getTopVendorsForCollective = (CollectiveId, options = {}) => {
     WHERE t."CollectiveId"=:CollectiveId
       AND t.type='DEBIT'
       AND t."deletedAt" IS NULL
+      AND t."ExpenseId" IS NOT NULL
       ${since} ${until}
     GROUP BY c.id ORDER BY "totalExpenses" ASC LIMIT :limit
   `,
@@ -230,7 +250,7 @@ const getTopExpenseCategories = (CollectiveId, options = {}) => {
 
   return sequelize.query(
     `
-    SELECT category, COUNT(*) as "count", SUM("amount") as "totalExpenses"
+    SELECT tags[1] as category, COUNT(*) as "count", SUM("amount") as "totalExpenses"
     FROM "Expenses" e
     WHERE "CollectiveId"=:CollectiveId AND e.status!='REJECTED' ${since} ${until}
     GROUP BY category
@@ -439,22 +459,71 @@ const getUniqueCollectiveTags = () => {
 };
 
 /**
- * Returns top sponsors ordered by total amount donated and number of collectives they sponsor
- * (excluding open source collective id 9805)
+ * Get list of all unique batches for collective.
+ * Returns an array of objects matching `PaymentMethodBatchInfo`
+ */
+const getVirtualCardBatchesForCollective = async collectiveId => {
+  return sequelize.query(
+    `
+    SELECT
+      :collectiveId::varchar || '-virtualcard-' || COALESCE(pm.batch, ' __UNGROUPED__ ') AS id,
+      :collectiveId AS "collectiveId",
+      'virtualcard' AS type,
+      pm.batch AS name,
+      COUNT(pm.id) as count
+    FROM "PaymentMethods" pm
+    INNER JOIN "PaymentMethods" spm ON pm."SourcePaymentMethodId" = spm.id
+    WHERE spm."CollectiveId" = :collectiveId
+    GROUP BY pm.batch
+    ORDER BY pm.batch ASC
+  `,
+    {
+      raw: true,
+      type: sequelize.QueryTypes.SELECT,
+      replacements: { collectiveId },
+    },
+  );
+};
+
+/**
+ * Returns top sponsors in the past 3 months ordered by total amount donated and number of collectives they sponsor
+ * (excluding open source collective id 9805 and sponsors that have sponsored only one collective)
  */
 const getTopSponsors = () => {
+  const d = new Date();
+  d.setMonth(d.getMonth() - 3);
   return sequelize
     .query(
       `
-    SELECT
-      MAX(c.id), MAX(c.name) as name, MAX(c.slug) as slug, MAX(c.mission) as mission, MAX(c.description) as description, MAX(c.image) as image, "CollectiveId", -SUM(amount) as "totalDonations", MAX(c.currency) as currency, COUNT(DISTINCT t."FromCollectiveId") as collectives
-    FROM "Collectives" c LEFT JOIN "Transactions" t ON t."CollectiveId" = c.id
-    WHERE c.type = 'ORGANIZATION' AND t.type='DEBIT' AND t.currency='USD' AND t."platformFeeInHostCurrency" < 0 AND c.id != 9805
-    GROUP BY t."CollectiveId"
-    ORDER BY "totalDonations" DESC, collectives DESC LIMIT :limit
+      WITH
+      "topSponsorsLast3Months" as (
+        SELECT "CollectiveId", MAX(c.slug) as slug, MAX(c.type) as type, MAX(c.name) as name, MAX(c.description) as description, MAX(c.image) as image, -SUM(amount) as "totalDonationsLast3months", MAX(c.currency) as currency, COUNT(DISTINCT t."FromCollectiveId") as collectives
+        FROM "Collectives" c LEFT JOIN "Transactions" t ON t."CollectiveId" = c.id
+        WHERE c.type = 'ORGANIZATION'
+          AND t.type='DEBIT'
+          AND t.currency='USD'
+          AND t."platformFeeInHostCurrency" < 0
+          AND c.id != 9805
+          AND t."createdAt" > :since
+        GROUP BY t."CollectiveId"
+        ORDER BY "totalDonationsLast3months" DESC, collectives DESC LIMIT 20
+      ), 
+      "topSponsorsTotalDonations" as (
+        SELECT -sum(amount) as "totalDonations", max(t."CollectiveId") as "CollectiveId"
+        FROM "Transactions" t WHERE t."CollectiveId" IN (
+          SELECT s."CollectiveId" FROM "topSponsorsLast3Months" s WHERE s.collectives > 1 LIMIT 6
+        )
+        GROUP BY t."CollectiveId"
+      )
+      SELECT d."totalDonations", s."totalDonationsLast3months", s.*
+      FROM "topSponsorsLast3Months" s
+      LEFT JOIN "topSponsorsTotalDonations" d ON d."CollectiveId" = s."CollectiveId"
+      WHERE collectives > 1
+      ORDER BY d."totalDonations" DESC NULLS LAST
+      LIMIT :limit
     `.replace(/\s\s+/g, ' '), // this is to remove the new lines and save log space.
       {
-        replacements: { limit: 6 },
+        replacements: { limit: 6, since: d },
         type: sequelize.QueryTypes.SELECT,
       },
     )
@@ -557,16 +626,10 @@ const getMembersWithTotalDonations = (where, options = {}) => {
   const untilCondition = table => {
     let condition = '';
     if (options.since) {
-      condition += `AND ${table}."createdAt" >= '${options.since
-        .toISOString()
-        .toString()
-        .substr(0, 10)}'`;
+      condition += `AND ${table}."createdAt" >= '${options.since.toISOString().toString().substr(0, 10)}'`;
     }
     if (options.until) {
-      condition += `AND ${table}."createdAt" < '${options.until
-        .toISOString()
-        .toString()
-        .substr(0, 10)}'`;
+      condition += `AND ${table}."createdAt" < '${options.until.toISOString().toString().substr(0, 10)}'`;
     }
     return condition;
   };
@@ -676,12 +739,7 @@ const getMembersWithTotalDonations = (where, options = {}) => {
 const getMembersWithBalance = (where, options = {}) => {
   const { until } = options;
   const untilCondition = table =>
-    until
-      ? `AND ${table}."createdAt" < '${until
-          .toISOString()
-          .toString()
-          .substr(0, 10)}'`
-      : '';
+    until ? `AND ${table}."createdAt" < '${until.toISOString().toString().substr(0, 10)}'` : '';
   const roleCond = where.role ? `AND member.role = '${where.role}'` : '';
 
   let types,
@@ -816,7 +874,9 @@ const getCollectivesWithMinBackersQuery = async ({
   offset = 0,
   where = {},
 }) => {
-  if (where.type) delete where.type;
+  if (where.type) {
+    delete where.type;
+  }
 
   const whereStatement = Object.keys(where).reduce((statement, key) => `${statement} AND c."${key}"=$${key}`, '');
   const params = {
@@ -854,6 +914,43 @@ const getCollectivesWithMinBackersQuery = async ({
   return { total, collectives };
 };
 
+const getBalances = async (collectiveIds, until = new Date()) =>
+  sequelize.query(
+    `
+        WITH "blockedFunds" AS (
+          SELECT
+            e."CollectiveId", COALESCE(sum(e.amount), 0) as sum
+          FROM
+            "Expenses" e
+          WHERE
+            e."CollectiveId" IN (:ids)
+            AND e."deletedAt" IS NULL
+            AND e."createdAt" < :until
+            AND (
+              e.status = 'SCHEDULED_FOR_PAYMENT'
+              OR (
+                e.status = 'PROCESSING' AND e.data ->> 'payout_batch_id' IS NOT NULL
+              )
+          )
+          GROUP BY
+            e."CollectiveId"
+        )
+        SELECT
+          t."CollectiveId",
+          COALESCE(sum(t."netAmountInCollectiveCurrency") - COALESCE(max(bf.sum), 0), 0) AS "balance"
+        FROM
+          "Transactions" t
+        LEFT JOIN "blockedFunds" bf ON t."CollectiveId" = bf."CollectiveId"
+        WHERE
+          t."CollectiveId" IN (:ids)
+          AND t."deletedAt" IS NULL
+          AND t."createdAt" < :until
+        GROUP BY
+          t."CollectiveId";
+      `,
+    { type: sequelize.QueryTypes.SELECT, replacements: { ids: collectiveIds, until } },
+  );
+
 const serializeCollectivesResult = JSON.stringify;
 
 const unserializeCollectivesResult = string => {
@@ -877,13 +974,14 @@ const getCollectivesWithMinBackers = memoize(getCollectivesWithMinBackersQuery, 
 });
 
 const queries = {
-  getPublicHostsByTotalCollectives,
+  getHosts,
+  getBalances,
   getCollectivesOrderedByMonthlySpending,
   getCollectivesOrderedByMonthlySpendingQuery,
   getTotalDonationsByCollectiveType,
   getTotalAnnualBudgetForHost,
   getTopDonorsForCollective,
-  getTopVendorsForCollective,
+  getTopExpenseSubmitters,
   getTopExpenseCategories,
   getTotalAnnualBudget,
   getMembersOfCollectiveWithRole,
@@ -896,6 +994,7 @@ const queries = {
   getTotalNumberOfDonors,
   getCollectivesWithBalance,
   getUniqueCollectiveTags,
+  getVirtualCardBatchesForCollective,
   getCollectivesWithMinBackers,
   getCollectivesWithMinBackersQuery,
 };

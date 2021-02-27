@@ -1,9 +1,10 @@
-import moment from 'moment';
 import debugLib from 'debug';
-import models, { sequelize, Op } from '../server/models';
+import moment from 'moment';
+
+import { reduceArrayToCurrency } from '../server/lib/currency';
 import emailLib from '../server/lib/email';
 import { getBackersStats } from '../server/lib/hostlib';
-import { reduceArrayToCurrency } from '../server/lib/currency';
+import models, { Op, sequelize } from '../server/models';
 
 const debug = debugLib('hostreport');
 
@@ -85,7 +86,9 @@ async function PlatformReport(year, month) {
 
   year = year || startDate.getFullYear();
   const computeDelta = (obj1, obj2) => {
-    if (!obj2) return obj1;
+    if (!obj2) {
+      return obj1;
+    }
     const row = {};
     Object.keys(obj1).map(attr => {
       if (!obj2[attr]) {
@@ -113,7 +116,7 @@ async function PlatformReport(year, month) {
         -SUM(CASE WHEN pm."service" = 'paypal' THEN t."platformFeeInHostCurrency" ELSE 0 END)::float as "platformFeesPaypal",
         -SUM(CASE WHEN pm."service" = 'stripe' OR spm.service = 'stripe' THEN t."platformFeeInHostCurrency" ELSE 0 END)::float as "platformFeesStripe",
         -SUM(CASE WHEN pm."service" != 'stripe' AND pm."service" != 'paypal' AND (spm.service IS NULL OR spm.service != 'stripe') THEN t."platformFeeInHostCurrency" ELSE 0 END)::float as "platformFeesManual",
-        -SUM(CASE WHEN pm."service" != 'stripe' AND (spm.service IS NULL OR spm.service != 'stripe') THEN t."platformFeeInHostCurrency" ELSE 0 END)::float as "platformFeesDue",
+        -SUM(CASE WHEN (pm."service" != 'stripe' OR pm.service IS NULL) AND (spm.service IS NULL OR spm.service != 'stripe') THEN t."platformFeeInHostCurrency" ELSE 0 END)::float as "platformFeesDue",
         -sum("platformFeeInHostCurrency")::float as "platformFees",
         "hostCurrency"
         FROM "Transactions" t
@@ -191,7 +194,10 @@ async function PlatformReport(year, month) {
       attributes: ['email'],
       where: { CollectiveId: { [Op.in]: platformAdmins.map(m => m.MemberCollectiveId) } },
     });
-    await sendEmail(adminUsers.map(u => u.email), data);
+    await sendEmail(
+      adminUsers.map(u => u.email),
+      data,
+    );
     return data;
   };
 

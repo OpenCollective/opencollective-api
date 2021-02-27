@@ -1,12 +1,20 @@
-import models, { sequelize, Op } from '../models';
-import _ from 'lodash';
-import { convertToCurrency } from '../lib/currency';
 import Promise from 'bluebird';
+import _ from 'lodash';
+
+import { convertToCurrency } from '../lib/currency';
+import models, { Op, sequelize } from '../models';
 
 export function getHostedCollectives(hostid, endDate = new Date()) {
   return sequelize.query(
     `
-    SELECT g.* FROM "Collectives" g LEFT JOIN "Members" ug ON g.id = ug."CollectiveId" WHERE ug.role='HOST' AND ug."MemberCollectiveId"=:hostid AND g."deletedAt" IS NULL AND ug."deletedAt" IS NULL AND ug."createdAt" < :endDate AND g."createdAt" < :endDate
+    SELECT g.* FROM "Collectives" g
+    LEFT JOIN "Members" ug ON g.id = ug."CollectiveId"
+    WHERE ug.role='HOST'
+      AND ug."MemberCollectiveId"=:hostid
+      AND g."deletedAt" IS NULL
+      AND ug."deletedAt" IS NULL
+      AND ug."createdAt" < :endDate
+      AND g."createdAt" < :endDate
   `,
     {
       replacements: { hostid, endDate },

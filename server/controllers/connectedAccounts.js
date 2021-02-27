@@ -1,18 +1,17 @@
 import Promise from 'bluebird';
-import { get } from 'lodash';
 import config from 'config';
+import { get } from 'lodash';
 
-import models, { Op } from '../models';
+import { mustBeLoggedInTo } from '../lib/auth';
 import errors from '../lib/errors';
-import paymentProviders from '../paymentProviders';
 import * as github from '../lib/github';
+import models, { Op } from '../models';
+import paymentProviders from '../paymentProviders';
 
 const { ConnectedAccount, User } = models;
 
-const GITHUB_REPO_MIN_STAR = 100;
-
 export const createOrUpdate = (req, res, next, accessToken, data, emails) => {
-  const { utm_source, redirect } = req.query;
+  const { utm_source: utmSource, redirect } = req.query;
   const { service } = req.params;
   const attrs = { service };
 
@@ -76,7 +75,7 @@ export const createOrUpdate = (req, res, next, accessToken, data, emails) => {
           const token = user.generateConnectedAccountVerifiedToken(caId, data.profile.username);
           const newLocation = redirect
             ? `${redirect}?token=${token}`
-            : `${config.host.website}/github/apply/${token}?utm_source=${utm_source}`;
+            : `${config.host.website}/github/apply/${token}?utm_source=${utmSource}`;
 
           res.redirect(newLocation);
         })
@@ -133,6 +132,38 @@ export const createOrUpdate = (req, res, next, accessToken, data, emails) => {
   }
 };
 
+export const disconnect = async (req, res) => {
+  const { collectiveId: CollectiveId, service } = req.params;
+  const { remoteUser } = req;
+
+  try {
+    mustBeLoggedInTo(remoteUser, 'disconnect this connected account');
+
+    if (!remoteUser.isAdmin(CollectiveId)) {
+      throw new errors.Unauthorized('You are either logged out or not authorized to disconnect this account');
+    }
+
+    const account = await ConnectedAccount.findOne({
+      where: { service, CollectiveId },
+    });
+
+    if (account) {
+      await account.destroy();
+    }
+
+    res.send({
+      deleted: true,
+      service,
+    });
+  } catch (err) {
+    res.send({
+      error: {
+        message: err.message,
+      },
+    });
+  }
+};
+
 export const verify = (req, res, next) => {
   const payload = req.jwtPayload;
   const service = req.params.service;
@@ -141,7 +172,9 @@ export const verify = (req, res, next) => {
     return paymentProviders[service].oauth.verify(req, res, next);
   }
 
-  if (!payload) return next(new errors.Unauthorized());
+  if (!payload) {
+    return next(new errors.Unauthorized());
+  }
   if (payload.scope === 'connected-account' && payload.username) {
     res.send({
       service,
@@ -164,13 +197,18 @@ const getGithubAccount = async req => {
   return githubAccount;
 };
 
+// Use a 1 minutes timeout as the default 25 seconds can leads to failing requests.
+const GITHUB_REPOS_FETCH_TIMEOUT = 1 * 60 * 1000;
+
+// used in Frontend by createCollective "GitHub flow"
 export const fetchAllRepositories = async (req, res, next) => {
   const githubAccount = await getGithubAccount(req);
   try {
+    req.setTimeout(GITHUB_REPOS_FETCH_TIMEOUT);
     let repos = await github.getAllUserPublicRepos(githubAccount.token);
     if (repos.length !== 0) {
       repos = repos.filter(repo => {
-        return repo.stargazers_count >= GITHUB_REPO_MIN_STAR && repo.fork === false;
+        return repo.stargazers_count >= config.githubFlow.minNbStars && repo.fork === false;
       });
     }
     res.send(repos);
@@ -179,6 +217,7 @@ export const fetchAllRepositories = async (req, res, next) => {
   }
 };
 
+// used in Frontend by claimCollective
 export const getRepo = async (req, res, next) => {
   const githubAccount = await getGithubAccount(req);
   try {
@@ -189,6 +228,7 @@ export const getRepo = async (req, res, next) => {
   }
 };
 
+// used in Frontend by claimCollective
 export const getOrgMemberships = async (req, res, next) => {
   const githubAccount = await getGithubAccount(req);
   try {

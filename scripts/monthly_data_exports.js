@@ -1,8 +1,10 @@
-import models, { sequelize } from '../server/models';
-import { parse as json2csv } from 'json2csv';
 import fs from 'fs';
+
 import Promise from 'bluebird';
+import { parse as json2csv } from 'json2csv';
 import moment from 'moment';
+
+import models, { sequelize } from '../server/models';
 
 const GoogleDrivePath = process.env.OC_GOOGLE_DRIVE || `${process.env.HOME}/Google\ Drive/Open\ Collective`;
 
@@ -17,7 +19,7 @@ const queries = [
   {
     filename: 'TopCollectivesByNewBackers.csv',
     query: `
-    SELECT max(c.slug) as collective, max(c."createdAt") as "createdAt", count(*) as "totalNewBackers", 
+    SELECT max(c.slug) as collective, max(c."createdAt") as "createdAt", count(*) as "totalNewBackers",
     max(c.website) as website, max(c."twitterHandle") as twitter, max(c.description) as description
     FROM "Members" m
     LEFT JOIN "Collectives" c ON m."CollectiveId" = c.id
@@ -31,7 +33,7 @@ const queries = [
   {
     filename: 'TopNewCollectivesByDonations.csv',
     query: `
-  SELECT sum(amount)::float / 100 as "totalAmount", max(t.currency) as currency, max(c.slug) as collective, 
+  SELECT sum(amount)::float / 100 as "totalAmount", max(t.currency) as currency, max(c.slug) as collective,
   max(c.website) as website, max(c."twitterHandle") as twitter, max(c.description) as description
   FROM "Transactions" t
   LEFT JOIN "Collectives" c ON c.id = t."CollectiveId"
@@ -48,8 +50,8 @@ const queries = [
   {
     filename: 'Top100Backers.csv',
     query: `
-  with res as (SELECT CONCAT('https://opencollective.com/', max(backer.slug)) as backer, sum(amount)::float / 100 as "amount", 
-  max(t.currency) as currency, string_agg(DISTINCT c.slug, ', ') AS "collectives supported", max(backer."twitterHandle") as twitter, 
+  with res as (SELECT CONCAT('https://opencollective.com/', max(backer.slug)) as backer, sum(amount)::float / 100 as "amount",
+  max(t.currency) as currency, string_agg(DISTINCT c.slug, ', ') AS "collectives supported", max(backer."twitterHandle") as twitter,
   max(backer.description) as description, max(backer.website) as website
   FROM "Transactions" t
   LEFT JOIN "Collectives" backer ON backer.id = t."FromCollectiveId"
@@ -67,13 +69,13 @@ const queries = [
   {
     filename: 'transactions.csv',
     query: `
-    SELECT 
-    t."createdAt", c.slug as "collective slug", t.type as "transaction type", t.amount::float / 100, 
-    t.currency, fc.slug as "from slug", fc.type as "from type", t.description, e.category as "expense category", 
-    h.slug as "host slug", t."hostCurrency", t."hostCurrencyFxRate", 
+    SELECT
+    t."createdAt", c.slug as "collective slug", t.type as "transaction type", t.amount::float / 100,
+    t.currency, fc.slug as "from slug", fc.type as "from type", t.description, e.tags as "expense tags",
+    h.slug as "host slug", t."hostCurrency", t."hostCurrencyFxRate",
     pm.service as "payment processor", pm.type as "payment method type",
-    t."paymentProcessorFeeInHostCurrency"::float / 100 as "paymentProcessorFeeInHostCurrency", 
-    t."hostFeeInHostCurrency"::float / 100 as "hostFeeInHostCurrency", 
+    t."paymentProcessorFeeInHostCurrency"::float / 100 as "paymentProcessorFeeInHostCurrency",
+    t."hostFeeInHostCurrency"::float / 100 as "hostFeeInHostCurrency",
     t."platformFeeInHostCurrency"::float / 100 as "platformFeeInHostCurrency"
     FROM "Transactions" t
     LEFT JOIN "Collectives" fc ON fc.id=t."FromCollectiveId"
@@ -96,9 +98,11 @@ const endDate = new Date(d.getFullYear(), d.getMonth() + 1, 1);
 
 console.log('startDate', startDate, 'endDate', endDate);
 let month = startDate.getMonth() + 1;
-if (month < 10) month = `0${month}`;
+if (month < 10) {
+  month = `0${month}`;
+}
 
-const path = `${GoogleDrivePath}/Data/${startDate.getFullYear()}-${month}`;
+const path = `${GoogleDrivePath}/Open Data/${startDate.getFullYear()}-${month}`;
 try {
   console.log('>>> mkdir', path);
   fs.mkdirSync(path);
@@ -122,15 +126,19 @@ async function run() {
     });
 
     const data = res.map(row => {
-      if (row.createdAt) row.createdAt = moment(row.createdAt).format('YYYY-MM-DD HH:mm');
+      if (row.createdAt) {
+        row.createdAt = moment(row.createdAt).format('YYYY-MM-DD HH:mm');
+      }
       Object.keys(row).map(key => {
-        if (row[key] === null) row[key] = '';
+        if (row[key] === null) {
+          row[key] = '';
+        }
       });
       return row;
     });
 
     try {
-      const csv = json2csv(res);
+      const csv = json2csv(data);
       fs.writeFileSync(`${path}/${query.filename}`, csv);
     } catch (err) {
       console.log(err);

@@ -1,12 +1,15 @@
-import models from '../../../models';
-import * as errors from '../../errors';
-import { mustHaveRole } from '../../../lib/auth';
 import { get } from 'lodash';
-import { strip_tags } from '../../../lib/utils';
+
+import { mustHaveRole } from '../../../lib/auth';
 import { purgeCacheForPage } from '../../../lib/cloudflare';
+import { stripTags } from '../../../lib/utils';
+import models from '../../../models';
+import { NotFound, ValidationFailed } from '../../errors';
 
 function require(args, path) {
-  if (!get(args, path)) throw new errors.ValidationFailed({ message: `${path} required` });
+  if (!get(args, path)) {
+    throw new ValidationFailed(`${path} required`);
+  }
 }
 
 export async function createUpdate(_, args, req) {
@@ -20,17 +23,18 @@ export async function createUpdate(_, args, req) {
     throw new Error('This collective does not exist');
   }
 
-  const markdown = args.update.markdown ? strip_tags(args.update.markdown) : '';
+  const markdown = args.update.markdown ? stripTags(args.update.markdown) : '';
 
   const update = await models.Update.create({
     title: args.update.title,
     markdown,
-    html: strip_tags(args.update.html),
+    html: stripTags(args.update.html),
     CollectiveId,
     isPrivate: args.update.isPrivate,
     TierId: get(args, 'update.tier.id'),
     CreatedByUserId: req.remoteUser.id,
     FromCollectiveId: req.remoteUser.CollectiveId,
+    makePublicOn: args.update.makePublicOn,
   });
 
   purgeCacheForPage(`/${collective.slug}`);
@@ -39,7 +43,9 @@ export async function createUpdate(_, args, req) {
 
 async function fetchUpdate(id) {
   const update = await models.Update.findByPk(id);
-  if (!update) throw new errors.NotFound({ message: `Update with id ${id} not found` });
+  if (!update) {
+    throw new NotFound(`Update with id ${id} not found`);
+  }
   return update;
 }
 

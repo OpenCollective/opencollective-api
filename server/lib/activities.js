@@ -1,7 +1,9 @@
-import activities from '../constants/activities';
 import flatten from 'flat';
-import currencies from '../constants/currencies';
+
+import activities from '../constants/activities';
 import { TransactionTypes } from '../constants/transactions';
+
+import { formatCurrency } from './currency';
 
 export default {
   /*
@@ -131,9 +133,7 @@ export default {
         return `New subscription confirmed: ${currency} ${recurringAmount} from ${userString} to ${collective}!`;
 
       case activities.SUBSCRIPTION_CANCELED:
-        return `Subscription ${
-          activity.data.subscription.id
-        } canceled: ${currency} ${recurringAmount} from ${userString} to ${collective}`;
+        return `Subscription ${activity.data.subscription.id} canceled: ${currency} ${recurringAmount} from ${userString} to ${collective}`;
 
       case activities.COLLECTIVE_CREATED:
         return `New collective created by ${userString}: ${collective} ${hostString}`.trim();
@@ -230,7 +230,7 @@ export default {
           case TransactionTypes.CREDIT:
             if (userTwitter) {
               tweet = encodeURIComponent(
-                `@${userTwitter} thanks for your ${currencies[currency].format(recurringAmount)} donation to ${
+                `@${userTwitter} thanks for your ${formatCurrency(currency, recurringAmount)} contribution to ${
                   collectiveTwitter ? `@${collectiveTwitter}` : collectiveName
                 } 👍 ${publicUrl}`,
               );
@@ -264,7 +264,7 @@ export default {
       case activities.SUBSCRIPTION_CONFIRMED:
         if (userTwitter) {
           tweet = encodeURIComponent(
-            `@${userTwitter} thanks for your ${currencies[currency].format(recurringAmount)} donation to ${
+            `@${userTwitter} thanks for your ${formatCurrency(currency, recurringAmount)} contribution to ${
               collectiveTwitter ? `@${collectiveTwitter}` : collectiveName
             } 👍 ${publicUrl}`,
           );
@@ -281,9 +281,7 @@ export default {
         return `New collective created by ${userString}: ${collective} ${hostString}`.trim();
 
       case activities.ORDERS_SUSPICIOUS:
-        return `Suspicious Order: ${userString} gave ${currency} ${amount} to ${collective}. Score: ${
-          activity.data.recaptchaResponse.score
-        }`;
+        return `Suspicious Order: ${userString} gave ${currency} ${amount} to ${collective}. Score: ${activity.data.recaptchaResponse.score}`;
 
       default:
         return '';
