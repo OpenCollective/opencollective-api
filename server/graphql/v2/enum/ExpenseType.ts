@@ -1,4 +1,5 @@
 import { GraphQLEnumType } from 'graphql';
+
 import expenseType from '../../../constants/expense_type';
 
 export const ExpenseType = new GraphQLEnumType({
@@ -10,6 +11,9 @@ export const ExpenseType = new GraphQLEnumType({
     },
     [expenseType.RECEIPT]: {
       description: 'Receipt: Charge for your time or get paid in advance',
+    },
+    [expenseType.UNCLASSIFIED]: {
+      description: 'Unclassified expense',
     },
   },
 });

@@ -3,11 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { URL } from 'url';
 
-import config from 'config';
 import Promise from 'bluebird';
+import config from 'config';
 import pdf from 'html-pdf';
+import { cloneDeep, get, isEqual, padStart } from 'lodash';
 import sanitizeHtml from 'sanitize-html';
-import { get, cloneDeep, isEqual } from 'lodash';
 
 import handlebars from './handlebars';
 
@@ -59,7 +59,7 @@ export function getDomain(url = '') {
 /**
  * @deprecated Please use the functions in `server/lib/sanitize-html.js`
  */
-export function strip_tags(str, allowedTags) {
+export function stripTags(str, allowedTags) {
   return sanitizeHtml(str, {
     allowedTags: allowedTags || sanitizeHtml.defaults.allowedTags.concat(['img', 'h1', 'h2', 'h3']),
     allowedAttributes: {
@@ -84,7 +84,7 @@ export function strip_tags(str, allowedTags) {
 }
 
 export const sanitizeObject = (obj, attributes, sanitizerFn) => {
-  const sanitizer = typeof sanitizerFn === 'function' ? sanitizerFn : strip_tags;
+  const sanitizer = typeof sanitizerFn === 'function' ? sanitizerFn : stripTags;
 
   attributes.forEach(attr => {
     if (!obj[attr]) {
@@ -121,7 +121,7 @@ export const sanitizeForLogs = obj => {
   return sanitizeObject(cloneDeep(obj), Object.keys(obj), sanitizer);
 };
 
-String.prototype.trunc = function(n, useWordBoundary) {
+String.prototype.trunc = function (n, useWordBoundary) {
   if (this.length <= n) {
     return this;
   }
@@ -516,21 +516,6 @@ export function isUUID(str) {
   return str.length === 36 && str.match(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i);
 }
 
-export function hashCode(str) {
-  let hash = 0,
-    i,
-    chr;
-  if (str.length === 0) {
-    return hash;
-  }
-  for (i = 0; i < str.length; i++) {
-    chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-}
-
 /** Sleeps for MS milliseconds */
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -589,11 +574,9 @@ export const cleanTags = tags => {
   return cleanTagsList.length > 0 ? cleanTagsList : null;
 };
 
-export const md5 = value =>
-  crypto
-    .createHash('md5')
-    .update(value)
-    .digest('hex');
+export const md5 = value => crypto.createHash('md5').update(value).digest('hex');
+
+export const sha512 = value => crypto.createHash('sha512').update(value).digest('hex');
 
 /**
  * Filter `list` with `filterFunc` until `conditionFunc` returns true.
@@ -618,4 +601,14 @@ export const objHasOnlyKeys = (obj, keys) => {
   const sortedObjKeys = Object.keys(obj).sort();
   const sortedKeys = [...keys].sort();
   return isEqual(sortedObjKeys, sortedKeys);
+};
+
+/**
+ * Format a datetime object to an ISO date like `YYYY-MM-DD`
+ */
+export const toIsoDateStr = date => {
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const day = date.getUTCDate();
+  return `${year}-${padStart(month.toString(), 2, '0')}-${padStart(day.toString(), 2, '0')}`;
 };

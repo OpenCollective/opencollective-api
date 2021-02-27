@@ -1,7 +1,7 @@
 import { GraphQLInputObjectType } from 'graphql';
 
-import { OrderDirectionType } from '../enum/OrderDirectionType';
 import { DateTimeField } from '../enum/DateTimeField';
+import { OrderDirectionType } from '../enum/OrderDirectionType';
 
 export const ChronologicalOrderInput = new GraphQLInputObjectType({
   name: 'ChronologicalOrderInput',
@@ -20,10 +20,12 @@ export const ChronologicalOrderInput = new GraphQLInputObjectType({
   },
 });
 
-ChronologicalOrderInput.defaultValue = Object.entries(ChronologicalOrderInput.getFields()).reduce(
+export const CHRONOLOGICAL_ORDER_INPUT_DEFAULT_VALUE = Object.entries(ChronologicalOrderInput.getFields()).reduce(
   (values, [key, value]) => ({
     ...values,
     [key]: value.defaultValue,
   }),
   {},
 );
+
+ChronologicalOrderInput.defaultValue = CHRONOLOGICAL_ORDER_INPUT_DEFAULT_VALUE;

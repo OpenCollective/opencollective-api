@@ -1,6 +1,6 @@
-import config from 'config';
+import { createOAuthAppAuth } from '@octokit/auth-oauth-app';
 import { Octokit } from '@octokit/rest';
-import { createAppAuth } from '@octokit/auth-app';
+import config from 'config';
 import { get, has, pick } from 'lodash';
 
 import cache from './cache';
@@ -13,7 +13,6 @@ const compactRepo = repo => {
     'description', // (1)
     'owner', // (1) (4)
     'stargazers_count', // (1) (2) (4)
-    'topics', // (1)
     'fork', // (3)
   ]);
   repo.owner = pick(repo.owner, [
@@ -31,12 +30,10 @@ const compactRepo = repo => {
 export function getOctokit(accessToken) {
   const octokitParams = {};
 
-  octokitParams.previews = ['mercy-preview'];
-
   if (accessToken) {
     octokitParams.auth = `token ${accessToken}`;
   } else if (has(config, 'github.clientID') && has(config, 'github.clientSecret')) {
-    octokitParams.authStrategy = createAppAuth;
+    octokitParams.authStrategy = createOAuthAppAuth;
     octokitParams.auth = {
       clientId: get(config, 'github.clientID'),
       clientSecret: get(config, 'github.clientSecret'),
@@ -65,6 +62,7 @@ export async function getAllUserPublicRepos(accessToken) {
 
   const octokit = getOctokit(accessToken);
 
+  // eslint-disable-next-line camelcase
   const parameters = { page: 1, per_page: 100, visibility: 'public' };
 
   let repos = [];
@@ -98,6 +96,7 @@ export async function getAllOrganizationPublicRepos(org, accessToken) {
 
   const octokit = getOctokit(accessToken);
 
+  // eslint-disable-next-line camelcase
   const parameters = { org, page: 1, per_page: 100, type: 'public' };
 
   let repos = [];
@@ -136,6 +135,7 @@ export async function getOrgMemberships(accessToken) {
   const octokit = getOctokit(accessToken);
   // https://octokit.github.io/rest.js/#api-Orgs-listMemberships
   // https://developer.github.com/v3/orgs/members/#list-your-organization-memberships
+  // eslint-disable-next-line camelcase
   return octokit.orgs.listMemberships({ page: 1, per_page: 100 }).then(getData);
 }
 

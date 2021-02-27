@@ -175,7 +175,21 @@ export const IBANCurrencyValues = {
 export const Currency = new GraphQLEnumType({
   name: 'Currency',
   description: 'All supported currencies',
-  values: pick(IBANCurrencyValues, ['USD', 'EUR', 'GBP', 'MXN', 'CAD', 'CHF', 'UYU', 'AUD', 'INR', 'JPY', 'NZD']),
+  values: pick(IBANCurrencyValues, [
+    'USD',
+    'EUR',
+    'GBP',
+    'MXN',
+    'CAD',
+    'CHF',
+    'UYU',
+    'AUD',
+    'INR',
+    'JPY',
+    'NZD',
+    'NGN',
+    'CZK',
+  ]),
 });
 
 export const TransferWiseCurrency = new GraphQLEnumType({

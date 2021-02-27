@@ -1,9 +1,11 @@
-import paypalAdaptive from './adaptiveGateway';
-import { get, isNil } from 'lodash';
 import config from 'config';
+import { get, isNil } from 'lodash';
 import { v1 as uuid } from 'uuid';
-import logger from '../../lib/logger';
+
 import errors from '../../lib/errors';
+import logger from '../../lib/logger';
+
+import paypalAdaptive from './adaptiveGateway';
 
 /**
  * PayPal paymentProvider
@@ -14,7 +16,7 @@ import errors from '../../lib/errors';
  * Confirms that the preapprovalKey has been approved by PayPal
  * and updates the paymentMethod
  */
-const getPreapprovalDetailsAndUpdatePaymentMethod = async function(paymentMethod) {
+const getPreapprovalDetailsAndUpdatePaymentMethod = async function (paymentMethod) {
   if (!paymentMethod) {
     return Promise.reject(new Error('No payment method provided to getPreapprovalDetailsAndUpdatePaymentMethod'));
   }

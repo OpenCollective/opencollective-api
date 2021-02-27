@@ -6,14 +6,15 @@ import { types as CollectiveType } from '../../constants/collectives';
 import { maxInteger } from '../../constants/math';
 import { TransactionTypes } from '../../constants/transactions';
 import { getListOfAccessibleMembers } from '../../lib/auth';
+import queries from '../../lib/queries';
 import models, { Op, sequelize } from '../../models';
-import { sortResults, createDataLoaderWithOptions } from './helpers';
 
-// Loaders generators
+import collectiveLoaders from './collective';
 import commentsLoader from './comments';
 import conversationLoaders from './conversation';
-import { generateExpenseAttachmentsLoader } from './expenses';
-import { generateCollectivePaypalPayoutMethodsLoader, generateCollectivePayoutMethodsLoader } from './payout-method';
+import * as expenseLoaders from './expenses';
+import { createDataLoaderWithOptions, sortResults } from './helpers';
+import { generateCollectivePayoutMethodsLoader, generateCollectivePaypalPayoutMethodsLoader } from './payout-method';
 import { generateCanSeeUserPrivateInfoLoader } from './user';
 
 export const loaders = req => {
@@ -24,12 +25,18 @@ export const loaders = req => {
   context.loaders.Comment.findAllByAttribute = commentsLoader.findAllByAttribute(req, cache);
   context.loaders.Comment.countByExpenseId = commentsLoader.countByExpenseId(req, cache);
 
+  // Comment Reactions
+  context.loaders.Comment.reactionsByCommentId = commentsLoader.reactionsByCommentId(req, cache);
+  context.loaders.Comment.remoteUserReactionsByCommentId = commentsLoader.remoteUserReactionsByCommentId(req, cache);
+
   // Conversation
   context.loaders.Conversation.followers = conversationLoaders.followers(req, cache);
   context.loaders.Conversation.commentsCount = conversationLoaders.commentsCount(req, cache);
 
   // Expense
-  context.loaders.ExpenseAttachment.byExpenseId = generateExpenseAttachmentsLoader(req, cache);
+  context.loaders.Expense.activities = expenseLoaders.generateExpenseActivitiesLoader(req, cache);
+  context.loaders.Expense.attachedFiles = expenseLoaders.attachedFiles(req, cache);
+  context.loaders.Expense.items = expenseLoaders.generateExpenseItemsLoader(req, cache);
 
   // Payout method
   context.loaders.PayoutMethod.paypalByCollectiveId = generateCollectivePaypalPayoutMethodsLoader(req, cache);
@@ -40,6 +47,9 @@ export const loaders = req => {
 
   /** *** Collective *****/
 
+  // Collective - by UserId
+  context.loaders.Collective.byUserId = collectiveLoaders.byUserId(req, cache);
+
   // Collective - ChildCollectives
   context.loaders.Collective.childCollectives = new DataLoader(parentIds =>
     models.Collective.findAll({
@@ -49,16 +59,10 @@ export const loaders = req => {
 
   // Collective - Balance
   context.loaders.Collective.balance = new DataLoader(ids =>
-    models.Transaction.findAll({
-      attributes: [
-        'CollectiveId',
-        [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('netAmountInCollectiveCurrency')), 0), 'balance'],
-      ],
-      where: { CollectiveId: { [Op.in]: ids } },
-      group: ['CollectiveId'],
-    })
+    queries
+      .getBalances(ids)
       .then(results => sortResults(ids, results, 'CollectiveId'))
-      .map(result => get(result, 'dataValues.balance') || 0),
+      .map(result => get(result, 'balance') || 0),
   );
 
   // Collective - ConnectedAccounts
@@ -153,6 +157,41 @@ export const loaders = req => {
           });
         })
         .then(results => sortResults(ids, results, 'CollectiveId')),
+    ),
+    activeRecurringContributions: new DataLoader(ids =>
+      models.Order.findAll({
+        attributes: [
+          'Order.CollectiveId',
+          'Subscription.interval',
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('Subscription.amount')), 0), 'total'],
+        ],
+        where: {
+          CollectiveId: { [Op.in]: ids },
+          status: 'ACTIVE',
+        },
+        group: ['Subscription.interval', 'CollectiveId'],
+        include: [
+          {
+            model: models.Subscription,
+            attributes: [],
+            where: { isActive: true },
+          },
+        ],
+        raw: true,
+      }).then(rows => {
+        const results = groupBy(rows, 'CollectiveId');
+        return ids.map(collectiveId => {
+          const stats = { CollectiveId: Number(collectiveId), monthly: 0, yearly: 0 };
+
+          if (results[collectiveId]) {
+            results[collectiveId].forEach(stat => {
+              stats[stat.interval === 'month' ? 'monthly' : 'yearly'] += stat.total;
+            });
+          }
+
+          return stats;
+        });
+      }),
     ),
   };
 

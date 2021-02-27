@@ -1,6 +1,6 @@
-import { GraphQLNonNull, GraphQLList, GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLInt } from 'graphql';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
+import GraphQLJSON from 'graphql-type-json';
 
-import { TransferWiseCurrency } from '../enum/Currency';
 import transferwise from '../../../paymentProviders/transferwise';
 
 const TransferWiseFieldGroupValuesAllowed = new GraphQLObjectType({
@@ -18,6 +18,7 @@ const TransferWiseFieldGroup = new GraphQLObjectType({
     name: { type: GraphQLString },
     type: { type: GraphQLString },
     required: { type: GraphQLBoolean },
+    refreshRequirementsOnChange: { type: GraphQLBoolean },
     displayFormat: { type: GraphQLString },
     example: { type: GraphQLString },
     minLength: { type: GraphQLInt },
@@ -52,21 +53,25 @@ export const TransferWise = new GraphQLObjectType({
     requiredFields: {
       args: {
         currency: {
-          type: new GraphQLNonNull(TransferWiseCurrency),
+          type: new GraphQLNonNull(GraphQLString),
           description: 'The 3 letter code identifying the currency you want to receive (ie: USD, EUR, BRL, GBP)',
+        },
+        accountDetails: {
+          type: GraphQLJSON,
+          description: 'The account JSON object being validated',
         },
       },
       type: new GraphQLList(TransferWiseRequiredField),
       async resolve(host, args) {
         if (host) {
-          return await transferwise.getRequiredBankInformation(host, args.currency);
+          return await transferwise.getRequiredBankInformation(host, args.currency, args.accountDetails);
         } else {
           return null;
         }
       },
     },
     availableCurrencies: {
-      type: new GraphQLList(TransferWiseCurrency),
+      type: new GraphQLList(GraphQLString),
       async resolve(host) {
         if (host) {
           const availableCurrencies = await transferwise.getAvailableCurrencies(host);

@@ -1,11 +1,28 @@
-import Axios, { AxiosError } from 'axios';
-import config from 'config';
-import { omitBy, isNull, toInteger } from 'lodash';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import url from 'url';
 
-import logger from './logger';
-import { Quote, RecipientAccount } from '../types/transferwise';
+import Axios, { AxiosError } from 'axios';
+import config from 'config';
+import Debug from 'debug';
+import { Request } from 'express';
+import { isNull, omitBy, startCase, toInteger, toUpper } from 'lodash';
 
+import { TransferwiseError } from '../graphql/errors';
+import {
+  BorderlessAccount,
+  CurrencyPair,
+  Profile,
+  Quote,
+  RecipientAccount,
+  Transfer,
+  WebhookEvent,
+} from '../types/transferwise';
+
+import logger from './logger';
+
+const debug = Debug('transferwise');
 const fixieUrl = config.fixie.url && new url.URL(config.fixie.url);
 const proxyOptions = fixieUrl
   ? {
@@ -23,16 +40,29 @@ const axios = Axios.create({
   ...proxyOptions,
 });
 
+type TransferwiseErrorCodes = 'balance.payment-option-unavailable' | string;
+
 const compactRecipientDetails = <T>(object: T): Partial<T> => omitBy(object, isNull);
 const getData = <T extends { data?: object }>(obj: T | undefined): T['data'] | undefined => obj && obj.data;
-
-const getAxiosError = (error: AxiosError): string => {
-  if (error.response) {
-    // The request was made and the server responded with a status code
-    // that falls out of the range of 2xx
-    return `${error.response.status}: ${JSON.stringify(error.response.data)}`;
-  } else {
-    return error.toString();
+const parseError = (
+  error: AxiosError<{ errorCode?: TransferwiseErrorCodes }>,
+  defaultMessage?: string,
+  defaultCode?: string,
+): string | Error => {
+  return new TransferwiseError(
+    defaultMessage,
+    error.response?.data?.errorCode ? `transferwise.error.${error.response.data.errorCode}` : defaultCode,
+  );
+};
+const requestDataAndThrowParsedError = async (request: Promise<any>, defaultErrorMessage?: string): Promise<any> => {
+  try {
+    const response = await request;
+    return getData(response);
+  } catch (e) {
+    debug(e);
+    const error = parseError(e, defaultErrorMessage);
+    logger.error(error.toString());
+    throw error;
   }
 };
 
@@ -56,15 +86,11 @@ export const createQuote = async (
     targetAmount,
     sourceAmount,
   };
-  try {
-    const response = await axios.post(`/v1/quotes`, data, {
+  return requestDataAndThrowParsedError(
+    axios.post(`/v1/quotes`, data, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return getData(response);
-  } catch (e) {
-    logger.error(`Unable to create quote: ${getAxiosError(e)}`, data);
-    throw new Error(`Sorry, we can't make transfers to ${targetCurrency}.`);
-  }
+    }),
+  );
 };
 
 interface CreateRecipientAccount extends RecipientAccount {
@@ -75,20 +101,15 @@ export const createRecipientAccount = async (
   { profileId: profile, currency, type, accountHolderName, legalType, details }: CreateRecipientAccount,
 ): Promise<RecipientAccount> => {
   const data = { profile, currency, type, accountHolderName, legalType, details };
-  try {
-    const response = await axios.post(`/v1/accounts`, data, {
+  const response = await requestDataAndThrowParsedError(
+    axios.post(`/v1/accounts`, data, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-
-    return {
-      ...response.data,
-      details: compactRecipientDetails(response.data.details),
-    };
-  } catch (e) {
-    const message = `Unable to create recipient account: ${getAxiosError(e)}`;
-    logger.error(message);
-    throw new Error(message);
-  }
+    }),
+  );
+  return {
+    ...response,
+    details: compactRecipientDetails(response.details),
+  };
 };
 
 interface CreateTransfer {
@@ -104,18 +125,25 @@ interface CreateTransfer {
 export const createTransfer = async (
   token: string,
   { accountId: targetAccount, quoteId: quote, uuid: customerTransactionId, details }: CreateTransfer,
-): Promise<any> => {
+): Promise<Transfer> => {
   const data = { targetAccount, quote, customerTransactionId, details };
-  try {
-    const response = await axios.post(`/v1/transfers`, data, {
+  return requestDataAndThrowParsedError(
+    axios.post(`/v1/transfers`, data, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return getData(response);
-  } catch (e) {
-    const message = `Unable to create transfer: ${getAxiosError(e)}`;
-    logger.error(message);
-    throw new Error(message);
-  }
+    }),
+  );
+};
+
+export const cancelTransfer = async (token: string, transferId: string | number): Promise<Transfer> => {
+  return requestDataAndThrowParsedError(
+    axios.put(
+      `/v1/transfers/${transferId}/cancel`,
+      {},
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    ),
+  );
 };
 
 interface FundTransfer {
@@ -126,31 +154,23 @@ export const fundTransfer = async (
   token,
   { profileId, transferId }: FundTransfer,
 ): Promise<{ status: 'COMPLETED' | 'REJECTED'; errorCode: string }> => {
-  try {
-    const response = await axios.post(
+  return requestDataAndThrowParsedError(
+    axios.post(
       `/v3/profiles/${profileId}/transfers/${transferId}/payments`,
       { type: 'BALANCE' },
       { headers: { Authorization: `Bearer ${token}` } },
-    );
-    return getData(response);
-  } catch (e) {
-    const message = `Unable to fund transfer: ${getAxiosError(e)}`;
-    logger.error(message, { transferId });
-    throw new Error(message);
-  }
+    ),
+    'Unable to fund transfer, please check your balance and try again.',
+  );
 };
 
-export const getProfiles = async (token: string): Promise<any> => {
-  try {
-    const response = await axios.get(`/v1/profiles`, {
+export const getProfiles = async (token: string): Promise<Profile[]> => {
+  return requestDataAndThrowParsedError(
+    axios.get(`/v1/profiles`, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return getData(response);
-  } catch (e) {
-    const message = `Unable to get profiles: ${getAxiosError(e)}`;
-    logger.error(message);
-    throw new Error(message);
-  }
+    }),
+    'Unable to fetch profiles.',
+  );
 };
 
 interface GetTemporaryQuote {
@@ -169,50 +189,125 @@ export const getTemporaryQuote = async (
     rateType: 'FIXED',
     ...amount,
   };
-  try {
-    const response = await axios.get(`/v1/quotes`, {
+  return requestDataAndThrowParsedError(
+    axios.get(`/v1/quotes`, {
       headers: { Authorization: `Bearer ${token}` },
       params,
-    });
-    return getData(response);
-  } catch (e) {
-    logger.error(`Unable to get temporary quote: ${getAxiosError(e)}`, params);
-    throw new Error('An unknown error happened with Transferwise. Please contact support@opencollective.com.');
-  }
+    }),
+  );
 };
 
-export const getTransfer = async (token: string, transferId: number): Promise<any> => {
-  try {
-    const response = await axios.get(`/v1/transfers/${transferId}`, {
+export const getTransfer = async (token: string, transferId: number): Promise<Transfer> => {
+  return requestDataAndThrowParsedError(
+    axios.get(`/v1/transfers/${transferId}`, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return getData(response);
-  } catch (e) {
-    logger.error(`Unable to get transfer data: ${getAxiosError(e)}`, { transferId });
-    throw new Error('An unknown error happened with Transferwise. Please contact support@opencollective.com.');
-  }
+    }),
+  );
 };
 
-export const getAccountRequirements = async (token: string, quoteId: number): Promise<any> => {
-  try {
-    const response = await axios.get(`/v1/quotes/${quoteId}/account-requirements`, {
+export const getAccountRequirements = async (
+  token: string,
+  { sourceCurrency, targetCurrency, ...amount }: GetTemporaryQuote,
+): Promise<any> => {
+  const params = {
+    source: sourceCurrency,
+    target: targetCurrency,
+    ...amount,
+  };
+  return requestDataAndThrowParsedError(
+    axios.get(`/v1/account-requirements`, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return getData(response);
-  } catch (e) {
-    logger.error(`Unable to get account requirements data: ${getAxiosError(e)}`, { quoteId });
-    throw new Error('An unknown error happened with Transferwise. Please contact support@opencollective.com.');
-  }
+      params,
+    }),
+  );
 };
 
-export const getCurrencyPairs = async (token: string): Promise<any> => {
-  try {
-    const response = await axios.get(`/v1/currency-pairs`, {
+export const validateAccountRequirements = async (
+  token: string,
+  { sourceCurrency, targetCurrency, ...amount }: GetTemporaryQuote,
+  accountDetails: any,
+): Promise<any> => {
+  const params = {
+    source: sourceCurrency,
+    target: targetCurrency,
+    ...amount,
+  };
+  return requestDataAndThrowParsedError(
+    axios.post(`/v1/account-requirements`, accountDetails, {
       headers: { Authorization: `Bearer ${token}` },
-    });
-    return getData(response);
-  } catch (e) {
-    logger.error(`Unable to get currency pairs data: ${getAxiosError(e)}`);
-    throw new Error('An unknown error happened with Transferwise. Please contact support@opencollective.com.');
+      params,
+    }),
+  );
+};
+
+export const getCurrencyPairs = async (token: string): Promise<{ sourceCurrencies: CurrencyPair[] }> => {
+  return requestDataAndThrowParsedError(
+    axios.get(`/v1/currency-pairs`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+};
+
+export const getBorderlessAccount = async (token: string, profileId: string | number): Promise<BorderlessAccount> => {
+  const accounts: BorderlessAccount[] = await requestDataAndThrowParsedError(
+    axios.get(`/v1/borderless-accounts?profileId=${profileId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+  );
+  return accounts.find(a => a.profileId === profileId);
+};
+
+const isProduction = process.env.NODE_ENV === 'production';
+const publicKey = fs.readFileSync(
+  path.join(
+    __dirname,
+    '..',
+    '..',
+    'keys',
+    isProduction ? 'transferwise.webhook.live.pub' : 'transferwise.webhook.sandbox.pub',
+  ),
+  { encoding: 'utf-8' },
+);
+
+export const verifyEvent = (req: Request & { rawBody: string }): WebhookEvent => {
+  const signature = req.headers['x-signature'] as string;
+  const sig = crypto.createVerify('RSA-SHA1');
+  sig.update(req.rawBody);
+  const verified = sig.verify(publicKey, signature, 'base64');
+  if (!verified) {
+    throw new Error('Could not verify event signature');
   }
+  return req.body;
+};
+
+export const formatAccountDetails = (payoutMethodData: Record<string, any>): string => {
+  const ignoredKeys = ['type', 'isManualBankTransfer', 'currency'];
+  const labels = {
+    abartn: 'Routing Number',
+  };
+
+  const formatKey = (s: string): string => {
+    if (labels[s]) {
+      return labels[s];
+    }
+    if (toUpper(s) === s) {
+      return s;
+    }
+    return startCase(s);
+  };
+
+  const renderObject = (object: Record<string, any>, prefix = ''): string[] =>
+    Object.entries(object).reduce((acc, [key, value]) => {
+      if (ignoredKeys.includes(key)) {
+        return acc;
+      }
+      if (typeof value === 'object') {
+        return [...acc, formatKey(key), ...renderObject(value, '  ')];
+      }
+      return [...acc, `${prefix}${formatKey(key)}: ${value}`];
+    }, []);
+
+  const { accountHolderName, currency, ...data } = payoutMethodData;
+  const lines = renderObject({ accountHolderName, currency, ...data });
+  return lines.join('\n');
 };

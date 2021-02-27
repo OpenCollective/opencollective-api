@@ -1,14 +1,16 @@
 import Promise from 'bluebird';
-import moment from 'moment';
-import { v4 as uuid } from 'uuid';
 import debugLib from 'debug';
 import { get, isUndefined } from 'lodash';
+import moment from 'moment';
+import { v4 as uuid } from 'uuid';
 
 import activities from '../constants/activities';
 import { TransactionTypes } from '../constants/transactions';
-import CustomDataTypes from './DataTypes';
 import { toNegative } from '../lib/math';
+import { calcFee } from '../lib/payments';
 import { exportToCSV } from '../lib/utils';
+
+import CustomDataTypes from './DataTypes';
 
 const debug = debugLib('models:Transaction');
 
@@ -138,7 +140,7 @@ export default (Sequelize, DataTypes) => {
       taxAmount: { type: DataTypes.INTEGER },
       netAmountInCollectiveCurrency: DataTypes.INTEGER, // stores the net amount received by the collective (after fees) or removed from the collective (including fees)
 
-      data: DataTypes.JSON,
+      data: DataTypes.JSONB,
 
       // Note: Not a foreign key, should have been lower case t, 'transactionGroup`
       TransactionGroup: {
@@ -198,6 +200,7 @@ export default (Sequelize, DataTypes) => {
             netAmountInHostCurrency: this.netAmountInHostCurrency,
             amountSentToHostInHostCurrency: this.amountSentToHostInHostCurrency,
             hostCurrency: this.hostCurrency,
+            ExpenseId: this.ExpenseId,
           };
         },
       },
@@ -212,22 +215,20 @@ export default (Sequelize, DataTypes) => {
     },
   );
 
-  Transaction.schema('public');
-
   /**
    * Instance Methods
    */
-  Transaction.prototype.getUser = function() {
+  Transaction.prototype.getUser = function () {
     return models.User.findByPk(this.CreatedByUserId);
   };
 
-  Transaction.prototype.getVirtualCardEmitterCollective = function() {
+  Transaction.prototype.getVirtualCardEmitterCollective = function () {
     if (this.UsingVirtualCardFromCollectiveId) {
       return models.Collective.findByPk(this.UsingVirtualCardFromCollectiveId);
     }
   };
 
-  Transaction.prototype.getHostCollective = async function() {
+  Transaction.prototype.getHostCollective = async function () {
     let HostCollectiveId = this.HostCollectiveId;
     // if the transaction is from the perspective of the fromCollective
     if (!HostCollectiveId) {
@@ -237,7 +238,7 @@ export default (Sequelize, DataTypes) => {
     return models.Collective.findByPk(HostCollectiveId);
   };
 
-  Transaction.prototype.getSource = function() {
+  Transaction.prototype.getSource = function () {
     if (this.OrderId) {
       return this.getOrder({ paranoid: false });
     }
@@ -251,14 +252,14 @@ export default (Sequelize, DataTypes) => {
    * either the virtual card provider if using a virtual card or
    * `CollectiveId` otherwise.
    */
-  Transaction.prototype.paymentMethodProviderCollectiveId = function() {
+  Transaction.prototype.paymentMethodProviderCollectiveId = function () {
     if (this.UsingVirtualCardFromCollectiveId) {
       return this.UsingVirtualCardFromCollectiveId;
     }
     return this.type === 'DEBIT' ? this.CollectiveId : this.FromCollectiveId;
   };
 
-  Transaction.prototype.getDetailsForUser = function(user) {
+  Transaction.prototype.getDetailsForUser = function (user) {
     const sourceCollective = this.paymentMethodProviderCollectiveId();
     return user.populateRoles().then(() => {
       if (
@@ -274,7 +275,7 @@ export default (Sequelize, DataTypes) => {
     });
   };
 
-  Transaction.prototype.getRefundTransaction = function() {
+  Transaction.prototype.getRefundTransaction = function () {
     if (!this.RefundTransactionId) {
       return null;
     }
@@ -528,5 +529,35 @@ export default (Sequelize, DataTypes) => {
         )
     );
   };
+
+  Transaction.creditHost = (order, collective) => {
+    // Special Case, adding funds to itself
+    const amount = order.totalAmount;
+    const platformFeePercent = get(order, 'data.platformFeePercent', 0);
+    const platformFee = calcFee(order.totalAmount, platformFeePercent);
+    const payload = {
+      type: 'CREDIT',
+      amount,
+      description: order.description,
+      currency: order.currency,
+      CollectiveId: order.CollectiveId,
+      FromCollectiveId: order.CollectiveId,
+      CreatedByUserId: order.CreatedByUserId,
+      PaymentMethodId: order.PaymentMethodId,
+      OrderId: order.id,
+      platformFeeInHostCurrency: -platformFee,
+      hostFeeInHostCurrency: 0,
+      paymentProcessorFeeInHostCurrency: 0,
+      HostCollectiveId: collective.id,
+      hostCurrency: collective.currency,
+      hostCurrencyFxRate: 1,
+      amountInHostCurrency: amount,
+      netAmountInCollectiveCurrency: amount - platformFee,
+      TransactionGroup: uuid(),
+    };
+
+    return models.Transaction.create(payload);
+  };
+
   return Transaction;
 };

@@ -1,4 +1,6 @@
-import { GraphQLString, GraphQLInt, GraphQLInputObjectType } from 'graphql';
+import { GraphQLInputObjectType, GraphQLInt, GraphQLString } from 'graphql';
+
+import { ExpenseReferenceInput } from './ExpenseReferenceInput';
 
 /**
  * Input type to use as the type for the comment input in createComment mutation.
@@ -6,10 +8,15 @@ import { GraphQLString, GraphQLInt, GraphQLInputObjectType } from 'graphql';
 export const CommentCreateInput = new GraphQLInputObjectType({
   name: 'CommentCreateInput',
   fields: () => ({
-    markdown: { type: GraphQLString },
     html: { type: GraphQLString },
-    ExpenseId: { type: GraphQLInt },
-    UpdateId: { type: GraphQLInt },
+    expense: {
+      type: ExpenseReferenceInput,
+      description: 'If your comment is linked to an expense, set it here',
+    },
+    ExpenseId: {
+      type: GraphQLInt,
+      deprecationReason: '2019-02-26: Please use the expense field',
+    },
     ConversationId: { type: GraphQLString },
   }),
 });

@@ -1,6 +1,8 @@
 import config from 'config';
 import { uniqBy } from 'lodash';
+
 import models from '../models';
+
 import logger from './logger';
 import { isEmailInternal } from './utils';
 
@@ -74,6 +76,7 @@ export function SendHelloWorksTaxForm({ client, callbackUrl, workflowId, year })
     const userCollective = await user.getCollective();
 
     const participants = {
+      // eslint-disable-next-line camelcase
       participant_swVuvW: {
         type: 'email',
         value: user.email,

@@ -1,6 +1,7 @@
+import { get,pick } from 'lodash';
 import { Model, Transaction } from 'sequelize';
-import { pick, get } from 'lodash';
 import { isEmail } from 'validator';
+
 import restoreSequelizeAttributesOnClass from '../lib/restore-sequelize-attributes-on-class';
 import { objHasOnlyKeys } from '../lib/utils';
 
@@ -148,7 +149,7 @@ export default (sequelize, DataTypes): typeof PayoutMethod => {
         },
       },
       data: {
-        type: DataTypes.JSON,
+        type: DataTypes.JSONB,
         allowNull: false,
         validate: {
           isValidValue(value): void {
