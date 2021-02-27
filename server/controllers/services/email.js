@@ -1,20 +1,20 @@
 import Promise from 'bluebird';
 import config from 'config';
-import request from 'request-promise';
 import debug from 'debug';
-import { pick, get } from 'lodash';
+import { get, pick } from 'lodash';
+import request from 'request-promise';
 
-import models, { sequelize, Op } from '../../models';
-import errors from '../../lib/errors';
 import emailLib from '../../lib/email';
+import errors from '../../lib/errors';
+import models, { Op, sequelize } from '../../models';
 
 const debugEmail = debug('email');
 const debugWebhook = debug('webhook');
 
 export const unsubscribe = (req, res, next) => {
   const { type, email, slug, token } = req.params;
-  const computedToken = emailLib.generateUnsubscribeToken(email, slug, type);
-  if (token !== computedToken) {
+
+  if (!emailLib.isValidUnsubscribeToken(token, email, slug, type)) {
     return next(new errors.BadRequest('Invalid token'));
   }
 
@@ -167,7 +167,7 @@ export const getNotificationType = email => {
   return res;
 };
 
-export const webhook = (req, res, next) => {
+export const webhook = async (req, res, next) => {
   const email = req.body;
   const { recipient } = email;
   debugWebhook('>>> webhook received', JSON.stringify(email));
@@ -192,26 +192,23 @@ export const webhook = (req, res, next) => {
   // If an email is sent to [info|hello|members|admins|organizers]@:collectiveSlug.opencollective.com,
   // we simply forward it to admins who subscribed to that mailinglist (no approval process)
   if (mailinglist === 'admins') {
-    return models.Collective.findOne({ where: { slug: collectiveSlug } }).then(collective => {
-      if (!collective || !collective.canContact()) {
-        return res.send({
-          error: {
-            message: `This Collective doesn't exist or can't be emailed directly using this address`,
-          },
+    const collective = await models.Collective.findOne({ where: { slug: collectiveSlug } });
+    if (!collective) {
+      return res.send({
+        error: { message: `This Collective doesn't exist or can't be emailed directly using this address` },
+      });
+    } else if (get(collective.settings, 'features.forwardEmails') === false || !(await collective.canContact())) {
+      return res.send({
+        error: { message: `This Collective can't be emailed directly using this address` },
+      });
+    } else {
+      return sendEmailToList(recipient, { subject: email.subject, body, from: email.from })
+        .then(() => res.send('ok'))
+        .catch(e => {
+          debugWebhook('Error: ', e);
+          next(e);
         });
-      } else {
-        return sendEmailToList(recipient, {
-          subject: email.subject,
-          body,
-          from: email.from,
-        })
-          .then(() => res.send('ok'))
-          .catch(e => {
-            debugWebhook('Error: ', e);
-            next(e);
-          });
-      }
-    });
+    }
   }
 
   // If the email is sent to :tierSlug or :eventSlug@:collectiveSlug.opencollective.com
@@ -273,7 +270,7 @@ export const webhook = (req, res, next) => {
           body: email['body-html'] || email['body-plain'],
           subscribers,
           latestSubscribers: subscribers.slice(0, 15),
-          approve_url: `${
+          approveUrl: `${
             config.host.website
           }/api/services/email/approve?mailserver=${mailserver}&messageId=${messageId}&approver=${encodeURIComponent(
             user.email,

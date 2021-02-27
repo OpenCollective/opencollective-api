@@ -1,6 +1,14 @@
 name: CI
 
-on: [pull_request]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 env:
   TZ: UTC
@@ -8,19 +16,22 @@ env:
   NODE_ENV: ci
   AWS_KEY: ${{ secrets.AWS_KEY }}
   AWS_SECRET: ${{ secrets.AWS_SECRET }}
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
 jobs:
   lint:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -48,14 +59,16 @@ jobs:
   prettier:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -83,14 +96,16 @@ jobs:
   typescript:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -118,14 +133,16 @@ jobs:
   depcheck:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -153,14 +170,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -195,6 +214,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     services:
       redis:
         image: redis
@@ -214,10 +235,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -242,14 +263,14 @@ jobs:
 
       - run: npm run db:setup
 
-      - run: npm run test:lib
-      - run: npm run test:models
-      - run: npm run test:payment-providers
-      - run: npm run test:routes
-      - run: npm run test:scripts
+      - run: npx nyc mocha --ignore "test/server/graphql/**"
+
+      - run: npm run test:coverage
 
   test-graphql:
     runs-on: ubuntu-latest
+
+    timeout-minutes: 30
 
     services:
       redis:
@@ -270,10 +291,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -299,3 +320,5 @@ jobs:
       - run: npm run db:setup
 
       - run: npm run test:graphql
+
+      - run: npm run test:coverage

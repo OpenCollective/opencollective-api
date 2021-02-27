@@ -5,10 +5,10 @@
 
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
-import models from '../../../../server/models';
 
-import * as utils from '../../../utils';
+import models from '../../../../server/models';
 import * as store from '../../../stores';
+import * as utils from '../../../utils';
 
 describe('server/graphql/v1/transaction', () => {
   before(async () => {
@@ -326,7 +326,10 @@ describe('server/graphql/v1/transaction', () => {
         `;
 
         const result = await utils.graphqlQuery(query);
-        expect(result).to.matchSnapshot();
+        expect(result.data.transactions.limit).to.exist;
+        expect(result.data.transactions.offset).to.exist;
+        expect(result.data.transactions.total).to.exist;
+        expect(result.data.transactions.transactions).to.exist;
       });
 
       it('accepts pagination arguments: limit & offset', async () => {

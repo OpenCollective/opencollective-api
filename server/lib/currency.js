@@ -1,10 +1,12 @@
-import fetch from 'isomorphic-fetch';
+import Promise from 'bluebird';
 import config from 'config';
 import debugLib from 'debug';
-import Promise from 'bluebird';
+import fetch from 'isomorphic-fetch';
+import { get } from 'lodash';
+
+import { currencyFormats } from '../constants/currency_format';
 
 import logger from './logger';
-import { currencyFormats } from '../constants/currency_format';
 
 const debug = debugLib('currency');
 const cache = {};
@@ -29,14 +31,23 @@ export function formatCurrency(currency, value) {
   return currencyStr.concat(value);
 }
 
+if (!get(config, 'fixer.accessKey') && !['staging', 'production'].includes(config.env)) {
+  logger.info('Fixer API is not configured, lib/currency will always return 1.1');
+}
+
 export function getFxRate(fromCurrency, toCurrency, date = 'latest') {
-  debug('>>> getFxRate for ', date, fromCurrency, toCurrency);
+  debug(`getFxRate for ${date} ${fromCurrency} -> ${toCurrency}`);
 
   if (fromCurrency === toCurrency) {
     return Promise.resolve(1);
-  }
-  if (!fromCurrency || !toCurrency) {
+  } else if (!fromCurrency || !toCurrency) {
     return Promise.resolve(1);
+  } else if (!get(config, 'fixer.accessKey')) {
+    if (['staging', 'production'].includes(config.env)) {
+      throw new Error('Unable to fetch fxRate, Fixer API is not configured.');
+    } else {
+      return Promise.resolve(1.1);
+    }
   }
 
   date = getDate(date);
@@ -49,41 +60,32 @@ export function getFxRate(fromCurrency, toCurrency, date = 'latest') {
   if (cache[key]) {
     return Promise.resolve(cache[key]);
   }
+
   return new Promise((resolve, reject) => {
     const params = {
-      access_key: config.fixer.accessKey,
+      access_key: config.fixer.accessKey, // eslint-disable-line camelcase
       base: fromCurrency,
       symbols: toCurrency,
     };
+
     const searchParams = Object.keys(params)
       .map(key => `${key}=${params[key]}`)
       .join('&');
+
     fetch(`https://data.fixer.io/${date}?${searchParams}`)
       .then(res => res.json())
       .then(json => {
-        try {
-          const fxrate = parseFloat(json.rates[toCurrency]);
-          cache[key] = fxrate;
-          return resolve(fxrate);
-        } catch (e) {
-          const msg = `>>> lib/currency: can't fetch fxrate from ${fromCurrency} to ${toCurrency} for date ${date}`;
-          debug(msg, 'json:', json, 'error:', e);
-          if (!config.env || ['test', 'development', 'ci', 'circleci'].includes(config.env)) {
-            logger.info('lib/currency: development environment -> returning 1.1 instead of throwing the error');
-            return resolve(1.1);
-          } else {
-            reject(e);
-          }
-        }
+        const fxrate = parseFloat(json.rates[toCurrency]);
+        cache[key] = fxrate;
+        return resolve(fxrate);
       })
-      .catch(e => {
-        debug('Unable to fetch fxrate', e.message);
-        // for testing in airplane mode
-        if (!config.env || ['test', 'development'].includes(config.env)) {
-          logger.info('lib/currency: development environment -> returning 1.1 instead of throwing the error');
+      .catch(error => {
+        if (!config.env || !['staging', 'production'].includes(config.env)) {
+          logger.info(`Unable to fetch fxRate with Fixer API: ${error.message}. Returning 1.1`);
           return resolve(1.1);
         } else {
-          reject(e);
+          logger.error(`Unable to fetch fxRate with Fixer API: ${error.message}`);
+          reject(error);
         }
       });
   });
