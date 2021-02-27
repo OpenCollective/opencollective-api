@@ -1,11 +1,13 @@
-import { GraphQLString, GraphQLObjectType, GraphQLNonNull, GraphQLList, GraphQLInt } from 'graphql';
+import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
+
 import models, { Op } from '../../../models';
-import { Account } from '../interface/Account';
-import { CommentCollection } from '../collection/CommentCollection';
-import { Comment } from './Comment';
-import { getIdEncodeResolver, IDENTIFIER_TYPES } from '../identifiers';
 import { AccountCollection } from '../collection/AccountCollection';
+import { CommentCollection } from '../collection/CommentCollection';
+import { getIdEncodeResolver, IDENTIFIER_TYPES } from '../identifiers';
+import { Account } from '../interface/Account';
+
+import { Comment } from './Comment';
 
 const Conversation = new GraphQLObjectType({
   name: 'Conversation',
@@ -53,8 +55,12 @@ const Conversation = new GraphQLObjectType({
           const order = [['createdAt', 'ASC']];
           const query = { where, order };
 
-          if (limit) query.limit = limit;
-          if (offset) query.offset = offset;
+          if (limit) {
+            query.limit = limit;
+          }
+          if (offset) {
+            query.offset = offset;
+          }
 
           const result = await models.Comment.findAndCountAll(query);
           return { nodes: result.rows, totalCount: result.count, limit, offset };
@@ -79,7 +85,7 @@ const Conversation = new GraphQLObjectType({
       stats: {
         type: new GraphQLObjectType({
           name: 'ConversationStats',
-          fields: {
+          fields: () => ({
             id: {
               type: new GraphQLNonNull(GraphQLString),
               resolve: getIdEncodeResolver(IDENTIFIER_TYPES.CONVERSATION),
@@ -91,7 +97,7 @@ const Conversation = new GraphQLObjectType({
                 return req.loaders.Conversation.commentsCount.load(conversation.id);
               },
             },
-          },
+          }),
         }),
         resolve(conversation) {
           return conversation;
