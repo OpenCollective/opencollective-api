@@ -58,7 +58,7 @@ export const payExpensesBatch = async (expenses: any[]): Promise<any[]> => {
   try {
     const response = await paypal.executePayouts(connectedAccount, requestBody);
     const updateExpenses = expenses.map(async e => {
-      await e.update({ data: response.batch_header, status: status.PROCESSING });
+      await e.update({ data: { ...e.data, ...response.batch_header }, status: status.PROCESSING });
       const user = await models.User.findByPk(e.lastEditedById);
       await e.createActivity(activities.COLLECTIVE_EXPENSE_PROCESSING, user);
     });
@@ -76,7 +76,6 @@ export const payExpensesBatch = async (expenses: any[]): Promise<any[]> => {
 export const checkBatchItemStatus = async (item: PayoutItemDetails, expense: any, host: any) => {
   // Reload up-to-date values to avoid race conditions when processing batches.
   await expense.reload();
-
   if (expense.data.payout_batch_id !== item.payout_batch_id) {
     throw new Error(`Item does not belongs to expense it claims it does.`);
   }
