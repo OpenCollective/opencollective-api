@@ -1,102 +1,94 @@
 import config from 'config';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
 import { pick } from 'lodash';
 
-import {
-  claimCollective,
-  createCollective,
-  editCollective,
-  deleteEventCollective,
-  deleteCollective,
-  deleteUserCollective,
-  approveCollective,
-  createCollectiveFromGithub,
-  archiveCollective,
-  unarchiveCollective,
-  sendMessageToCollective,
-  rejectCollective,
-  activateCollectiveAsHost,
-  deactivateCollectiveAsHost,
-} from './mutations/collectives';
-import {
-  createOrder,
-  confirmOrder,
-  cancelSubscription,
-  updateSubscription,
-  refundTransaction,
-  addFundsToOrg,
-  addFundsToCollective,
-  completePledge,
-  markOrderAsPaid,
-  markPendingOrderAsExpired,
-} from './mutations/orders';
-
-import { editPublicMessage } from './mutations/members';
-import { editTiers, editTier } from './mutations/tiers';
-import { editConnectedAccount } from './mutations/connectedAccounts';
-import { createWebhook, deleteNotification, editWebhooks } from './mutations/notifications';
-import {
-  createExpense,
-  editExpense,
-  updateExpenseStatus,
-  payExpense,
-  deleteExpense,
-  markExpenseAsUnpaid,
-} from './mutations/expenses';
-import * as paymentMethodsMutation from './mutations/paymentMethods';
-import * as updateMutations from './mutations/updates';
-import * as commentMutations from './mutations/comments';
-import * as applicationMutations from './mutations/applications';
-import * as backyourstackMutations from './mutations/backyourstack';
-import { updateUserEmail, confirmUserEmail } from './mutations/users';
-
 import statuses from '../../constants/expense_status';
-
-import { GraphQLNonNull, GraphQLList, GraphQLString, GraphQLInt, GraphQLBoolean, GraphQLObjectType } from 'graphql';
-
-import {
-  OrderType,
-  TierType,
-  MemberType,
-  ExpenseType,
-  UpdateType,
-  CommentType,
-  ConnectedAccountType,
-  PaymentMethodType,
-  UserType,
-  NotificationType,
-} from './types';
-
-import { CollectiveInterfaceType } from './CollectiveInterface';
-
-import { TransactionInterfaceType } from './TransactionInterface';
-
-import { ApplicationType, ApplicationInputType } from './Application';
-
-import {
-  CollectiveInputType,
-  OrderInputType,
-  ConfirmOrderInputType,
-  TierInputType,
-  ExpenseInputType,
-  UpdateInputType,
-  UpdateAttributesInputType,
-  CommentInputType,
-  CommentAttributesInputType,
-  ConnectedAccountInputType,
-  PaymentMethodInputType,
-  PaymentMethodDataVirtualCardInputType,
-  UserInputType,
-  StripeCreditCardDataInputType,
-  NotificationInputType,
-  MemberInputType,
-} from './inputTypes';
-import { createVirtualCardsForEmails, bulkCreateVirtualCards } from '../../paymentProviders/opencollective/virtualcard';
-import models, { sequelize } from '../../models';
+import roles from '../../constants/roles';
 import emailLib from '../../lib/email';
 import logger from '../../lib/logger';
-import roles from '../../constants/roles';
-import errors from '../../lib/errors';
-import { Unauthorized, ValidationFailed, Forbidden } from '../errors';
+import models, { sequelize } from '../../models';
+import { bulkCreateVirtualCards, createVirtualCardsForEmails } from '../../paymentProviders/opencollective/virtualcard';
+import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../errors';
+
+import * as applicationMutations from './mutations/applications';
+import * as backyourstackMutations from './mutations/backyourstack';
+import {
+  activateCollectiveAsHost,
+  approveCollective,
+  archiveCollective,
+  claimCollective,
+  createCollective,
+  createCollectiveFromGithub,
+  deactivateCollectiveAsHost,
+  deleteCollective,
+  deleteEventCollective,
+  deleteUserCollective,
+  editCollective,
+  rejectCollective,
+  sendMessageToCollective,
+  unarchiveCollective,
+} from './mutations/collectives';
+import * as commentMutations from './mutations/comments';
+import { editConnectedAccount } from './mutations/connectedAccounts';
+import {
+  createExpense,
+  deleteExpense,
+  editExpense,
+  markExpenseAsUnpaid,
+  payExpense,
+  updateExpenseStatus,
+} from './mutations/expenses';
+import { editPublicMessage } from './mutations/members';
+import { createWebhook, deleteNotification, editWebhooks } from './mutations/notifications';
+import {
+  addFundsToCollective,
+  addFundsToOrg,
+  cancelSubscription,
+  completePledge,
+  confirmOrder,
+  createOrder,
+  markOrderAsPaid,
+  markPendingOrderAsExpired,
+  refundTransaction,
+  updateSubscription,
+} from './mutations/orders';
+import * as paymentMethodsMutation from './mutations/paymentMethods';
+import { editTier, editTiers } from './mutations/tiers';
+import * as updateMutations from './mutations/updates';
+import { confirmUserEmail, updateUserEmail } from './mutations/users';
+import { ApplicationInputType, ApplicationType } from './Application';
+import { CollectiveInterfaceType } from './CollectiveInterface';
+import {
+  CollectiveInputType,
+  CommentAttributesInputType,
+  CommentInputType,
+  ConfirmOrderInputType,
+  ConnectedAccountInputType,
+  ExpenseInputType,
+  MemberInputType,
+  NotificationInputType,
+  OrderInputType,
+  PaymentMethodDataVirtualCardInputType,
+  PaymentMethodInputType,
+  StripeCreditCardDataInputType,
+  TierInputType,
+  UpdateAttributesInputType,
+  UpdateInputType,
+  UserInputType,
+} from './inputTypes';
+import { TransactionInterfaceType } from './TransactionInterface';
+import {
+  CommentType,
+  ConnectedAccountType,
+  ExpenseType,
+  MemberType,
+  NotificationType,
+  OrderType,
+  PaymentMethodType,
+  TierType,
+  UpdateType,
+  UserType,
+} from './types';
 
 const mutations = {
   createCollective: {
@@ -336,7 +328,7 @@ const mutations = {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return updateExpenseStatus(req.remoteUser, args.id, statuses.APPROVED);
+      return updateExpenseStatus(req, args.id, statuses.APPROVED);
     },
   },
   unapproveExpense: {
@@ -345,7 +337,7 @@ const mutations = {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return updateExpenseStatus(req.remoteUser, args.id, statuses.PENDING);
+      return updateExpenseStatus(req, args.id, statuses.PENDING);
     },
   },
   rejectExpense: {
@@ -354,7 +346,7 @@ const mutations = {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return updateExpenseStatus(req.remoteUser, args.id, statuses.REJECTED);
+      return updateExpenseStatus(req, args.id, statuses.REJECTED);
     },
   },
   payExpense: {
@@ -370,7 +362,7 @@ const mutations = {
       },
     },
     resolve(_, args, req) {
-      return payExpense(req.remoteUser, args);
+      return payExpense(req, args);
     },
   },
   markOrderAsPaid: {
@@ -406,7 +398,7 @@ const mutations = {
       expense: { type: new GraphQLNonNull(ExpenseInputType) },
     },
     resolve(_, args, req) {
-      return editExpense(req.remoteUser, args.expense);
+      return editExpense(req, args.expense);
     },
   },
   deleteExpense: {
@@ -415,7 +407,7 @@ const mutations = {
       id: { type: new GraphQLNonNull(GraphQLInt) },
     },
     resolve(_, args, req) {
-      return deleteExpense(req.remoteUser, args.id);
+      return deleteExpense(req, args.id);
     },
   },
   markExpenseAsUnpaid: {
@@ -425,7 +417,7 @@ const mutations = {
       processorFeeRefunded: { type: new GraphQLNonNull(GraphQLBoolean) },
     },
     resolve(_, args, req) {
-      return markExpenseAsUnpaid(req.remoteUser, args.id, args.processorFeeRefunded);
+      return markExpenseAsUnpaid(req, args.id, args.processorFeeRefunded);
     },
   },
   editTier: {
@@ -461,9 +453,9 @@ const mutations = {
     async resolve(_, args, req) {
       const collective = await models.Collective.findByPk(args.collectiveId);
       if (!collective) {
-        throw new errors.NotFound();
+        throw new NotFound();
       } else if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
-        throw new errors.Unauthorized();
+        throw new Unauthorized();
       } else {
         await collective.editMembers(args.members, {
           CreatedByUserId: req.remoteUser.id,
@@ -915,13 +907,9 @@ const mutations = {
 
       const invitation = await models.MemberInvitation.findByPk(args.invitationId);
       if (!invitation) {
-        return new ValidationFailed({
-          message: "This invitation doesn't exist or a reply has already been given to it",
-        });
+        return new ValidationFailed("This invitation doesn't exist or a reply has already been given to it");
       } else if (!req.remoteUser.isAdmin(invitation.MemberCollectiveId)) {
-        return new Forbidden({
-          message: 'Only admin of the invited collective can reply to the invitation',
-        });
+        return new Forbidden('Only admin of the invited collective can reply to the invitation');
       }
 
       if (args.accept) {

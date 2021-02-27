@@ -1,8 +1,8 @@
-import { GraphQLInt, GraphQLString, GraphQLInputObjectType } from 'graphql';
+import { GraphQLInputObjectType, GraphQLInt, GraphQLString } from 'graphql';
 
 import models from '../../../models';
-import { idDecode } from '../identifiers';
 import { NotFound } from '../../errors';
+import { idDecode } from '../identifiers';
 
 export const AccountReferenceInput = new GraphQLInputObjectType({
   name: 'AccountReferenceInput',
@@ -35,7 +35,6 @@ export const fetchAccountWithReference = async (
   input,
   { loaders = null, throwIfMissing = false, dbTransaction = undefined, lock = false } = {},
 ) => {
-  // Load collective by ID using GQL loaders if we're not using a transaction & loaders are available
   const loadCollectiveById = id => {
     if (!loaders || dbTransaction) {
       return models.Collective.findByPk(id, { transaction: dbTransaction, lock });
@@ -59,7 +58,7 @@ export const fetchAccountWithReference = async (
     throw new Error('Please provide an id or a slug');
   }
   if (!collective && throwIfMissing) {
-    throw new NotFound({ message: 'Account Not Found' });
+    throw new NotFound('Account Not Found');
   }
   return collective;
 };

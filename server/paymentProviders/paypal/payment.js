@@ -1,12 +1,11 @@
 import config from 'config';
 import { get } from 'lodash';
 
-import models from '../../models';
-
 import * as constants from '../../constants/transactions';
-import * as libpayments from '../../lib/payments';
 import logger from '../../lib/logger';
 import { floatAmountToCents } from '../../lib/math';
+import * as libpayments from '../../lib/payments';
+import models from '../../models';
 
 /** Build an URL for the PayPal API */
 export function paypalUrl(path) {
@@ -130,10 +129,7 @@ export async function createTransaction(order, paymentInfo) {
   const currencyFromPayPal = transaction.amount.currency;
 
   const hostFeeInHostCurrency = libpayments.calcFee(amountFromPayPalInCents, order.collective.hostFeePercent);
-  const defaultPlatformFee =
-    order.collective.platformFeePercent === null ? constants.OC_FEE_PERCENT : order.collective.platformFeePercent;
-  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFee);
-  const platformFeeInHostCurrency = libpayments.calcFee(amountFromPayPalInCents, platformFeePercent);
+  const platformFeeInHostCurrency = libpayments.getPlatformFee(order);
 
   const payload = {
     CreatedByUserId: order.createdByUser.id,

@@ -1,11 +1,11 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 
-import { graphqlQueryV2 } from '../../../../utils';
-import { fakeCollective, fakeUser, fakeConnectedAccount } from '../../../../test-helpers/fake-data';
 import * as transferwise from '../../../../../server/lib/transferwise';
-import * as utils from '../../../../utils';
 import models from '../../../../../server/models';
+import { fakeCollective, fakeConnectedAccount, fakeUser } from '../../../../test-helpers/fake-data';
+import { graphqlQueryV2 } from '../../../../utils';
+import * as utils from '../../../../utils';
 
 describe('server/graphql/v2/mutation/ConnectedAccountMutations', () => {
   const sandbox = sinon.createSandbox();
@@ -20,6 +20,7 @@ describe('server/graphql/v2/mutation/ConnectedAccountMutations', () => {
       mutation createConnectedAccount($connectedAccount: ConnectedAccountCreateInput!, $account: AccountReferenceInput!) {
         createConnectedAccount(connectedAccount: $connectedAccount, account: $account) {
           id
+          legacyId
           settings
           service
         }
@@ -57,7 +58,9 @@ describe('server/graphql/v2/mutation/ConnectedAccountMutations', () => {
       expect(result.data).to.exist;
       expect(result.data.createConnectedAccount).to.exist;
 
-      const createdConnectedAccount = await models.ConnectedAccount.findByPk(result.data.createConnectedAccount.id);
+      const createdConnectedAccount = await models.ConnectedAccount.findByPk(
+        result.data.createConnectedAccount.legacyId,
+      );
       expect(createdConnectedAccount.toJSON()).to.deep.include(connectedAccount);
     });
 
@@ -86,7 +89,7 @@ describe('server/graphql/v2/mutation/ConnectedAccountMutations', () => {
       );
 
       expect(result.errors).to.exist;
-      expect(result.errors[0].originalError.name).to.equal('ValidationFailed');
+      expect(result.errors[0].extensions.code).to.equal('ValidationFailed');
       expect(result.errors[0].message).to.include('This token is already being used');
     });
 
@@ -108,7 +111,7 @@ describe('server/graphql/v2/mutation/ConnectedAccountMutations', () => {
       );
 
       expect(result.errors).to.exist;
-      expect(result.errors[0].originalError.name).to.equal('ValidationFailed');
+      expect(result.errors[0].extensions.code).to.equal('ValidationFailed');
       expect(result.errors[0].message).to.include('The token is not a valid TransferWise token');
     });
   });

@@ -1,28 +1,26 @@
-import express from 'express';
+import cloudflareIps from 'cloudflare-ip/ips.json';
 import config from 'config';
 import connectRedis from 'connect-redis';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import errorHandler from 'errorhandler';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import passport from 'passport';
-import redis from 'redis';
+import express from 'express';
 import session from 'express-session';
-
-import cloudflareIps from 'cloudflare-ip/ips.json';
+import helmet from 'helmet';
+import { get, has } from 'lodash';
+import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github';
-import { Strategy as TwitterStrategy } from 'passport-twitter';
 import { Strategy as MeetupStrategy } from 'passport-meetup-oauth2';
-import { has, get } from 'lodash';
+import { Strategy as TwitterStrategy } from 'passport-twitter';
+import redis from 'redis';
 
-import logger from './logger';
-import forest from './forest';
-import cacheMiddleware from '../middleware/cache';
 import { loadersMiddleware } from '../graphql/loaders';
-import { sanitizeForLogs } from './utils';
 
-export default function (app) {
+import forest from './forest';
+import hyperwatch from './hyperwatch';
+import logger from './logger';
+
+export default async function (app) {
   app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal'].concat(cloudflareIps));
 
   app.use(helmet());
@@ -30,11 +28,6 @@ export default function (app) {
   // Loaders are attached to the request to batch DB queries per request
   // It also creates in-memory caching (based on request auth);
   app.use(loadersMiddleware);
-
-  // Log requests if enabled (default false)
-  if (get(config, 'log.accessLogs')) {
-    app.use(morgan('combined'));
-  }
 
   // Body parser.
   app.use(
@@ -50,35 +43,10 @@ export default function (app) {
       },
     }),
   );
-  app.use(express.urlencoded({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  // Slow requests if enabled (default false)
-  if (get(config, 'log.slowRequest')) {
-    app.use((req, res, next) => {
-      req.startAt = new Date();
-      const temp = res.end;
-
-      res.end = function () {
-        const timeElapsed = new Date() - req.startAt;
-        if (timeElapsed > get(config, 'log.slowRequestThreshold', 1000)) {
-          if (req.body && req.body.query) {
-            const query = req.body.query.substr(0, req.body.query.indexOf(')') + 1);
-            console.log('slow request:', `${query} - ${req.ip} - ${req.get('user-agent')}`);
-            if (req.body.variables) {
-              console.log('-> slow request variables:', sanitizeForLogs(req.body.variables));
-            }
-          }
-        }
-        temp.apply(this, arguments);
-      };
-      next();
-    });
-  }
-
-  // Cache Middleware
-  if (get(config, 'cache.middleware')) {
-    app.use(cacheMiddleware());
-  }
+  // Hyperwatch
+  await hyperwatch(app);
 
   // Error handling.
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'staging') {
@@ -86,7 +54,7 @@ export default function (app) {
   }
 
   // Forest
-  forest(app);
+  await forest(app);
 
   // Cors.
   app.use(cors());

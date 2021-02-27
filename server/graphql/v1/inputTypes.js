@@ -1,19 +1,19 @@
 import {
-  GraphQLInt,
-  GraphQLFloat,
   GraphQLBoolean,
-  GraphQLList,
-  GraphQLInputObjectType,
-  GraphQLNonNull,
-  GraphQLString,
-  GraphQLScalarType,
-  GraphQLError,
   GraphQLEnumType,
+  GraphQLError,
+  GraphQLFloat,
+  GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLScalarType,
+  GraphQLString,
 } from 'graphql';
-
 import GraphQLJSON from 'graphql-type-json';
 import { Kind } from 'graphql/language';
-import { IsoDateString, DateString, PayoutMethodTypeEnum } from './types';
+
+import { DateString, IsoDateString, PayoutMethodTypeEnum } from './types';
 
 const EmailType = new GraphQLScalarType({
   name: 'Email',
@@ -187,6 +187,7 @@ export const CollectiveInputType = new GraphQLInputObjectType({
     firstName: { type: GraphQLString },
     lastName: { type: GraphQLString },
     isIncognito: { type: GraphQLBoolean },
+    isActive: { type: GraphQLBoolean },
   }),
 });
 
@@ -316,6 +317,7 @@ export const OrderInputType = new GraphQLInputObjectType({
     totalAmount: { type: GraphQLInt },
     hostFeePercent: { type: GraphQLInt },
     platformFeePercent: { type: GraphQLInt },
+    platformFee: { type: GraphQLInt },
     currency: { type: GraphQLString },
     interval: { type: GraphQLString },
     description: { type: GraphQLString },
@@ -439,9 +441,10 @@ export const UpdateAttributesInputType = new GraphQLInputObjectType({
   }),
 });
 
-export const ExpenseAttachmentInputType = new GraphQLInputObjectType({
-  name: 'ExpenseAttachmentInputType',
-  description: 'Fields for creating or editing an expense attachment',
+export const ExpenseItemInputType = new GraphQLInputObjectType({
+  name: 'ExpenseItemInputType',
+  description: 'Fields for creating or editing an expense item',
+  deprecationReason: '2020-04-08: Please use API V2 to create expenses',
   fields: {
     id: { type: GraphQLInt },
     url: { type: GraphQLString },
@@ -492,7 +495,11 @@ export const ExpenseInputType = new GraphQLInputObjectType({
         type: GraphQLString,
         deprecationReason: '2020-01-13 - Expenses now support multiple attachments. Please use attachments instead.',
       },
-      attachments: { type: new GraphQLList(ExpenseAttachmentInputType) },
+      attachments: {
+        type: new GraphQLList(ExpenseItemInputType),
+        deprecationReason: '2020-04-08 - Please use items instead.',
+      },
+      items: { type: new GraphQLList(ExpenseItemInputType) },
       user: {
         type: UserInputType,
         deprecationReason: '2020-21-01: Please use PayoutMethod to pass the paypal email',

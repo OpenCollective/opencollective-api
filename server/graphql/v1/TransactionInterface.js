@@ -1,22 +1,29 @@
-import { get } from 'lodash';
-import models from '../../models';
 import {
-  GraphQLInt,
-  GraphQLFloat,
-  GraphQLString,
-  GraphQLInterfaceType,
-  GraphQLObjectType,
-  GraphQLList,
   GraphQLEnumType,
+  GraphQLFloat,
   GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLInterfaceType,
+  GraphQLList,
+  GraphQLObjectType,
+  GraphQLString,
 } from 'graphql';
+import { get } from 'lodash';
+
+import models from '../../models';
+import { canSeeExpenseAttachments, getExpenseItems } from '../common/expenses';
+import { idEncode } from '../v2/identifiers';
 
 import { CollectiveInterfaceType, UserCollectiveType } from './CollectiveInterface';
-
-import { SubscriptionType, OrderType, PaymentMethodType, UserType, DateString, ExpenseType } from './types';
-import { getExpenseAttachments, canSeeExpenseAttachments } from '../common/expenses';
-
-import { idEncode } from '../v2/identifiers';
+import {
+  DateString,
+  ExpenseType,
+  OrderDirectionType,
+  OrderType,
+  PaymentMethodType,
+  SubscriptionType,
+  UserType,
+} from './types';
 
 export const TransactionInterfaceType = new GraphQLInterfaceType({
   name: 'Transaction',
@@ -308,7 +315,7 @@ export const TransactionExpenseType = new GraphQLObjectType({
           // If it's a expense transaction it'll have an ExpenseId
           // otherwise we return null
           return transaction.ExpenseId
-            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.category)
+            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.tags?.[0])
             : null;
         },
       },
@@ -332,8 +339,8 @@ export const TransactionExpenseType = new GraphQLObjectType({
             if (!expense || !(await canSeeExpenseAttachments(req, expense))) {
               return null;
             } else {
-              const attachments = await getExpenseAttachments(transaction.ExpenseId, req);
-              return attachments[0] && attachments[0].url;
+              const items = await getExpenseItems(transaction.ExpenseId, req);
+              return items[0] && items[0].url;
             }
           }
         },
@@ -402,15 +409,6 @@ export const TransactionType = new GraphQLEnumType({
   values: {
     CREDIT: {},
     DEBIT: {},
-  },
-});
-
-export const OrderDirectionType = new GraphQLEnumType({
-  name: 'OrderDirection',
-  description: 'Possible directions in which to order a list of items when provided an orderBy argument.',
-  values: {
-    ASC: {},
-    DESC: {},
   },
 });
 

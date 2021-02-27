@@ -2,13 +2,12 @@ import { expect } from 'chai';
 import { describe, it } from 'mocha';
 import sinon from 'sinon';
 
-import models, { Op } from '../../../../server/models';
-import cache from '../../../../server/lib/cache';
 import * as expenses from '../../../../server/graphql/v1/mutations/expenses';
-
-import * as utils from '../../../utils';
+import cache from '../../../../server/lib/cache';
+import models, { Op } from '../../../../server/models';
 import * as store from '../../../stores';
 import { fakeUser } from '../../../test-helpers/fake-data';
+import * as utils from '../../../utils';
 
 describe('server/graphql/v1/collective', () => {
   beforeEach(async () => {
@@ -74,15 +73,15 @@ describe('server/graphql/v1/collective', () => {
       });
       // And given some expenses
       const expense = await store.createApprovedExpense(user, {
-        category: 'Engineering',
+        category: 'engineering',
         amount: 100 * (i + 1),
         description: 'test',
         currency,
         legacyPayoutMethod: 'manual',
-        attachments: [{ amount: 100 * (i + 1), url: store.randUrl() }],
+        items: [{ amount: 100 * (i + 1), url: store.randUrl() }],
         collective: { id: apex.id },
       });
-      await expenses.payExpense(hostAdmin, { id: expense.id });
+      await expenses.payExpense(utils.makeRequest(hostAdmin), { id: expense.id });
     }
 
     // When the following query is executed
@@ -214,7 +213,7 @@ describe('server/graphql/v1/collective', () => {
     });
 
     expect(collective.stats.topExpenses).to.deep.equal({
-      byCategory: [{ category: 'Engineering', count: 10, totalExpenses: 5500 }],
+      byCategory: [{ category: 'engineering', count: 10, totalExpenses: 5500 }],
       byCollective: [
         {
           slug: 'testuser9',
@@ -296,7 +295,7 @@ describe('server/graphql/v1/collective', () => {
       currency: 'EUR',
       legacyPayoutMethod: 'manual',
       collective: { id: cid },
-      attachments: [{ url: store.randUrl(), amount }],
+      items: [{ url: store.randUrl(), amount }],
     });
 
     // And given that we add some expenses to brussels together:

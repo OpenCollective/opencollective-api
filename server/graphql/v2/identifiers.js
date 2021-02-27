@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+
 import config from 'config';
 import Hashids from 'hashids/cjs';
 
@@ -13,11 +14,15 @@ if (!salt) {
 const instances = {};
 
 export const IDENTIFIER_TYPES = {
+  ACTIVITY: 'activity',
+  COMMENT: 'comment',
+  COMMENT_REACTION: 'comment-reaction',
   CONVERSATION: 'conversation',
   PAYOUT_METHOD: 'payout-method',
   EXPENSE: 'expense',
   CONNECTED_ACCOUNT: 'connected-account',
-  EXPENSE_ATTACHMENT: 'expense-attachment',
+  EXPENSE_ATTACHED_FILE: 'expense-attached-file',
+  EXPENSE_ITEM: 'expense-item',
 };
 
 const getDefaultInstance = type => {

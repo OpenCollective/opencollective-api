@@ -1,14 +1,13 @@
-import { padStart } from 'lodash';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { URL } from 'url';
 
-import config from 'config';
 import Promise from 'bluebird';
+import config from 'config';
 import pdf from 'html-pdf';
+import { cloneDeep, get, isEqual, padStart } from 'lodash';
 import sanitizeHtml from 'sanitize-html';
-import { get, cloneDeep, isEqual } from 'lodash';
 
 import handlebars from './handlebars';
 
@@ -517,21 +516,6 @@ export function isUUID(str) {
   return str.length === 36 && str.match(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i);
 }
 
-export function hashCode(str) {
-  let hash = 0,
-    i,
-    chr;
-  if (str.length === 0) {
-    return hash;
-  }
-  for (i = 0; i < str.length; i++) {
-    chr = str.charCodeAt(i);
-    hash = (hash << 5) - hash + chr;
-    hash |= 0; // Convert to 32bit integer
-  }
-  return hash;
-}
-
 /** Sleeps for MS milliseconds */
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -591,6 +575,8 @@ export const cleanTags = tags => {
 };
 
 export const md5 = value => crypto.createHash('md5').update(value).digest('hex');
+
+export const sha512 = value => crypto.createHash('sha512').update(value).digest('hex');
 
 /**
  * Filter `list` with `filterFunc` until `conditionFunc` returns true.

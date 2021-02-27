@@ -7,9 +7,10 @@
  * contributors should surface only unique collectives.
  */
 
-import cache from './cache';
-import { sequelize } from '../models';
 import MemberRoles from '../constants/roles';
+import { sequelize } from '../models';
+
+import cache from './cache';
 import { filterUntil } from './utils';
 
 /**
@@ -111,6 +112,7 @@ const loadContributors = async (collectiveId: number): Promise<ContributorsCache
         FROM        "Collectives" c
         INNER JOIN  "Members" m ON m."MemberCollectiveId" = c.id
         WHERE       m."CollectiveId" = :collectiveId
+        AND         c."id" != :collectiveId
         AND         m."deletedAt" IS NULL AND c."deletedAt" IS NULL
         GROUP BY    c.id
       ) SELECT

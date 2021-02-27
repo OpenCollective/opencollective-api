@@ -21,6 +21,9 @@
       }
     }
   },
+  "graphql": {
+    "apolloEngineAPIKey": "APOLLO_ENGINE_API_KEY"
+  },
   "memcache": {
     "servers": "MEMCACHE_SERVERS",
     "username": "MEMCACHE_USERNAME",
@@ -146,5 +149,12 @@
   },
   "fixie": {
     "url": "FIXIE_URL"
+  },
+  "hyperwatch": {
+    "enabled": "HYPERWATCH_ENABLED",
+    "path": "HYPERWATCH_PATH",
+    "realm": "HYPERWATCH_REALM",
+    "username": "HYPERWATCH_USERNAME",
+    "secret": "HYPERWATCH_SECRET"
   }
 }

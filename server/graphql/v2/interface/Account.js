@@ -1,18 +1,14 @@
+import { GraphQLBoolean, GraphQLInt, GraphQLInterfaceType, GraphQLList, GraphQLString } from 'graphql';
+import { GraphQLDateTime } from 'graphql-iso-date';
+import GraphQLJSON from 'graphql-type-json';
 import { invert } from 'lodash';
 
-import { GraphQLInt, GraphQLString, GraphQLList, GraphQLInterfaceType } from 'graphql';
-import GraphQLJSON from 'graphql-type-json';
-import { GraphQLDateTime } from 'graphql-iso-date';
-
-import { idEncode } from '../identifiers';
-
-import { HasMembersFields } from '../interface/HasMembers';
-import { IsMemberOfFields } from '../interface/IsMemberOf';
-
+import models, { Op } from '../../../models';
+import { NotFound } from '../../errors';
+import { ConversationCollection } from '../collection/ConversationCollection';
 import { MemberCollection, MemberOfCollection } from '../collection/MemberCollection';
-import { TransactionCollection } from '../collection/TransactionCollection';
 import { OrderCollection } from '../collection/OrderCollection';
-
+import { TransactionCollection } from '../collection/TransactionCollection';
 import {
   AccountOrdersFilter,
   AccountType,
@@ -22,17 +18,17 @@ import {
   OrderStatus,
   TransactionType,
 } from '../enum';
-
+import { idEncode } from '../identifiers';
 import { ChronologicalOrderInput } from '../input/ChronologicalOrderInput';
-
-import { NotFound } from '../../errors';
-
-import models, { Op } from '../../../models';
-import { ConversationCollection } from '../collection/ConversationCollection';
+import { HasMembersFields } from '../interface/HasMembers';
+import { IsMemberOfFields } from '../interface/IsMemberOf';
+import { AccountStats } from '../object/AccountStats';
+import { ConnectedAccount } from '../object/ConnectedAccount';
+import { Location } from '../object/Location';
+import { PaymentMethod } from '../object/PaymentMethod';
+import PayoutMethod from '../object/PayoutMethod';
 import { TagStats } from '../object/TagStats';
 import { TransferWise } from '../object/TransferWise';
-import PayoutMethod from '../object/PayoutMethod';
-import { Location } from '../object/Location';
 
 const accountFieldsDefinition = () => ({
   id: {
@@ -56,6 +52,9 @@ const accountFieldsDefinition = () => ({
     type: GraphQLString,
   },
   description: {
+    type: GraphQLString,
+  },
+  longDescription: {
     type: GraphQLString,
   },
   tags: {
@@ -93,9 +92,18 @@ const accountFieldsDefinition = () => ({
     type: GraphQLDateTime,
     description: 'The time of last update',
   },
-  // stats: {
-  //   type: AccountStats,
-  // },
+  isArchived: {
+    type: GraphQLBoolean,
+    description: 'Returns whether this account is archived',
+  },
+  isActive: {
+    type: GraphQLBoolean,
+    description: 'Returns whether the account accepts financial contributions.',
+  },
+  isHost: {
+    type: GraphQLBoolean,
+    description: 'Returns whether the account is setup to Host collectives.',
+  },
   members: {
     type: MemberCollection,
     args: {
@@ -168,6 +176,13 @@ const accountFieldsDefinition = () => ({
       limit: { type: GraphQLInt, defaultValue: 30 },
     },
   },
+  expensesTags: {
+    type: new GraphQLList(TagStats),
+    description: 'Returns expense tags for collective sorted by popularity',
+    args: {
+      limit: { type: GraphQLInt, defaultValue: 30 },
+    },
+  },
   transferwise: {
     type: TransferWise,
     async resolve(collective) {
@@ -185,9 +200,29 @@ const accountFieldsDefinition = () => ({
     type: new GraphQLList(PayoutMethod),
     description: 'The list of payout methods that this collective can use to get paid',
   },
+  paymentMethods: {
+    type: new GraphQLList(PaymentMethod),
+    args: {
+      types: {
+        type: new GraphQLList(GraphQLString),
+        description: 'Filter on given types (creditcard, virtualcard...)',
+      },
+    },
+    description: 'The list of payment methods that this collective can use to pay for Orders',
+  },
+  connectedAccounts: {
+    type: new GraphQLList(ConnectedAccount),
+    description: 'The list of connected accounts (Stripe, Twitter, etc ...)',
+  },
   location: {
     type: Location,
     description: 'The address associated to this account. This field is always public for collectives and events.',
+  },
+  stats: {
+    type: AccountStats,
+    resolve(collective) {
+      return collective;
+    },
   },
 });
 
@@ -222,7 +257,7 @@ const accountTransactions = {
       order: [[args.orderBy.field, args.orderBy.direction]],
     });
 
-    return { limit: args.limit, offset: args.offset, ...result };
+    return { nodes: result.rows, totalCount: result.count, limit: args.limit, offset: args.offset };
   },
 };
 
@@ -257,7 +292,7 @@ const accountOrders = {
       const tierSlug = args.tierSlug.toLowerCase();
       const tier = await models.Tier.findOne({ where: { CollectiveId: collective.id, slug: tierSlug } });
       if (!tier) {
-        throw new NotFound({ message: 'TierSlug Not Found' });
+        throw new NotFound('TierSlug Not Found');
       }
       where.TierId = tier.id;
     }
@@ -276,7 +311,7 @@ const accountOrders = {
       order: [[args.orderBy.field, args.orderBy.direction]],
     });
 
-    return { limit: args.limit, offset: args.offset, ...result };
+    return { nodes: result.rows, totalCount: result.count, limit: args.limit, offset: args.offset };
   },
 };
 
@@ -318,6 +353,20 @@ export const AccountFields = {
       return collective.updatedAt || collective.createdAt;
     },
   },
+  isArchived: {
+    type: GraphQLBoolean,
+    description: 'Returns whether this account is archived',
+    resolve(collective) {
+      return Boolean(collective.deactivatedAt);
+    },
+  },
+  isHost: {
+    type: GraphQLBoolean,
+    description: 'Returns whether the account is setup to Host collectives.',
+    resolve(collective) {
+      return Boolean(collective.isHostAccount);
+    },
+  },
   ...HasMembersFields,
   ...IsMemberOfFields,
   transactions: accountTransactions,
@@ -357,6 +406,16 @@ export const AccountFields = {
       return models.Conversation.getMostPopularTagsForCollective(collective.id, limit);
     },
   },
+  expensesTags: {
+    type: new GraphQLList(TagStats),
+    description: 'Returns expense tags for collective sorted by popularity',
+    args: {
+      limit: { type: GraphQLInt, defaultValue: 30 },
+    },
+    async resolve(collective, _, { limit }) {
+      return models.Expense.getMostPopularExpenseTagsForCollective(collective.id, limit);
+    },
+  },
   payoutMethods: {
     type: new GraphQLList(PayoutMethod),
     description: 'The list of payout methods that this collective can use to get paid',
@@ -365,6 +424,39 @@ export const AccountFields = {
         return null;
       } else {
         return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
+      }
+    },
+  },
+  paymentMethods: {
+    type: new GraphQLList(PaymentMethod),
+    args: {
+      types: { type: new GraphQLList(GraphQLString) },
+    },
+    description: 'The list of payment methods that this collective can use to pay for Orders',
+    async resolve(collective, args, req) {
+      let paymentMethods = await req.loaders.PaymentMethod.findByCollectiveId.load(collective.id);
+
+      // Filter only "saved" stripe Payment Methods
+      paymentMethods = paymentMethods.filter(pm => pm.service !== 'stripe' || pm.saved);
+
+      paymentMethods = paymentMethods.filter(pm => !(pm.data && pm.data.hidden));
+
+      if (args.types) {
+        paymentMethods = paymentMethods.filter(pm => args.types.includes(pm.type));
+      }
+
+      return paymentMethods;
+    },
+  },
+  connectedAccounts: {
+    type: new GraphQLList(ConnectedAccount),
+    description: 'The list of connected accounts (Stripe, Twitter, etc ...)',
+    // Only for admins, no pagination
+    async resolve(collective, _, req) {
+      if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        return null;
+      } else {
+        return req.loaders.Collective.connectedAccounts.load(collective.id);
       }
     },
   },

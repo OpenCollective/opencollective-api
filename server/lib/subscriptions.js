@@ -1,16 +1,16 @@
 /** @module lib/subscriptions */
 
 import config from 'config';
+import { get } from 'lodash';
 import moment from 'moment';
 import { Op } from 'sequelize';
 
-import { get } from 'lodash';
+import intervals from '../constants/intervals';
+import status from '../constants/order_status';
 import models from '../models';
+
 import emailLib from './email';
 import * as paymentsLib from './payments';
-import { getRecommendedCollectives } from './data';
-import status from '../constants/order_status';
-import intervals from '../constants/intervals';
 import { isHostPlan } from './plans';
 
 /** Maximum number of attempts before an order gets cancelled. */
@@ -335,8 +335,8 @@ export async function sendFailedEmail(order, lastAttempt) {
 /** Send `thankyou` email */
 export async function sendThankYouEmail(order, transaction) {
   const relatedCollectives = await order.collective.getRelatedCollectives(3, 0);
-  const recommendedCollectives = await getRecommendedCollectives(order.collective, 3);
   const user = order.createdByUser;
+  const host = await order.collective.getHostCollective();
 
   if (isHostPlan(order)) {
     return emailLib.send(
@@ -358,9 +358,9 @@ export async function sendThankYouEmail(order, transaction) {
       user: user.info,
       firstPayment: false,
       collective: order.collective.info,
+      host: host ? host.info : {},
       fromCollective: order.fromCollective.minimal,
       relatedCollectives,
-      recommendedCollectives,
       config: { host: config.host },
       interval: order.Subscription.interval,
       subscriptionsLink: `${config.host.website}/${order.fromCollective.slug}/subscriptions`,

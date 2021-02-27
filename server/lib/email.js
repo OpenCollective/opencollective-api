@@ -1,18 +1,20 @@
-import config from 'config';
-import Promise from 'bluebird';
-import juice from 'juice';
-import nodemailer from 'nodemailer';
-import debugLib from 'debug';
 import fs from 'fs';
 import path from 'path';
+
+import Promise from 'bluebird';
+import config from 'config';
+import debugLib from 'debug';
 import he from 'he';
-import { isArray, pick, get, merge, includes } from 'lodash';
+import juice from 'juice';
+import { get, includes, isArray, merge, pick } from 'lodash';
+import nodemailer from 'nodemailer';
 
 import models from '../models';
-import logger from './logger';
+
 import templates from './emailTemplates';
+import logger from './logger';
+import { md5, sha512 } from './utils';
 import whiteListDomains from './whiteListDomains';
-import { md5 } from './utils';
 
 const debug = debugLib('email');
 
@@ -49,10 +51,21 @@ const render = (template, data) => {
   return { text, html };
 };
 
-const generateUnsubscribeToken = (email, collectiveSlug, type) => {
+const generateUnsubscribeToken = (email, collectiveSlug, type, hashingFunction = sha512) => {
   const uid = `${email}.${collectiveSlug || 'any'}.${type}.${config.keys.opencollective.emailUnsubscribeSecret}`;
-  const token = md5(uid);
+  const token = hashingFunction(uid);
   return token;
+};
+
+const isValidUnsubscribeToken = (token, email, collectiveSlug, type) => {
+  // Check token using the latest procedure
+  const computedToken = emailLib.generateUnsubscribeToken(email, collectiveSlug, type, sha512);
+  if (computedToken === token) {
+    return true;
+  }
+
+  // Backward-compatibility: check legacy tokens
+  return emailLib.generateUnsubscribeToken(email, collectiveSlug, type, md5) === token;
 };
 
 /*
@@ -136,7 +149,7 @@ const sendMessage = (recipients, subject, html, options = {}) => {
     }
     let sendToBcc = true;
     // Don't send to BCC if sendEvenIfNotProduction and NOT in testing env
-    if (options.sendEvenIfNotProduction === true && !['ci', 'circleci', 'test'].includes(config.env)) {
+    if (options.sendEvenIfNotProduction === true && !['ci', 'test'].includes(config.env)) {
       sendToBcc = false;
     }
     if (sendToBcc) {
@@ -226,6 +239,8 @@ const isWhitelistedDomain = email => {
  */
 const generateEmailFromTemplate = (template, recipient, data = {}, options = {}) => {
   const slug = get(options, 'collective.slug') || get(data, 'collective.slug') || 'undefined';
+  const hostSlug = get(data, 'host.slug');
+  const eventSlug = get(data, 'event.slug');
 
   // If we are sending the same email to multiple recipients, it doesn't make sense to allow them to unsubscribe
   if (!isArray(recipient)) {
@@ -243,24 +258,42 @@ const generateEmailFromTemplate = (template, recipient, data = {}, options = {})
     if (slug === 'fearlesscitiesbrussels') {
       template += '.fearlesscitiesbrussels';
     }
+    if (eventSlug === 'open-2020-networked-commons-initiatives-9b91f4ca') {
+      template += '.open-2020';
+    }
   }
+
+  if (template === 'collective.approved') {
+    if (hostSlug === 'the-social-change-agency') {
+      template += '.the-social-change-agency';
+    }
+  }
+
+  if (template === 'collective.created') {
+    if (hostSlug === 'opensource') {
+      template += '.opensource';
+    }
+    if (hostSlug === 'the-social-change-agency') {
+      template += '.the-social-change-agency';
+    }
+  }
+
   if (template.match(/^host\.(monthly|yearly)report$/)) {
     template = 'host.report';
   }
+
   if (template === 'thankyou') {
     if (slug.match(/wwcode/)) {
-      template += '.wwcode';
-    }
-
-    if (includes(['chsf', 'kendraio', 'brusselstogether', 'sustainoss', 'ispcwa'], slug)) {
+      template = 'thankyou.wwcode';
+    } else if (['foundation', 'opensource'].includes(hostSlug)) {
+      template = `thankyou.${hostSlug}`;
+    } else if (includes(['chsf', 'kendraio', 'brusselstogether', 'sustainoss', 'ispcwa'], slug)) {
       template = `thankyou.${slug}`;
-    }
-
-    if (includes(['laprimaire', 'lesbarbares', 'nuitdebout', 'enmarchebe', 'monnaie-libre'], slug)) {
-      template += '.fr';
-
+    } else if (includes(['laprimaire', 'lesbarbares', 'nuitdebout', 'enmarchebe', 'monnaie-libre'], slug)) {
       if (slug === 'laprimaire') {
         template = 'thankyou.laprimaire';
+      } else {
+        template = 'thankyou.fr';
       }
 
       // xdamman: hack
@@ -342,6 +375,7 @@ const emailLib = {
   getTemplateAttributes,
   sendMessage,
   generateUnsubscribeToken,
+  isValidUnsubscribeToken,
   generateEmailFromTemplate,
   send: generateEmailFromTemplateAndSend,
   isWhitelistedDomain,

@@ -1,4 +1,5 @@
 import fs from 'fs';
+
 import handlebars from './handlebars';
 
 /*
@@ -17,11 +18,13 @@ export const templateNames = [
   'collective.apply',
   'collective.apply.for.host',
   'collective.approved',
+  'collective.approved.the-social-change-agency',
   'collective.rejected',
   'collective.comment.created',
   'collective.conversation.created',
   'collective.confirm',
   'collective.created',
+  'collective.created.the-social-change-agency',
   'collective.contact',
   'collective.created.meetup',
   'collective.created.opensource',
@@ -41,6 +44,8 @@ export const templateNames = [
   'event.newmember',
   'event.reminder.1d',
   'event.reminder.7d',
+  'fund.created.foundation',
+  'fund.approved.foundation',
   'host.report',
   'host.report.text',
   'host.report.summary',
@@ -74,6 +79,7 @@ export const templateNames = [
   'ticket.confirmed',
   'ticket.confirmed.text',
   'ticket.confirmed.fearlesscitiesbrussels',
+  'ticket.confirmed.open-2020',
   'thankyou',
   'thankyou.chsf',
   'thankyou.sustainoss',
@@ -84,6 +90,8 @@ export const templateNames = [
   'thankyou.ispcwa',
   'thankyou.fr',
   'thankyou.laprimaire',
+  'thankyou.foundation',
+  'thankyou.opensource',
   'user.card.claimed',
   'user.card.claimed.text',
   'user.card.invited',
@@ -118,7 +126,6 @@ const toplogo = fs.readFileSync(`${templatesPath}/partials/toplogo.hbs`, 'utf8')
 const eventsnippet = fs.readFileSync(`${templatesPath}/partials/eventsnippet.hbs`, 'utf8');
 const eventdata = fs.readFileSync(`${templatesPath}/partials/eventdata.hbs`, 'utf8');
 const relatedcollectives = fs.readFileSync(`${templatesPath}/partials/relatedcollectives.hbs`, 'utf8');
-const recommendedcollectives = fs.readFileSync(`${templatesPath}/partials/recommendedcollectives.hbs`, 'utf8');
 const collectivecard = fs.readFileSync(`${templatesPath}/partials/collectivecard.hbs`, 'utf8');
 const chargeDateNotice = fs.readFileSync(`${templatesPath}/partials/charge_date_notice.hbs`, 'utf8');
 const mthReportFooter = fs.readFileSync(`${templatesPath}/partials/monthlyreport.footer.hbs`, 'utf8');
@@ -132,7 +139,6 @@ handlebars.registerPartial('collectivecard', collectivecard);
 handlebars.registerPartial('eventsnippet', eventsnippet);
 handlebars.registerPartial('eventdata', eventdata);
 handlebars.registerPartial('relatedcollectives', relatedcollectives);
-handlebars.registerPartial('recommendedcollectives', recommendedcollectives);
 handlebars.registerPartial('charge_date_notice', chargeDateNotice);
 handlebars.registerPartial('mr-footer', mthReportFooter);
 handlebars.registerPartial('mr-subscription', mthReportSubscription);

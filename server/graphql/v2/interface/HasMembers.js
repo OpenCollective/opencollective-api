@@ -1,10 +1,9 @@
 import { GraphQLInt, GraphQLList } from 'graphql';
 
+import models, { Op } from '../../../models';
 import { MemberCollection } from '../collection/MemberCollection';
 import { AccountType, AccountTypeToModelMapping } from '../enum/AccountType';
 import { MemberRole } from '../enum/MemberRole';
-
-import models, { Op } from '../../../models';
 
 export const HasMembersFields = {
   members: {
@@ -42,7 +41,7 @@ export const HasMembersFields = {
         ],
       });
 
-      return { limit: args.limit, offset: args.offset, ...result };
+      return { nodes: result.rows, totalCount: result.count, limit: args.limit, offset: args.offset };
     },
   },
 };

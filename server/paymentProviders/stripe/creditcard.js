@@ -1,11 +1,11 @@
 import config from 'config';
 import { get, result } from 'lodash';
 
-import models from '../../models';
-import logger from '../../lib/logger';
-import stripe, { extractFees } from '../../lib/stripe';
 import * as constants from '../../constants/transactions';
+import logger from '../../lib/logger';
 import * as paymentsLib from '../../lib/payments';
+import stripe, { extractFees } from '../../lib/stripe';
+import models from '../../models';
 
 const UNKNOWN_ERROR_MSG = 'Something went wrong with the payment, please contact support@opencollective.com.';
 
@@ -97,12 +97,8 @@ const getOrCreateCustomerOnHostAccount = async (hostStripeAccount, { paymentMeth
  * See: Shared Customers: https://stripe.com/docs/connect/shared-customers
  */
 const createChargeAndTransactions = async (hostStripeAccount, { order, hostStripeCustomer }) => {
-  const defaultPlatformFee =
-    order.collective.platformFeePercent === null ? constants.OC_FEE_PERCENT : order.collective.platformFeePercent;
-  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFee);
-  const platformFee = isNaN(order.platformFee)
-    ? parseInt((order.totalAmount * platformFeePercent) / 100, 10)
-    : order.platformFee;
+  // Read or compute Platform Fee
+  const platformFee = paymentsLib.getPlatformFee(order);
 
   // Make sure data is available (breaking in some old tests)
   order.data = order.data || {};
@@ -289,6 +285,7 @@ export default {
         'Your card was declined.',
         'Your card does not support this type of purchase.',
         'Your card has expired.',
+        "Your card's security code is incorrect",
         'Payment Intent require action',
       ];
 
@@ -320,8 +317,9 @@ export default {
     const hostStripeAccount = await collective.getHostStripeAccount();
 
     /* Refund both charge & application fee */
+    const shouldRefundApplicationFee = transaction.platformFeeInHostCurrency > 0;
     const refund = await stripe.refunds.create(
-      { charge: chargeId, refund_application_fee: true }, // eslint-disable-line camelcase
+      { charge: chargeId, refund_application_fee: shouldRefundApplicationFee }, // eslint-disable-line camelcase
       { stripeAccount: hostStripeAccount.username },
     );
     const charge = await stripe.charges.retrieve(chargeId, { stripeAccount: hostStripeAccount.username });

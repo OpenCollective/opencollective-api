@@ -1,34 +1,27 @@
-import serverStatus from 'express-server-status';
-import GraphHTTP from 'express-graphql';
-import multer from 'multer';
-import config from 'config';
-
-import redis from 'redis';
-import expressLimiter from 'express-limiter';
 import { ApolloServer } from 'apollo-server-express';
-import { formatError } from 'apollo-errors';
+import config from 'config';
+import GraphHTTP from 'express-graphql';
+import expressLimiter from 'express-limiter';
+import serverStatus from 'express-server-status';
 import { get } from 'lodash';
+import multer from 'multer';
+import redis from 'redis';
 
 import * as connectedAccounts from './controllers/connectedAccounts';
+import helloworks from './controllers/helloworks';
 import uploadImage from './controllers/images';
-import * as users from './controllers/users';
-import { stripeWebhook, transferwiseWebhook } from './controllers/webhooks';
 import * as email from './controllers/services/email';
-
-import required from './middleware/required_param';
+import * as users from './controllers/users';
+import { paypalWebhook, stripeWebhook, transferwiseWebhook } from './controllers/webhooks';
+import graphqlSchemaV1 from './graphql/v1/schema';
+import graphqlSchemaV2 from './graphql/v2/schema';
+import logger from './lib/logger';
 import * as authentication from './middleware/authentication';
 import errorHandler from './middleware/error_handler';
 import * as params from './middleware/params';
+import required from './middleware/required_param';
 import sanitizer from './middleware/sanitizer';
-
 import * as paypal from './paymentProviders/paypal/payment';
-
-import logger from './lib/logger';
-
-import graphqlSchemaV1 from './graphql/v1/schema';
-import graphqlSchemaV2 from './graphql/v2/schema';
-
-import helloworks from './controllers/helloworks';
 
 const upload = multer();
 
@@ -120,7 +113,7 @@ export default app => {
     customFormatErrorFn: error => {
       logger.error(`GraphQL v1 error: ${error.message}`);
       logger.debug(error);
-      return formatError(error);
+      return error;
     },
     schema: graphqlSchemaV1,
     pretty: isDevelopment,
@@ -136,6 +129,9 @@ export default app => {
     schema: graphqlSchemaV2,
     introspection: true,
     playground: isDevelopment,
+    engine: {
+      apiKey: get(config, 'graphql.apolloEngineAPIKey'),
+    },
     // Align with behavior from express-graphql
     context: ({ req }) => {
       return req;
@@ -154,6 +150,7 @@ export default app => {
    */
   app.post('/webhooks/stripe', stripeWebhook); // when it gets a new subscription invoice
   app.post('/webhooks/transferwise', transferwiseWebhook); // when it gets a new subscription invoice
+  app.post('/webhooks/paypal', paypalWebhook);
   app.post('/webhooks/mailgun', email.webhook); // when receiving an email
   app.get('/connected-accounts/:service/callback', authentication.authenticateServiceCallback); // oauth callback
   app.delete('/connected-accounts/:service/disconnect/:collectiveId', authentication.authenticateServiceDisconnect);

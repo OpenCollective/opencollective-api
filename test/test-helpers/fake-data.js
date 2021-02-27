@@ -6,15 +6,16 @@
 // This lib is a superset of `utils.data` that generates values that are random and safe
 // to use in loops and repeted tests.
 
-import { v4 as uuid } from 'uuid';
 import { get, sample } from 'lodash';
-import models from '../../server/models';
-import { types as CollectiveType } from '../../server/constants/collectives';
-import { PAYMENT_METHOD_SERVICES, PAYMENT_METHOD_TYPES } from '../../server/constants/paymentMethods';
-import { randEmail, randUrl } from '../stores';
-import { PayoutMethodTypes } from '../../server/models/PayoutMethod';
+import { v4 as uuid } from 'uuid';
 
 import { roles } from '../../server/constants';
+import { types as CollectiveType } from '../../server/constants/collectives';
+import { PAYMENT_METHOD_SERVICES, PAYMENT_METHOD_TYPES } from '../../server/constants/paymentMethods';
+import { REACTION_EMOJI } from '../../server/constants/reaction-emoji';
+import models from '../../server/models';
+import { PayoutMethodTypes } from '../../server/models/PayoutMethod';
+import { randEmail, randUrl } from '../stores';
 
 export const randStr = (prefix = '') => `${prefix}${uuid().split('-')[0]}`;
 export const randNumber = (min = 0, max = 10000000) => Math.floor(Math.random() * max) + min;
@@ -30,7 +31,7 @@ export const randArray = (generateFunc, min = 1, max = 1) => {
 /**
  * Creates a fake user. All params are optionals.
  */
-export const fakeUser = async userData => {
+export const fakeUser = async (userData, collectiveData) => {
   const user = await models.User.create({
     email: randEmail(),
     firstName: randStr('FirstName '),
@@ -45,6 +46,7 @@ export const fakeUser = async userData => {
     data: { UserId: user.id },
     HostCollectiveId: null,
     CreatedByUserId: user.id,
+    ...collectiveData,
   });
 
   await user.update({ CollectiveId: userCollective.id });
@@ -71,8 +73,8 @@ export const fakeCollective = async (collectiveData = {}) => {
   const type = collectiveData.type || CollectiveType.COLLECTIVE;
   const collective = await models.Collective.create({
     type,
-    name: randStr('Test Collective '),
-    slug: randStr('collective-'),
+    name: collectiveData.isHostAccount ? randStr('Test Host ') : randStr('Test Collective '),
+    slug: collectiveData.isHostAccount ? randStr('host-') : randStr('collective-'),
     description: randStr('Description '),
     currency: 'USD',
     twitterHandle: randStr('twitter'),
@@ -147,15 +149,15 @@ export const fakeUpdate = async (updateData = {}) => {
 };
 
 /**
- * Creates a fake expense attachment
+ * Creates a fake expense item
  */
-export const fakeExpenseAttachment = async (attachmentData = {}) => {
-  return models.ExpenseAttachment.create({
+export const fakeExpenseItem = async (attachmentData = {}) => {
+  return models.ExpenseItem.create({
     amount: randAmount(),
     url: `${randUrl()}.pdf`,
     description: randStr(),
     ...attachmentData,
-    ExpenseId: attachmentData.ExpenseId || (await fakeExpense({ attachments: [] })).id,
+    ExpenseId: attachmentData.ExpenseId || (await fakeExpense({ items: [] })).id,
     CreatedByUserId: attachmentData.CreatedByUserId || (await fakeUser()).id,
   });
 };
@@ -169,6 +171,13 @@ export const fakePayoutMethod = async (data = {}) => {
       return { email: randEmail() };
     } else if (type === PayoutMethodTypes.OTHER) {
       return { content: randStr() };
+    } else if (type === PayoutMethodTypes.BANK_ACCOUNT) {
+      return {
+        accountHolderName: 'Jesse Pinkman',
+        currency: 'EUR',
+        type: 'iban',
+        details: { iban: 'DE1237812738192OK' },
+      };
     } else {
       return null;
     }
@@ -207,7 +216,7 @@ export const fakeExpense = async (expenseData = {}) => {
   const expense = await models.Expense.create({
     amount: randAmount(),
     currency: 'USD',
-    category: 'Engineering',
+    tags: ['Engineering'],
     description: randStr('Test expense '),
     incurredAt: new Date(),
     ...expenseData,
@@ -219,16 +228,16 @@ export const fakeExpense = async (expenseData = {}) => {
     legacyPayoutMethod,
   });
 
-  if (!expenseData || typeof expenseData.attachments === 'undefined') {
-    // Helper to generate an attachment. Ensures that attachments match expense amount
+  if (!expenseData || typeof expenseData.items === 'undefined') {
+    // Helper to generate an attachment. Ensures that items match expense amount
     const generateAttachment = (idx, nbItems) => {
       const baseAmount = Math.floor(expense.amount / nbItems);
       const remainder = expense.amount % nbItems;
       const realAmount = idx !== nbItems - 1 ? baseAmount : baseAmount + remainder;
-      return fakeExpenseAttachment({ ExpenseId: expense.id, amount: realAmount });
+      return fakeExpenseItem({ ExpenseId: expense.id, amount: realAmount });
     };
 
-    expense.attachments = await Promise.all(randArray(generateAttachment, 1, 5));
+    expense.items = await Promise.all(randArray(generateAttachment, 1, 5));
   }
 
   expense.User = await models.User.findByPk(expense.UserId);
@@ -265,6 +274,37 @@ export const fakeComment = async commentData => {
     CreatedByUserId,
     ExpenseId,
     ConversationId,
+  });
+};
+
+/**
+ * Creates a fake comment reaction. All params are optionals.
+ */
+export const fakeCommentReaction = async (reactionData = {}) => {
+  const UserId = reactionData.UserId || (await fakeUser()).id;
+  const user = await models.User.findByPk(UserId);
+  const FromCollectiveId = reactionData.FromCollectiveId || (await models.Collective.findByPk(user.CollectiveId)).id;
+  const ConversationId = (await fakeConversation()).id;
+  const CommentId = reactionData.CommentId || (await fakeComment({ ConversationId })).id;
+  return models.CommentReaction.create({
+    UserId,
+    FromCollectiveId,
+    CommentId,
+    emoji: sample(REACTION_EMOJI),
+  });
+};
+
+export const fakeConversation = async (conversationData = {}) => {
+  const RootCommentId = conversationData.RootCommentId || (await fakeComment()).id;
+  const rootComment = await models.Comment.findByPk(RootCommentId);
+  return models.Conversation.create({
+    title: randStr('Update '),
+    summary: rootComment.html,
+    FromCollectiveId: conversationData.FromCollectiveId || (await fakeCollective()).id,
+    CollectiveId: conversationData.CollectiveId || (await fakeCollective()).id,
+    CreatedByUserId: conversationData.CreatedByUserId || (await fakeUser()).id,
+    RootCommentId: conversationData.RootCommentId || (await fakeComment()).id,
+    ...conversationData,
   });
 };
 

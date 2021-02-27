@@ -1,20 +1,20 @@
 import Promise from 'bluebird';
 import config from 'config';
-import request from 'request-promise';
 import debug from 'debug';
-import { pick, get } from 'lodash';
+import { get, pick } from 'lodash';
+import request from 'request-promise';
 
-import models, { sequelize, Op } from '../../models';
-import errors from '../../lib/errors';
 import emailLib from '../../lib/email';
+import errors from '../../lib/errors';
+import models, { Op, sequelize } from '../../models';
 
 const debugEmail = debug('email');
 const debugWebhook = debug('webhook');
 
 export const unsubscribe = (req, res, next) => {
   const { type, email, slug, token } = req.params;
-  const computedToken = emailLib.generateUnsubscribeToken(email, slug, type);
-  if (token !== computedToken) {
+
+  if (!emailLib.isValidUnsubscribeToken(token, email, slug, type)) {
     return next(new errors.BadRequest('Invalid token'));
   }
 

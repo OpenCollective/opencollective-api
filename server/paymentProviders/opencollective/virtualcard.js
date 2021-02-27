@@ -1,16 +1,16 @@
-import moment from 'moment';
-import { v4 as uuid } from 'uuid';
-import { get, times, isEmpty } from 'lodash';
 import config from 'config';
+import { get, isEmpty, times } from 'lodash';
+import moment from 'moment';
 import sanitize from 'sanitize-html';
+import { v4 as uuid } from 'uuid';
 
-import models, { Op, sequelize } from '../../models';
-import * as libpayments from '../../lib/payments';
-import * as currency from '../../lib/currency';
-import { formatCurrency, isValidEmail } from '../../lib/utils';
-import emailLib from '../../lib/email';
-import cache from '../../lib/cache';
 import { ValidationFailed } from '../../graphql/errors';
+import cache from '../../lib/cache';
+import * as currency from '../../lib/currency';
+import emailLib from '../../lib/email';
+import * as libpayments from '../../lib/payments';
+import { formatCurrency, isValidEmail } from '../../lib/utils';
+import models, { Op, sequelize } from '../../models';
 
 /**
  * Virtual Card Payment method - This payment Method works basically as an alias
@@ -175,7 +175,7 @@ async function create(args, remoteUser) {
 
   const createParams = getCreateParams(args, collective, sourcePaymentMethod, remoteUser);
   const virtualCard = await models.PaymentMethod.create(createParams);
-  sendVirtualCardCreatedEmail(virtualCard, collective);
+  sendVirtualCardCreatedEmail(virtualCard, collective.info);
   registerCreateInCache(args.CollectiveId, 1, totalAmount);
   return virtualCard;
 }
@@ -246,7 +246,7 @@ export async function createVirtualCardsForEmails(args, remoteUser, emails, cust
     return getCreateParams(createArgs, collective, sourcePaymentMethod, remoteUser);
   });
   const virtualCards = models.PaymentMethod.bulkCreate(virtualCardsParams);
-  virtualCards.map(vc => sendVirtualCardCreatedEmail(vc, collective));
+  virtualCards.map(vc => sendVirtualCardCreatedEmail(vc, collective.info));
   registerCreateInCache(args.CollectiveId, virtualCards.length, totalAmount);
   return virtualCards;
 }
@@ -483,7 +483,7 @@ async function claim(args, remoteUser) {
   if (!sourcePaymentMethod || sourcePaymentMethod.CollectiveId !== virtualCardPaymentMethod.CollectiveId) {
     throw Error('Gift Card already redeemed');
   } else if (virtualCardPaymentMethod.expiryDate < new Date()) {
-    throw new ValidationFailed({ message: `This gift card has expired` });
+    throw new ValidationFailed(`This gift card has expired`);
   }
 
   // find or creating a user with its collective

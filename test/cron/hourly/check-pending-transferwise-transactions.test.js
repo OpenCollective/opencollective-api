@@ -1,27 +1,27 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
 
+import { run as checkPendingTransfers } from '../../../cron/hourly/check-pending-transferwise-transactions.js';
+import { roles } from '../../../server/constants';
+import status from '../../../server/constants/expense_status';
+import emailLib from '../../../server/lib/email';
+import * as transferwiseLib from '../../../server/lib/transferwise';
+import { PayoutMethodTypes } from '../../../server/models/PayoutMethod';
 import {
   fakeCollective,
   fakeConnectedAccount,
   fakeExpense,
+  fakeMember,
   fakePayoutMethod,
   fakeTransaction,
-  fakeMember,
   fakeUser,
 } from '../../test-helpers/fake-data';
 import * as utils from '../../utils';
-import { run as checkPendingTransfers } from '../../../cron/hourly/check-pending-transferwise-transactions.js';
-import * as transferwiseLib from '../../../server/lib/transferwise';
-import emailLib from '../../../server/lib/email';
-import status from '../../../server/constants/expense_status';
-import { roles } from '../../../server/constants';
-import { PayoutMethodTypes } from '../../../server/models/PayoutMethod';
 
 describe('cron/hourly/check-pending-transferwise-transactions.js', () => {
   const sandbox = sinon.createSandbox();
   let getTransfer, sendMessage;
-  let expense, host, collective;
+  let expense, host, collective, payoutMethod;
 
   afterEach(sandbox.restore);
   beforeEach(utils.resetTestDB);
@@ -38,7 +38,7 @@ describe('cron/hourly/check-pending-transferwise-transactions.js', () => {
       data: { type: 'business', id: 0 },
     });
     collective = await fakeCollective({ HostCollectiveId: host.id });
-    const payoutMethod = await fakePayoutMethod({
+    payoutMethod = await fakePayoutMethod({
       type: PayoutMethodTypes.BANK_ACCOUNT,
       data: {
         accountHolderName: 'Leo Kewitz',
@@ -78,6 +78,32 @@ describe('cron/hourly/check-pending-transferwise-transactions.js', () => {
 
     await expense.reload();
     expect(expense).to.have.property('status', status.PAID);
+  });
+
+  it('should ignore expenses manually marked as paid', async () => {
+    getTransfer.resolves({ status: 'outgoing_payment_sent' });
+    const manualExpense = await fakeExpense({
+      status: status.PAID,
+      amount: 10000,
+      CollectiveId: collective.id,
+      currency: 'USD',
+      PayoutMethodId: payoutMethod.id,
+      category: 'Engineering',
+      type: 'INVOICE',
+      description: 'January Invoice',
+    });
+    await fakeTransaction({
+      type: 'DEBIT',
+      amount: -1 * manualExpense.amount,
+      ExpenseId: manualExpense.id,
+    });
+
+    const spy = sandbox.spy(console, 'log');
+
+    await checkPendingTransfers();
+
+    sinon.assert.calledWith(spy, `\nProcessing expense #${expense.id}...`);
+    sinon.assert.neverCalledWith(spy, `\nProcessing expense #${manualExpense.id}...`);
   });
 
   it('should set expense as error and clear existing transactions when funds are refunded', async () => {

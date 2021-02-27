@@ -1,17 +1,18 @@
-import { pick } from 'lodash';
 import { GraphQLNonNull } from 'graphql';
+import { pick } from 'lodash';
 
-import { ConnectedAccount } from '../object/ConnectedAccount';
+import { Service } from '../../../constants/connected_account';
+import * as paypal from '../../../lib/paypal';
+import * as transferwise from '../../../lib/transferwise';
+import models from '../../../models';
+import { Unauthorized, ValidationFailed } from '../../errors';
 import { AccountReferenceInput, fetchAccountWithReference } from '../input/AccountReferenceInput';
 import { ConnectedAccountCreateInput } from '../input/ConnectedAccountCreateInput';
-import models from '../../../models';
-import * as transferwise from '../../../lib/transferwise';
-import * as errors from '../../errors';
-import { Service } from '../../../constants/connected_account';
 import {
   ConnectedAccountReferenceInput,
   fetchConnectedAccountWithReference,
 } from '../input/ConnectedAccountReferenceInput';
+import { ConnectedAccount } from '../object/ConnectedAccount';
 
 const connectedAccountMutations = {
   createConnectedAccount: {
@@ -29,28 +30,37 @@ const connectedAccountMutations = {
     },
     async resolve(_, args, req): Promise<object> {
       if (!req.remoteUser) {
-        throw new errors.Unauthorized({ message: 'You need to be logged in to create a connected account' });
+        throw new Unauthorized('You need to be logged in to create a connected account');
       }
 
       const collective = await fetchAccountWithReference(args.account, { loaders: req.loaders, throwIfMissing: true });
       if (!req.remoteUser.isAdmin(collective.id)) {
-        throw new errors.Unauthorized({ message: "You don't have permission to edit this collective" });
+        throw new Unauthorized("You don't have permission to edit this collective");
       }
 
-      if (args.connectedAccount.service === Service.TRANSFERWISE) {
+      if ([Service.TRANSFERWISE, Service.PAYPAL].includes(args.connectedAccount.service)) {
         if (!args.connectedAccount.token) {
-          throw new errors.ValidationFailed({ message: 'A token is required for TransferWise accounts' });
+          throw new ValidationFailed('A token is required');
         }
         const sameTokenCount = await models.ConnectedAccount.count({
-          where: { service: Service.TRANSFERWISE, token: args.connectedAccount.token },
+          where: { token: args.connectedAccount.token, service: args.connectedAccount.service },
         });
         if (sameTokenCount > 0) {
-          throw new errors.ValidationFailed({ message: 'This token is already being used' });
+          throw new ValidationFailed('This token is already being used');
         }
-        try {
-          await transferwise.getProfiles(args.connectedAccount.token);
-        } catch (e) {
-          throw new errors.ValidationFailed({ message: 'The token is not a valid TransferWise token' });
+
+        if (args.connectedAccount.service === Service.TRANSFERWISE) {
+          try {
+            await transferwise.getProfiles(args.connectedAccount.token);
+          } catch (e) {
+            throw new ValidationFailed('The token is not a valid TransferWise token');
+          }
+        } else if (args.connectedAccount.service === Service.PAYPAL) {
+          try {
+            await paypal.validateConnectedAccount(args.connectedAccount);
+          } catch (e) {
+            throw new ValidationFailed('The Client ID and Token are not a valid combination');
+          }
         }
       }
 
@@ -82,14 +92,14 @@ const connectedAccountMutations = {
     },
     async resolve(_, args, req): Promise<object> {
       if (!req.remoteUser) {
-        throw new errors.Unauthorized('You need to be logged in to delete a connected account');
+        throw new Unauthorized('You need to be logged in to delete a connected account');
       }
 
       const connectedAccount = await fetchConnectedAccountWithReference(args.connectedAccount, {
         throwIfMissing: true,
       });
       if (!req.remoteUser.isAdmin(connectedAccount.CollectiveId)) {
-        throw new errors.Unauthorized("You don't have permission to edit this collective");
+        throw new Unauthorized("You don't have permission to edit this collective");
       }
 
       await connectedAccount.destroy({ force: true });

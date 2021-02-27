@@ -4,6 +4,12 @@ import { expect } from 'chai';
 import sinon from 'sinon';
 import request from 'supertest';
 
+import { roles } from '../../../../server/constants';
+import status from '../../../../server/constants/expense_status';
+import app from '../../../../server/index';
+import emailLib from '../../../../server/lib/email';
+import * as transferwiseLib from '../../../../server/lib/transferwise';
+import { PayoutMethodTypes } from '../../../../server/models/PayoutMethod';
 import {
   fakeCollective,
   fakeConnectedAccount,
@@ -13,17 +19,17 @@ import {
   fakeTransaction,
   fakeUser,
 } from '../../../test-helpers/fake-data';
-import app from '../../../../server/index';
 import * as utils from '../../../utils';
-import emailLib from '../../../../server/lib/email';
-import * as transferwiseLib from '../../../../server/lib/transferwise';
-import status from '../../../../server/constants/expense_status';
-import { roles } from '../../../../server/constants';
-import { PayoutMethodTypes } from '../../../../server/models/PayoutMethod';
 
-describe('paymentMethods/transferwise/webhook.ts', () => {
+describe('server/paymentProviders/transferwise/webhook', () => {
+  let expressApp, api;
+  before(async () => {
+    expressApp = await app();
+    api = request(expressApp) as any;
+  });
+
   const sandbox = sinon.createSandbox();
-  const api = request(app) as any;
+
   /* eslint-disable @typescript-eslint/camelcase */
   const event = {
     data: {

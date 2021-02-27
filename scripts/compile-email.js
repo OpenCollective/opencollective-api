@@ -7,8 +7,8 @@ import '../server/env';
 import config from 'config';
 import juice from 'juice';
 
-import libEmailTemplates from '../server/lib/emailTemplates';
 import { getMailer } from '../server/lib/email';
+import libEmailTemplates from '../server/lib/emailTemplates';
 
 const templateName = process.argv[2];
 const data = {};
@@ -128,6 +128,16 @@ data['github.signup'] = {
   collective: {
     name: 'webpack',
     slug: 'webpack',
+  },
+};
+data['collective.created.the-social-change-agency'] = data['collective.approved.the-social-change-agency'] = {
+  host: {
+    slug: 'the-social-change-agency',
+    name: 'The Social Change Agency',
+  },
+  collective: {
+    slug: 'coinbase',
+    name: 'Coinbase',
   },
 };
 data['organization.collective.created'] = {
@@ -527,10 +537,10 @@ if (!templateName) {
   console.log('./server/lib/emailTemplates\n');
   console.log('  Example 1: npm run -s compile:email user.monthlyreport\n');
   console.log('  Example 2: npm run -s compile:email email.approve > email-approve.html\n');
-  console.log('Note: `-s` switch is requried to suppress warnings from npm.');
+  console.log('Note: `-s` switch is required to suppress warnings from npm.');
   console.log('Note: Edit the script to specify the data that is passed to the template.');
 } else if (!data[templateName]) {
-  console.log('There is no mocked data defined for this template.');
+  console.log('There is no mocked data defined for this template:', templateName);
   console.log('Please add mocked data by editing `scripts/compile-email.js`.');
 } else {
   const template = libEmailTemplates[templateName];

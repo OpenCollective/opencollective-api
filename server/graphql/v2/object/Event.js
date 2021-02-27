@@ -1,8 +1,10 @@
-import { GraphQLObjectType, GraphQLBoolean, GraphQLInt } from 'graphql';
+import { GraphQLBoolean, GraphQLInt, GraphQLObjectType } from 'graphql';
 
-import { Account, AccountFields } from '../interface/Account';
 import { hostResolver } from '../../common/collective';
+import { Account, AccountFields } from '../interface/Account';
+
 import { Collective } from './Collective';
+import { Host } from './Host';
 
 export const Event = new GraphQLObjectType({
   name: 'Event',
@@ -14,6 +16,7 @@ export const Event = new GraphQLObjectType({
       ...AccountFields,
       balance: {
         description: 'Amount of money in cents in the currency of the collective currently available to spend',
+        deprecationReason: '2020/04/09 - Should not have been introduced. Use stats.balance.value',
         type: GraphQLInt,
         resolve(collective, _, req) {
           return req.loaders.Collective.balance.load(collective.id);
@@ -21,7 +24,7 @@ export const Event = new GraphQLObjectType({
       },
       host: {
         description: 'Get the host collective that is receiving the money on behalf of this collective',
-        type: Account,
+        type: Host,
         resolve: hostResolver,
       },
       isApproved: {

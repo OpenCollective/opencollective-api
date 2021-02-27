@@ -1,20 +1,20 @@
 /**
  * Dependencies.
  */
-import config from 'config';
-import Temporal from 'sequelize-temporal';
-import { Op } from 'sequelize';
-import slugify from 'limax';
 import Promise from 'bluebird';
-import showdown from 'showdown';
+import config from 'config';
+import slugify from 'limax';
 import { defaults, pick } from 'lodash';
+import { Op } from 'sequelize';
+import Temporal from 'sequelize-temporal';
+import showdown from 'showdown';
 
-import * as errors from '../graphql/errors';
 import activities from '../constants/activities';
-import { sanitizeObject } from '../lib/utils';
+import * as errors from '../graphql/errors';
 import { mustHaveRole } from '../lib/auth';
-
 import logger from '../lib/logger';
+import { generateSummaryForHTML } from '../lib/sanitize-html';
+import { sanitizeObject } from '../lib/utils';
 
 const markdownConverter = new showdown.Converter();
 
@@ -114,6 +114,10 @@ export default function (Sequelize, DataTypes) {
             ? markdownConverter.makeHtml(this.getDataValue('markdown'))
             : this.getDataValue('html');
         },
+        set(html) {
+          this.setDataValue('html', html);
+          this.setDataValue('summary', generateSummaryForHTML(html, 240));
+        },
       },
 
       image: DataTypes.STRING,
@@ -149,6 +153,10 @@ export default function (Sequelize, DataTypes) {
         type: DataTypes.DATE,
         defaultValue: null,
       },
+
+      summary: {
+        type: DataTypes.STRING,
+      },
     },
     {
       paranoid: true,
@@ -166,6 +174,7 @@ export default function (Sequelize, DataTypes) {
             publishedAt: this.publishedAt,
             slug: this.slug,
             tags: this.tags,
+            CollectiveId: this.CollectiveId,
           };
         },
         minimal() {
@@ -224,12 +233,10 @@ export default function (Sequelize, DataTypes) {
     if (newUpdateData.TierId) {
       const tier = await models.Tier.findByPk(newUpdateData.TierId);
       if (!tier) {
-        throw new errors.ValidationFailed({ message: 'Tier not found' });
+        throw new errors.ValidationFailed('Tier not found');
       }
       if (tier.CollectiveId !== this.CollectiveId) {
-        throw new errors.ValidationFailed({
-          message: "Cannot link this update to a Tier that doesn't belong to this collective",
-        });
+        throw new errors.ValidationFailed("Cannot link this update to a Tier that doesn't belong to this collective");
       }
     }
     const editableAttributes = [

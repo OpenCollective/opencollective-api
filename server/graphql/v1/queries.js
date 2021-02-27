@@ -1,52 +1,47 @@
 import Promise from 'bluebird';
-import { get, uniq, pick } from 'lodash';
-import { GraphQLList, GraphQLNonNull, GraphQLString, GraphQLInt, GraphQLBoolean } from 'graphql';
+import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLString } from 'graphql';
+import { get, pick, uniq } from 'lodash';
 import { isEmail } from 'validator';
 
-import errors from '../../lib/errors';
-import rawQueries from '../../lib/queries';
 import { types as CollectiveTypes } from '../../constants/collectives';
-import models, { sequelize, Op } from '../../models';
-import { fetchCollectiveId } from '../../lib/cache';
-import { searchCollectivesByEmail, searchCollectivesOnAlgolia, searchCollectivesInDB } from '../../lib/search';
 import Algolia from '../../lib/algolia';
+import { fetchCollectiveId } from '../../lib/cache';
+import rawQueries from '../../lib/queries';
+import { searchCollectivesByEmail, searchCollectivesInDB, searchCollectivesOnAlgolia } from '../../lib/search';
 import { toIsoDateStr } from '../../lib/utils';
+import models, { Op, sequelize } from '../../models';
+import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../errors';
 
+import { ApplicationType } from './Application';
 import {
   CollectiveInterfaceType,
-  CollectiveSearchResultsType,
-  TypeOfCollectiveType,
   CollectiveOrderFieldType,
+  CollectiveSearchResultsType,
   HostCollectiveOrderFieldType,
+  TypeOfCollectiveType,
 } from './CollectiveInterface';
-
 import { InvoiceInputType } from './inputTypes';
-
 import {
   PaginatedTransactionsType,
   TransactionInterfaceType,
-  TransactionType,
   TransactionOrder,
-  OrderDirectionType,
+  TransactionType,
 } from './TransactionInterface';
-
-import { ApplicationType } from './Application';
-
 import {
-  UserType,
-  TierType,
   ExpenseStatusType,
   ExpenseType,
   InvoiceType,
-  UpdateType,
+  MemberInvitationType,
   MemberType,
   OrderByType,
+  OrderDirectionType,
   OrderType,
   PaginatedExpensesType,
   PaymentMethodType,
-  MemberInvitationType,
+  TierType,
+  UpdateType,
+  UserType,
 } from './types';
-import { Forbidden, ValidationFailed } from '../errors';
 
 const queries = {
   Collective: {
@@ -70,7 +65,7 @@ const queries = {
         return new Error('Please provide a slug or an id');
       }
       if (!collective && args.throwIfMissing) {
-        throw new errors.NotFound('Collective not found');
+        throw new NotFound('Collective not found');
       }
       return collective;
     },
@@ -110,10 +105,10 @@ const queries = {
         where: { slug: args.fromCollectiveSlug },
       });
       if (!fromCollective) {
-        throw new errors.NotFound('User or organization not found');
+        throw new NotFound('User or organization not found');
       }
       if (!req.remoteUser || !req.remoteUser.isAdmin(fromCollective.id)) {
-        throw new errors.Unauthorized("You don't have permission to access invoices for this user");
+        throw new Unauthorized("You don't have permission to access invoices for this user");
       }
 
       const transactions = await models.Transaction.findAll({
@@ -179,7 +174,7 @@ const queries = {
       const hostSlug = args.invoiceSlug.substring(7, args.invoiceSlug.lastIndexOf('.'));
       const fromCollectiveSlug = args.invoiceSlug.substr(args.invoiceSlug.lastIndexOf('.') + 1);
       if (!hostSlug || year < 2015 || month < 1 || month > 12) {
-        throw new errors.ValidationFailed(
+        throw new ValidationFailed(
           'Invalid invoiceSlug format. Should be :year:2digitMonth.:hostSlug.:fromCollectiveSlug',
         );
       }
@@ -187,14 +182,14 @@ const queries = {
         where: { slug: fromCollectiveSlug },
       });
       if (!fromCollective) {
-        throw new errors.NotFound(`User or organization not found for slug ${fromCollectiveSlug}`);
+        throw new NotFound(`User or organization not found for slug ${fromCollectiveSlug}`);
       }
       const host = await models.Collective.findBySlug(hostSlug);
       if (!host) {
-        throw new errors.NotFound('Host not found');
+        throw new NotFound('Host not found');
       }
       if (!req.remoteUser || !req.remoteUser.isAdmin(fromCollective.id)) {
-        throw new errors.Unauthorized("You don't have permission to access invoices for this user");
+        throw new Unauthorized("You don't have permission to access invoices for this user");
       }
 
       const startsAt = new Date(`${year}-${month}-01`);
@@ -214,7 +209,7 @@ const queries = {
       const order = [['createdAt', 'DESC']];
       const transactions = await models.Transaction.findAll({ where, order });
       if (transactions.length === 0) {
-        throw new errors.NotFound('No transactions found');
+        throw new NotFound('No transactions found');
       }
 
       const invoice = {
@@ -251,32 +246,28 @@ const queries = {
       const { dateFrom, dateTo, fromCollectiveSlug, collectiveSlug } = args.invoiceInputType;
 
       if (!dateFrom || !dateTo) {
-        throw new ValidationFailed({ message: 'A valid date range must be provided' });
+        throw new ValidationFailed('A valid date range must be provided');
       } else if (!fromCollectiveSlug || !collectiveSlug) {
-        throw new ValidationFailed({ message: 'You must provide a collective and a fromCollective' });
+        throw new ValidationFailed('You must provide a collective and a fromCollective');
       }
 
       const fromCollective = await models.Collective.findOne({
         where: { slug: fromCollectiveSlug },
       });
       if (!fromCollective) {
-        throw new errors.NotFound(`User or organization not found for slug ${args.fromCollective}`);
+        throw new NotFound(`User or organization not found for slug ${args.fromCollective}`);
       }
       const host = await models.Collective.findBySlug(collectiveSlug);
       if (!host) {
-        throw new errors.NotFound('Host not found');
+        throw new NotFound('Host not found');
       }
 
       if (!req.remoteUser || !req.remoteUser.isAdmin(fromCollective.id)) {
-        throw new errors.Unauthorized("You don't have permission to access invoices for this user");
+        throw new Unauthorized("You don't have permission to access invoices for this user");
       }
 
       if (dateTo < dateFrom) {
-        throw new errors.ValidationFailed(
-          'validation_failed',
-          ['InvoiceDateType'],
-          'Invalid date object. dateFrom must be before dateTo',
-        );
+        throw new ValidationFailed('Invalid date object. dateFrom must be before dateTo');
       }
 
       const where = {
@@ -290,7 +281,7 @@ const queries = {
       };
 
       const order = [['createdAt', 'DESC']];
-      const transactions = await models.Transaction.findAll({ where, order, logging: console.log });
+      const transactions = await models.Transaction.findAll({ where, order });
 
       const invoice = {
         title: get(host, 'settings.invoiceTitle'),
@@ -333,7 +324,7 @@ const queries = {
       });
 
       if (!transaction) {
-        throw new errors.NotFound(`Transaction ${args.transactionUuid} doesn't exists`);
+        throw new NotFound(`Transaction ${args.transactionUuid} doesn't exists`);
       }
 
       // If using a virtualcard, then billed collective will be the emitter
@@ -675,7 +666,7 @@ const queries = {
         query.where.status = args.status;
       }
       if (args.category) {
-        query.where.category = { [Op.iLike]: args.category };
+        query.where[Op.and] = [sequelize.literal(`${sequelize.escape(args.category)} ILIKE ANY(tags)`)];
       }
       if (args.limit) {
         query.limit = args.limit;
@@ -719,7 +710,7 @@ const queries = {
       CollectiveId: { type: GraphQLInt },
       CollectiveSlug: { type: GraphQLString },
       status: { type: ExpenseStatusType },
-      category: { type: GraphQLString },
+      category: { type: GraphQLString, deprecationReason: '2020-06-03: Expense are now using tags' },
       FromCollectiveId: { type: GraphQLInt },
       FromCollectiveSlug: { type: GraphQLString },
       limit: {
@@ -756,23 +747,13 @@ const queries = {
       };
 
       if (FromCollectiveId || FromCollectiveSlug) {
-        const collectiveUser = await models.User.findOne({
-          attributes: ['id'],
-          where: {
-            CollectiveId: FromCollectiveId || (await fetchCollectiveId(FromCollectiveSlug)),
-          },
-        });
-
-        if (!collectiveUser) {
-          return { expenses: [], limit, offset, total: 0 };
-        }
-
-        query.where.UserId = collectiveUser.id;
+        query.where.FromCollectiveId = FromCollectiveId || (await fetchCollectiveId(FromCollectiveSlug));
       }
 
       if (category) {
-        query.where.category = { [Op.iLike]: category };
+        query.where.tags = { [Op.contains]: [category] };
       }
+
       if (status) {
         query.where.status = status;
       }
@@ -1083,7 +1064,7 @@ const queries = {
   },
 
   /**
-   * Find a specific member. If multiple members match the given criterias, only
+   * Find a specific member. If multiple members match the given criteria, only
    * one will be returned.
    */
   member: {
@@ -1096,7 +1077,7 @@ const queries = {
     },
     async resolve(_, args) {
       if (!args.id && !(args.MemberCollectiveId && (args.CollectiveId || args.TierId))) {
-        throw new errors.ValidationFailed(
+        throw new ValidationFailed(
           'Must provide either an id, a pair of MemberCollectiveId/CollectiveId or a pair of MemberCollectiveId/TierId',
         );
       }
@@ -1287,17 +1268,17 @@ const queries = {
     },
     resolve(collective, args, { remoteUser }) {
       if (!remoteUser) {
-        new Forbidden({ message: 'Only collective admins can see pending invitations' });
+        new Forbidden('Only collective admins can see pending invitations');
       }
       if (!args.CollectiveId && !args.MemberCollectiveId) {
-        throw new ValidationFailed({ message: 'You must either provide a CollectiveId or a MemberCollectiveId' });
+        throw new ValidationFailed('You must either provide a CollectiveId or a MemberCollectiveId');
       }
 
       // Must be an admin to see pending invitations
       const isAdminOfCollective = args.CollectiveId && remoteUser.isAdmin(args.CollectiveId);
       const isAdminOfMemberCollective = args.MemberCollectiveId && remoteUser.isAdmin(args.MemberCollectiveId);
       if (!isAdminOfCollective && !isAdminOfMemberCollective) {
-        new Forbidden({ message: 'Only collective admins can see pending invitations' });
+        new Forbidden('Only collective admins can see pending invitations');
       }
 
       const where = {};
@@ -1307,7 +1288,14 @@ const queries = {
       if (args.MemberCollectiveId) {
         where.MemberCollectiveId = args.MemberCollectiveId;
       }
-      return models.MemberInvitation.findAll({ where });
+
+      return models.MemberInvitation.findAll({
+        where,
+        include: [
+          { association: 'collective', required: true, attributes: [] },
+          { association: 'memberCollective', required: true, attributes: [] },
+        ],
+      });
     },
   },
 
@@ -1421,7 +1409,7 @@ const queries = {
         type: GraphQLBoolean,
         defaultValue: true,
         description: `
-          If set to false, an internal query will be used to search the collective rather than Algolia. 
+          If set to false, an internal query will be used to search the collective rather than Algolia.
           You **must** set this to false when searching for users/organizations.
         `,
       },

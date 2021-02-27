@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import '../../server/env';
 
-import PQueue from 'p-queue';
 import { assign, get, isArray, pick } from 'lodash';
+import PQueue from 'p-queue';
 
-import models, { Op } from '../../server/models';
 import cache from '../../server/lib/cache';
-import logger from '../../server/lib/logger';
 import * as github from '../../server/lib/github';
+import logger from '../../server/lib/logger';
+import models, { Op } from '../../server/models';
 
 const { Collective } = models;
 
@@ -131,7 +131,8 @@ const run = async () => {
   logger.info(`Found ${collectives.length} total collective(s)`);
 
   collectives = collectives.filter(
-    collective => get(collective, 'settings.githubOrg') || get(collective, 'settings.githubRepo'),
+    collective =>
+      get(collective, 'settings.githubOrg') || get(collective, 'settings.githubRepo') || collective.githubHandle,
   );
 
   logger.info(`Found ${collectives.length} collective(s) with GitHub settings`);

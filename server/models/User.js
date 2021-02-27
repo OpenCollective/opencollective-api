@@ -1,17 +1,17 @@
 import bcrypt from 'bcrypt';
-import config from 'config';
 import Promise from 'bluebird';
-import slugify from 'limax';
-import debugLib from 'debug';
-import { defaults, intersection, pick, get } from 'lodash';
-import { Op } from 'sequelize';
 import { isEmailBurner } from 'burner-email-providers';
+import config from 'config';
+import debugLib from 'debug';
+import slugify from 'limax';
+import { defaults, get, intersection, pick } from 'lodash';
+import { Op } from 'sequelize';
 
-import logger from '../lib/logger';
-import * as auth from '../lib/auth';
 import roles from '../constants/roles';
-import { isValidEmail } from '../lib/utils';
+import * as auth from '../lib/auth';
 import emailLib from '../lib/email';
+import logger from '../lib/logger';
+import { isValidEmail } from '../lib/utils';
 
 const debug = debugLib('models:User');
 
@@ -502,7 +502,7 @@ export default (Sequelize, DataTypes) => {
 
     // It's difficult to predict when the image will be updated by findImageForUser
     // So we skip that in test environment to make it more predictable
-    if (!['ci', 'circleci', 'test'].includes(config.env)) {
+    if (!['ci', 'test'].includes(config.env)) {
       user.collective.findImageForUser(user);
     }
     user.CollectiveId = user.collective.id;
