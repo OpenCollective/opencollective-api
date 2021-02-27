@@ -8,7 +8,9 @@
         "acquire": 60000
       },
       "dialectOptions": {
-        "ssl": true
+        "ssl": {
+          "rejectUnauthorized": false
+        }
       }
     }
   },
@@ -23,7 +25,13 @@
   "stripe": {
     "redirectUri": "https://api-staging.opencollective.com/connected-accounts/stripe/callback"
   },
+  "transferwise": {
+    "redirectUri": "https://api-staging.opencollective.com/connected-accounts/transferwise/callback"
+  },
   "githubFlow": {
     "minNbStars": 0
+  },
+  "pdfService": {
+    "fetchTransactionsReceipts": true
   }
 }

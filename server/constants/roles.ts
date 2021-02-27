@@ -15,6 +15,23 @@ enum MemberRoles {
   ATTENDEE = 'ATTENDEE',
   /** Someone interested to follow the activities of the collective/event */
   FOLLOWER = 'FOLLOWER',
+  /** This memberCollective is a connected-collective of the collective */
+  CONNECTED_COLLECTIVE = 'CONNECTED_COLLECTIVE',
+  /** Has read access to all financial information and receipts/invoices */
+  ACCOUNTANT = 'ACCOUNTANT',
 }
+
+export const MemberRoleLabels = {
+  [MemberRoles.HOST]: 'Host',
+  [MemberRoles.ADMIN]: 'Administrator',
+  [MemberRoles.MEMBER]: 'Core Contributor',
+  [MemberRoles.CONTRIBUTOR]: 'Contributor',
+  [MemberRoles.BACKER]: 'Financial Contributor',
+  [MemberRoles.FUNDRAISER]: 'Fundraiser',
+  [MemberRoles.ATTENDEE]: 'Attendee',
+  [MemberRoles.FOLLOWER]: 'Follower',
+  [MemberRoles.CONNECTED_COLLECTIVE]: 'Connected-collective',
+  [MemberRoles.ACCOUNTANT]: 'Accountant',
+};
 
 export default MemberRoles;

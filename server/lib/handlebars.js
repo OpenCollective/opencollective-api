@@ -1,9 +1,11 @@
 import handlebars from 'handlebars';
+import { lowercase } from 'lodash';
 import moment from 'moment-timezone';
-import { resizeImage, capitalize, formatCurrencyObject, pluralize } from './utils';
+
+import { capitalize, formatCurrencyObject, pluralize, resizeImage } from './utils';
 
 // from https://stackoverflow.com/questions/8853396/logical-operator-in-a-handlebars-js-if-conditional
-handlebars.registerHelper('ifCond', (v1, operator, v2, options) => {
+handlebars.registerHelper('ifCond', function (v1, operator, v2, options) {
   switch (operator) {
     case '==':
       return v1 == v2 ? options.fn(this) : options.inverse(this);
@@ -31,17 +33,24 @@ handlebars.registerHelper('ifCond', (v1, operator, v2, options) => {
 });
 
 handlebars.registerHelper('sign', value => {
-  if (value >= 0) return '+';
-  else return '';
+  if (value >= 0) {
+    return '+';
+  } else {
+    return '';
+  }
 });
 
 handlebars.registerHelper('toLowerCase', str => {
-  if (!str) return '';
+  if (!str) {
+    return '';
+  }
   return str.toLowerCase();
 });
 
 handlebars.registerHelper('increment', str => {
-  if (isNaN(str)) return '';
+  if (isNaN(str)) {
+    return '';
+  }
   return `${Number(str) + 1}`;
 });
 
@@ -59,30 +68,40 @@ const col = (str, size, trim = true) => {
 };
 
 handlebars.registerHelper('col', (str, props) => {
-  if (!str || !props) return str;
+  if (!str || !props) {
+    return str;
+  }
   const size = props.hash.size;
   return col(str, size);
 });
 
 handlebars.registerHelper('json', obj => {
-  if (!obj) return '';
+  if (!obj) {
+    return '';
+  }
   return JSON.stringify(obj);
 });
 
 handlebars.registerHelper('moment', (value, props) => {
   const format = (props && props.hash.format) || 'MMMM Do YYYY';
   const d = moment(value);
-  if (props && props.hash.timezone) d.tz(props.hash.timezone);
+  if (props && props.hash.timezone) {
+    d.tz(props.hash.timezone);
+  }
   return d.format(format);
 });
 
 handlebars.registerHelper('currency', (value, props) => {
   const { currency, precision, size, sign } = props.hash;
 
-  if (isNaN(value)) return '';
+  if (isNaN(value)) {
+    return '';
+  }
 
-  let res = (function() {
-    if (!currency) return value / 100;
+  let res = (function () {
+    if (!currency) {
+      return value / 100;
+    }
     value = value / 100; // converting cents
 
     let locale = 'en-US';
@@ -127,6 +146,13 @@ handlebars.registerHelper('number', (value, props) => {
 handlebars.registerHelper('resizeImage', (imageUrl, props) => resizeImage(imageUrl, props.hash));
 handlebars.registerHelper('capitalize', str => capitalize(str));
 handlebars.registerHelper('pluralize', (str, props) => pluralize(str, props.hash.n || props.hash.count));
+
+/**
+ * From totalAmountToBeRaised, return "Total amount to be raised"
+ */
+handlebars.registerHelper('prettifyVariableName', str => {
+  return capitalize(lowercase(str));
+});
 
 handlebars.registerHelper('encodeURIComponent', str => {
   return encodeURIComponent(str);
