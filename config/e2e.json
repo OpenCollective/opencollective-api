@@ -7,11 +7,8 @@
     "server": true
   },
   "limits": {
-    "virtualCards": {
+    "giftCards": {
       "maxPerDay": 1000
     }
-  },
-  "pdfService": {
-    "fetchTransactionsReceipts": false
   }
 }

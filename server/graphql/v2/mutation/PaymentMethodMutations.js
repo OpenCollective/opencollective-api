@@ -13,7 +13,7 @@ import { StripeError } from '../object/StripeError';
 
 const CreditCardWithStripeError = new GraphQLObjectType({
   name: 'CreditCardWithStripeError',
-  fields: {
+  fields: () => ({
     paymentMethod: {
       type: new GraphQLNonNull(PaymentMethod),
       description: 'The payment method created',
@@ -22,7 +22,7 @@ const CreditCardWithStripeError = new GraphQLObjectType({
       type: StripeError,
       description: 'This field will be set if there was an error with Stripe during strong customer authentication',
     },
-  },
+  }),
 });
 
 const addCreditCard = {
@@ -49,7 +49,7 @@ const addCreditCard = {
   },
   async resolve(_, args, req) {
     const collective = await fetchAccountWithReference(args.account, { throwIfMissing: true });
-    if (!req.remoteUser.isAdminOfCollective(collective)) {
+    if (!req.remoteUser?.isAdminOfCollective(collective)) {
       throw new Forbidden(`Must be an admin of ${collective.name}`);
     }
 
@@ -127,10 +127,6 @@ const confirmCreditCard = {
 
 const paymentMethodMutations = {
   addCreditCard,
-  addStripeCreditCard: {
-    ...addCreditCard,
-    deprecationReason: '2020-10-23: Use addCreditCard',
-  },
   confirmCreditCard,
 };
 
