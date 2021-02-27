@@ -1,9 +1,12 @@
-import { pick } from 'lodash';
-import config from 'config';
 import * as LibTaxes from '@opencollective/taxes';
-import { VAT_OPTIONS } from '../constants/vat';
-import { md5 } from './utils';
+import config from 'config';
+import { pick } from 'lodash';
+
 import { types as CollectiveTypes } from '../constants/collectives';
+import { VAT_OPTIONS } from '../constants/vat';
+
+import logger from './logger';
+import { md5 } from './utils';
 
 /**
  * Returns an URL for the given collective params
@@ -30,6 +33,42 @@ export const getCollectiveAvatarUrl = (collectiveSlug, collectiveType, image, ar
   return `${sections.join('/')}.${args.format || 'png'}`;
 };
 
+export const COLLECTIVE_SETTINGS_KEYS_LIST = [
+  'apply',
+  'bitcoin',
+  'categories',
+  'collectivePage',
+  'dismissedHelpMessages',
+  'editor',
+  'enableWebhooks',
+  'features',
+  'githubOrg',
+  'githubOrgs',
+  'githubRepo',
+  'githubUsers',
+  'goals',
+  'hideCreditCardPostalCode',
+  'hostCollective',
+  'hostFeePercent',
+  'HostId',
+  'invoice',
+  'invoiceTitle',
+  'isHostCollective',
+  'lang',
+  'matchingFund',
+  'paymentMethods',
+  'recommendedCollectives',
+  'sendInvoiceByEmail',
+  'style',
+  'superCollectiveTag',
+  'tos',
+  'twitter',
+  'VAT',
+  'virtualCardsMaxDailyAmount',
+  'virtualCardsMaxDailyCount',
+  'W9',
+];
+
 /**
  * Whitelist the collective settings that can be updated.
  * TODO: Whitelist all collective fields (only VAT is atm)
@@ -44,6 +83,13 @@ export function whitelistSettings(settings) {
   if (preparedSettings.VAT) {
     preparedSettings.VAT = pick(preparedSettings.VAT, ['number', 'type']);
   }
+
+  // Generate warnings for invalid settings
+  Object.keys(settings).forEach(key => {
+    if (!COLLECTIVE_SETTINGS_KEYS_LIST.includes(key)) {
+      logger.warn(`Invalid collective setting key detected: ${key}`);
+    }
+  });
 
   return preparedSettings;
 }
@@ -107,6 +153,9 @@ export const collectiveSlugBlacklist = [
   'join',
   'join-free',
   'learn-more',
+  'member-invitations',
+  'member',
+  'members',
   'order',
   'orders',
   'pledge',

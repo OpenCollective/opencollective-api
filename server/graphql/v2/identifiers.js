@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+
 import config from 'config';
 import Hashids from 'hashids/cjs';
 
@@ -13,7 +14,13 @@ if (!salt) {
 const instances = {};
 
 export const IDENTIFIER_TYPES = {
+  ACTIVITY: 'activity',
   CONVERSATION: 'conversation',
+  PAYOUT_METHOD: 'payout-method',
+  EXPENSE: 'expense',
+  CONNECTED_ACCOUNT: 'connected-account',
+  EXPENSE_ATTACHED_FILE: 'expense-attached-file',
+  EXPENSE_ITEM: 'expense-item',
 };
 
 const getDefaultInstance = type => {
@@ -53,7 +60,8 @@ export const idEncode = (integer, type) => {
 };
 
 export const idDecode = (string, type) => {
-  return getInstance(type).decode(string.split('-').join(''));
+  const decoded = getInstance(type).decode(string.split('-').join(''));
+  return Number(decoded[0]);
 };
 
 /**
@@ -66,11 +74,9 @@ export const getIdEncodeResolver = (type, idField = 'id') => entity => idEncode(
 
 /**
  * Resolve original id by decoding if string, otherwise return as is.
- * @param {number|string} id - ide to decode
+ * @param {number|string} id - id to decode
  * @returns {number} decoded id
  */
 export function getDecodedId(id) {
-  return isNaN(id) && typeof id === 'string'
-    ? idDecode(id)[0] // idDecode returns an array.
-    : id;
+  return isNaN(id) && typeof id === 'string' ? idDecode(id) : id;
 }
