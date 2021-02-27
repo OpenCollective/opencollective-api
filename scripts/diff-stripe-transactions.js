@@ -1,8 +1,10 @@
 #!/usr/bin/env ./node_modules/.bin/babel-node
 import '../server/env';
+
 import { get, last } from 'lodash';
-import models from '../server/models';
+
 import stripe from '../server/lib/stripe';
+import models from '../server/models';
 
 if (process.argv.length < 3) {
   console.error(
@@ -67,8 +69,8 @@ async function main() {
 
     // Retrieve the list and check all charges
     const charges = await stripe.charges.list(
-      { limit: nbToCheckInThisPage, starting_after: lastChargeId },
-      { stripe_account: STRIPE_ACCOUNT },
+      { limit: nbToCheckInThisPage, starting_after: lastChargeId }, // eslint-disable-line camelcase
+      { stripeAccount: STRIPE_ACCOUNT },
     );
     for (let idx = 0; idx < charges.data.length; idx++) {
       await checkCharge(charges.data[idx]);

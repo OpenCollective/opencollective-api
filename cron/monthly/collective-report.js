@@ -10,14 +10,15 @@ if (process.env.NODE_ENV === 'production' && today.getDate() !== 1) {
 
 process.env.PORT = 3066;
 
+import Promise from 'bluebird';
+import config from 'config';
+import debugLib from 'debug';
 import _ from 'lodash';
 import moment from 'moment';
-import config from 'config';
-import Promise from 'bluebird';
-import debugLib from 'debug';
+
+import { notifyAdminsOfCollective } from '../../server/lib/notifications';
 import { getTiersStats } from '../../server/lib/utils';
 import models, { Op } from '../../server/models';
-import { notifyAdminsOfCollective } from '../../server/lib/notifications';
 
 const d = process.env.START_DATE ? new Date(process.env.START_DATE) : new Date();
 d.setMonth(d.getMonth() - 1);
@@ -81,11 +82,14 @@ const topBackersCache = {};
 const getTopBackers = (startDate, endDate, tags) => {
   tags = tags || [];
   const cacheKey = `${startDate.getTime()}${endDate.getTime()}${tags.join(',')}`;
-  if (topBackersCache[cacheKey]) return Promise.resolve(topBackersCache[cacheKey]);
-  else {
+  if (topBackersCache[cacheKey]) {
+    return Promise.resolve(topBackersCache[cacheKey]);
+  } else {
     return models.Collective.getTopBackers(startDate, endDate, tags, 5)
       .then(backers => {
-        if (!backers) return [];
+        if (!backers) {
+          return [];
+        }
         return Promise.map(backers, backer => processBacker(backer, startDate, endDate, tags));
       })
       .then(backers => {
@@ -147,7 +151,9 @@ const processBacker = (backer, startDate, endDate, tags) => {
       backer.website = backer.slug
         ? `https://opencollective.com/${backer.slug}`
         : backer.website || backer.twitterHandle;
-      if (!donationsString || !backer.website) return null;
+      if (!donationsString || !backer.website) {
+        return null;
+      }
       backer = _.pick(backer, ['name', 'slug', 'image', 'website']);
       backer.donationsString = donationsString;
       return backer;
@@ -176,7 +182,7 @@ const processCollective = collective => {
 
   let emailData = {};
   const options = {};
-  const csv_filename = `${moment(d).format(dateFormat)}-${collective.slug}-transactions.csv`;
+  const csvFilename = `${collective.slug}-${moment(d).format(dateFormat)}-transactions.csv`;
 
   return Promise.all(promises)
     .then(results => {
@@ -221,7 +227,7 @@ const processCollective = collective => {
 
           options.attachments = [
             {
-              filename: csv_filename,
+              filename: csvFilename,
               content: csv,
             },
           ];

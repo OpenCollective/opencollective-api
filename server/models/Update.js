@@ -1,27 +1,27 @@
 /**
  * Dependencies.
  */
-import config from 'config';
-import Temporal from 'sequelize-temporal';
-import { Op } from 'sequelize';
-import slugify from 'limax';
 import Promise from 'bluebird';
-import showdown from 'showdown';
+import config from 'config';
+import slugify from 'limax';
 import { defaults, pick } from 'lodash';
+import { Op } from 'sequelize';
+import Temporal from 'sequelize-temporal';
+import showdown from 'showdown';
 
-import * as errors from '../graphql/errors';
 import activities from '../constants/activities';
-import { sanitizeObject } from '../lib/utils';
+import * as errors from '../graphql/errors';
 import { mustHaveRole } from '../lib/auth';
-
 import logger from '../lib/logger';
+import { generateSummaryForHTML } from '../lib/sanitize-html';
+import { sanitizeObject } from '../lib/utils';
 
 const markdownConverter = new showdown.Converter();
 
 /**
  * Update Model.
  */
-export default function(Sequelize, DataTypes) {
+export default function (Sequelize, DataTypes) {
   const { models } = Sequelize;
 
   const Update = Sequelize.define(
@@ -39,13 +39,7 @@ export default function(Sequelize, DataTypes) {
         allowNull: false,
         set(slug) {
           if (slug && slug.toLowerCase) {
-            this.setDataValue(
-              'slug',
-              slug
-                .toLowerCase()
-                .replace(/ /g, '-')
-                .replace(/\./g, ''),
-            );
+            this.setDataValue('slug', slug.toLowerCase().replace(/ /g, '-').replace(/\./g, ''));
           }
         },
       },
@@ -120,6 +114,10 @@ export default function(Sequelize, DataTypes) {
             ? markdownConverter.makeHtml(this.getDataValue('markdown'))
             : this.getDataValue('html');
         },
+        set(html) {
+          this.setDataValue('html', html);
+          this.setDataValue('summary', generateSummaryForHTML(html, 240));
+        },
       },
 
       image: DataTypes.STRING,
@@ -155,6 +153,10 @@ export default function(Sequelize, DataTypes) {
         type: DataTypes.DATE,
         defaultValue: null,
       },
+
+      summary: {
+        type: DataTypes.STRING,
+      },
     },
     {
       paranoid: true,
@@ -172,6 +174,7 @@ export default function(Sequelize, DataTypes) {
             publishedAt: this.publishedAt,
             slug: this.slug,
             tags: this.tags,
+            CollectiveId: this.CollectiveId,
           };
         },
         minimal() {
@@ -197,10 +200,14 @@ export default function(Sequelize, DataTypes) {
 
       hooks: {
         beforeValidate: instance => {
-          if (!instance.publishedAt || !instance.slug) return instance.generateSlug();
+          if (!instance.publishedAt || !instance.slug) {
+            return instance.generateSlug();
+          }
         },
         beforeUpdate: instance => {
-          if (!instance.publishedAt || !instance.slug) return instance.generateSlug();
+          if (!instance.publishedAt || !instance.slug) {
+            return instance.generateSlug();
+          }
         },
         afterCreate: instance => {
           models.Activity.create({
@@ -216,24 +223,20 @@ export default function(Sequelize, DataTypes) {
     },
   );
 
-  Update.schema('public');
-
   /**
    * Instance Methods
    */
 
   // Edit an update
-  Update.prototype.edit = async function(remoteUser, newUpdateData) {
+  Update.prototype.edit = async function (remoteUser, newUpdateData) {
     mustHaveRole(remoteUser, 'ADMIN', this.CollectiveId, 'edit this update');
     if (newUpdateData.TierId) {
       const tier = await models.Tier.findByPk(newUpdateData.TierId);
       if (!tier) {
-        throw new errors.ValidationFailed({ message: 'Tier not found' });
+        throw new errors.ValidationFailed('Tier not found');
       }
       if (tier.CollectiveId !== this.CollectiveId) {
-        throw new errors.ValidationFailed({
-          message: "Cannot link this update to a Tier that doesn't belong to this collective",
-        });
+        throw new errors.ValidationFailed("Cannot link this update to a Tier that doesn't belong to this collective");
       }
     }
     const editableAttributes = [
@@ -255,7 +258,7 @@ export default function(Sequelize, DataTypes) {
   };
 
   // Publish update
-  Update.prototype.publish = async function(remoteUser) {
+  Update.prototype.publish = async function (remoteUser) {
     mustHaveRole(remoteUser, 'ADMIN', this.CollectiveId, 'publish this update');
     this.publishedAt = new Date();
     this.collective = this.collective || (await models.Collective.findByPk(this.CollectiveId));
@@ -273,19 +276,19 @@ export default function(Sequelize, DataTypes) {
   };
 
   // Unpublish update
-  Update.prototype.unpublish = async function(remoteUser) {
+  Update.prototype.unpublish = async function (remoteUser) {
     mustHaveRole(remoteUser, 'ADMIN', this.CollectiveId, 'unpublish this update');
     this.publishedAt = null;
     return await this.save();
   };
 
-  Update.prototype.delete = async function(remoteUser) {
+  Update.prototype.delete = async function (remoteUser) {
     mustHaveRole(remoteUser, 'ADMIN', this.CollectiveId, 'delete this update');
     return this.destroy();
   };
 
   // Returns the User model of the User that created this Update
-  Update.prototype.getUser = function() {
+  Update.prototype.getUser = function () {
     return models.User.findByPk(this.CreatedByUserId);
   };
 
@@ -293,8 +296,10 @@ export default function(Sequelize, DataTypes) {
    * If there is a username suggested, we'll check that it's valid or increase it's count
    * Otherwise, we'll suggest something.
    */
-  Update.prototype.generateSlug = function() {
-    if (!this.title) return;
+  Update.prototype.generateSlug = function () {
+    if (!this.title) {
+      return;
+    }
     const suggestion = slugify(this.title.trim()).toLowerCase(/\./g, '');
 
     /*
@@ -321,12 +326,14 @@ export default function(Sequelize, DataTypes) {
       .then(updateObjectList => updateObjectList.map(update => update.slug))
       .then(slugList => slugSuggestionHelper(suggestion, slugList, 0))
       .then(slug => {
-        if (!slug) return Promise.reject(new Error("We couldn't generate a unique slug for this Update"));
+        if (!slug) {
+          return Promise.reject(new Error("We couldn't generate a unique slug for this Update"));
+        }
         this.slug = slug;
       });
   };
 
-  Update.makeUpdatesPublic = function() {
+  Update.makeUpdatesPublic = function () {
     const today = new Date().setUTCHours(0, 0, 0, 0);
     return models.Update.update(
       {

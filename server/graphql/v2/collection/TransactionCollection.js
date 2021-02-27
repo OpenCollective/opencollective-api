@@ -1,24 +1,17 @@
-import { GraphQLInt, GraphQLList, GraphQLObjectType } from 'graphql';
+import { GraphQLList, GraphQLObjectType } from 'graphql';
 
+import { Collection, CollectionFields } from '../interface/Collection';
 import { Transaction } from '../interface/Transaction';
 
 export const TransactionCollection = new GraphQLObjectType({
   name: 'TransactionCollection',
+  interfaces: [Collection],
   description: 'A collection of Transactions (Debit or Credit)',
   fields: () => {
     return {
-      totalCount: {
-        type: GraphQLInt,
-        resolve(result) {
-          return result.count;
-        },
-      },
+      ...CollectionFields,
       nodes: {
         type: new GraphQLList(Transaction),
-        resolve(result) {
-          console.log(result.rows);
-          return result.rows;
-        },
       },
     };
   },

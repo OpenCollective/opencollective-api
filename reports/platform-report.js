@@ -1,9 +1,10 @@
-import moment from 'moment';
 import debugLib from 'debug';
-import models, { sequelize, Op } from '../server/models';
+import moment from 'moment';
+
+import { reduceArrayToCurrency } from '../server/lib/currency';
 import emailLib from '../server/lib/email';
 import { getBackersStats } from '../server/lib/hostlib';
-import { reduceArrayToCurrency } from '../server/lib/currency';
+import models, { Op, sequelize } from '../server/models';
 
 const debug = debugLib('hostreport');
 
@@ -85,7 +86,9 @@ async function PlatformReport(year, month) {
 
   year = year || startDate.getFullYear();
   const computeDelta = (obj1, obj2) => {
-    if (!obj2) return obj1;
+    if (!obj2) {
+      return obj1;
+    }
     const row = {};
     Object.keys(obj1).map(attr => {
       if (!obj2[attr]) {
