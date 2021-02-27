@@ -247,8 +247,8 @@ export async function run() {
       LEFT JOIN "PaymentMethods" spm ON
         spm.id = pm."SourcePaymentMethodId"
       WHERE
-        t."createdAt" >= date_trunc('month',  NOW() - INTERVAL '1 month')
-        AND t."createdAt" < date_trunc('month',  NOW())
+        t."createdAt" >= date_trunc('month',  date :date - INTERVAL '1 month')
+        AND t."createdAt" < date_trunc('month',  date :date)
         AND t."deletedAt" IS NULL
         AND t."CollectiveId" = 8686
         AND t."PlatformTipForTransactionGroup" IS NOT NULL
@@ -302,9 +302,9 @@ export async function run() {
       continue;
     }
 
-    const { HostName, currency, plan, chargedHostId } = hostTransactions[0];
+    const { HostName, currency, plan: planId, chargedHostId } = hostTransactions[0];
 
-    const hostFeeSharePercent = plans[plan]?.hostFeeSharePercent;
+    const hostFeeSharePercent = plans[planId]?.hostFeeSharePercent;
     const transactions = hostTransactions.map(t => {
       if (t.source === 'Shared Revenue') {
         t.amount = round(t.amount * (hostFeeSharePercent / 100));
@@ -319,11 +319,26 @@ export async function run() {
       return { incurredAt, amount, description };
     });
 
+    const host = await models.Collective.findByPk(hostId);
+    const plan = await host.getPlan();
+    if (plan.pricePerCollective) {
+      const activeHostedCollectives = await host.getHostedCollectivesCount();
+      const amount = (activeHostedCollectives || 0) * plan.pricePerCollective;
+      if (amount) {
+        items.push({
+          incurredAt: new Date(),
+          amount,
+          description: 'Fixed Fee per Hosted Collective',
+        });
+      }
+    }
+
     const transactionIds = transactions.map(t => t.TransactionId);
     const totalAmountCredited = sumBy(
       items
         .filter(i => i.description != 'Shared Revenue')
-        .filter(i => i.description != 'Reimburse: Payment Processor Fee for collected Platform Tips'),
+        .filter(i => i.description != 'Reimburse: Payment Processor Fee for collected Platform Tips')
+        .filter(i => i.description != 'Fixed Fee per Hosted Collective'),
       'amount',
     );
     const totalAmountCharged = sumBy(items, 'amount');
@@ -358,11 +373,11 @@ export async function run() {
         FromCollectiveId: chargedHostId,
         HostCollectiveId: hostId,
         hostCurrency: currency,
+        hostCurrencyFxRate: 1,
         netAmountInCollectiveCurrency: totalAmountCredited,
         type: TransactionTypes.CREDIT,
       });
 
-      const host = await models.Collective.findByPk(hostId);
       const connectedAccounts = await host.getConnectedAccounts({
         where: { deletedAt: null },
       });
