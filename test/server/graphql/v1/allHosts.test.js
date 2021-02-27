@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
-import models from '../../../../server/models';
 
+import models from '../../../../server/models';
 import * as utils from '../../../utils';
 
 describe('server/graphql/v1/allHosts', () => {
@@ -21,18 +21,21 @@ describe('server/graphql/v1/allHosts', () => {
       currency: 'EUR',
       tags: ['host', 'brussels'],
       settings: { apply: { title: 'apply' } },
+      plan: 'custom',
     });
     await models.Collective.create({
       name: 'Open Collective Paris',
       currency: 'EUR',
       tags: ['host', 'paris', 'chapter'],
       settings: { apply: { title: 'apply' } },
+      plan: 'custom',
     });
     await models.Collective.create({
       name: 'wwcodeinc',
       currency: 'USD',
       tags: ['host'],
       settings: { apply: { title: 'apply' } },
+      plan: 'custom',
     });
     privateHost = await models.Collective.create({ name: 'Xavier' });
     await publicHost.addUserWithRole(hostAdmin, 'ADMIN');

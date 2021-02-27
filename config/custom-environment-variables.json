@@ -21,6 +21,9 @@
       }
     }
   },
+  "graphql": {
+    "apolloEngineAPIKey": "APOLLO_ENGINE_API_KEY"
+  },
   "memcache": {
     "servers": "MEMCACHE_SERVERS",
     "username": "MEMCACHE_USERNAME",
@@ -39,11 +42,7 @@
     }
   },
   "cache": {
-    "middleware": "CACHE_MIDDLEWARE",
-    "homepage": {
-      "disabled": "CACHE_HOMEPAGE_DISABLED",
-      "refreshInterval": "CACHE_HOMEPAGE_REFRESH_INTERVAL"
-    }
+    "middleware": "CACHE_MIDDLEWARE"
   },
   "log": {
     "level": "LOG_LEVEL",
@@ -92,7 +91,6 @@
   "host": {
     "api": "API_URL",
     "images": "IMAGES_URL",
-    "webapp": "WEBAPP_URL",
     "frontend": "FRONTEND_URL",
     "website": "WEBSITE_URL",
     "invoices": "INVOICES_URL"
@@ -145,5 +143,11 @@
   },
   "githubFlow": {
     "minNbStars": "GITHUB_FLOW_MIN_NB_STARS"
+  },
+  "transferwise": {
+    "apiUrl": "TRANSFERWISE_API_URL"
+  },
+  "fixie": {
+    "url": "FIXIE_URL"
   }
 }
