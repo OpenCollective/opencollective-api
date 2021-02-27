@@ -1,11 +1,12 @@
 import { expect } from 'chai';
-import * as utils from '../../utils';
+
 import constants from '../../../server/constants/activities';
 import activitiesLib from '../../../server/lib/activities';
+import * as utils from '../../utils';
 
 const activitiesData = utils.data('activities1').activities;
 
-describe('lib.activities.test.js', () => {
+describe('server/lib/activities', () => {
   describe('formatMessageForPrivateChannel', () => {
     it(`${constants.COLLECTIVE_TRANSACTION_CREATED} donation`, () => {
       const actual = activitiesLib.formatMessageForPrivateChannel(activitiesData[12], 'slack');

@@ -1,28 +1,28 @@
-import bodyParser from 'body-parser';
+import cloudflareIps from 'cloudflare-ip/ips.json';
 import config from 'config';
 import connectRedis from 'connect-redis';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import debug from 'debug';
 import errorHandler from 'errorhandler';
+import express from 'express';
+import session from 'express-session';
 import helmet from 'helmet';
+import { get, has } from 'lodash';
 import morgan from 'morgan';
 import passport from 'passport';
-import redis from 'redis';
-import session from 'express-session';
-
-import cloudflareIps from 'cloudflare-ip/ips.json';
 import { Strategy as GitHubStrategy } from 'passport-github';
-import { Strategy as TwitterStrategy } from 'passport-twitter';
 import { Strategy as MeetupStrategy } from 'passport-meetup-oauth2';
-import { has, get } from 'lodash';
+import { Strategy as TwitterStrategy } from 'passport-twitter';
+import redis from 'redis';
+
+import { loadersMiddleware } from '../graphql/loaders';
 
 import forest from './forest';
-import cacheMiddleware from '../middleware/cache';
-import { loadersMiddleware } from '../graphql/loaders';
-import { sanitizeForLogs } from '../lib/utils';
+import { middleware as hyperwatchMiddleware } from './hyperwatch';
+import logger from './logger';
+import { sanitizeForLogs } from './utils';
 
-export default function(app) {
+export default async function (app) {
   app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal'].concat(cloudflareIps));
 
   app.use(helmet());
@@ -31,30 +31,29 @@ export default function(app) {
   // It also creates in-memory caching (based on request auth);
   app.use(loadersMiddleware);
 
-  if (process.env.DEBUG && process.env.DEBUG.match(/response/)) {
-    app.use((req, res, next) => {
-      const temp = res.end;
-      res.end = function(str) {
-        try {
-          const obj = JSON.parse(str);
-          debug('response')(JSON.stringify(obj, null, '  '));
-        } catch (e) {
-          debug('response', str);
-        }
-        temp.apply(this, arguments);
-      };
-      next();
-    });
-  }
-
   // Log requests if enabled (default false)
   if (get(config, 'log.accessLogs')) {
     app.use(morgan('combined'));
   }
 
   // Body parser.
-  app.use(bodyParser.json({ limit: '50mb' }));
-  app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+  app.use(
+    express.json({
+      limit: '50mb',
+      // If the request is routed to our /webhooks/transferwise endpoint, we add
+      // the request body buffer to a new property called `rawBody` so we can
+      // calculate the checksum to verify if the request is authentic.
+      verify(req, res, buf) {
+        if (req.originalUrl.startsWith('/webhooks/transferwise')) {
+          req.rawBody = buf.toString();
+        }
+      },
+    }),
+  );
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+  // Register Hyperwatch middleware
+  app.use(hyperwatchMiddleware);
 
   // Slow requests if enabled (default false)
   if (get(config, 'log.slowRequest')) {
@@ -62,7 +61,7 @@ export default function(app) {
       req.startAt = new Date();
       const temp = res.end;
 
-      res.end = function() {
+      res.end = function () {
         const timeElapsed = new Date() - req.startAt;
         if (timeElapsed > get(config, 'log.slowRequestThreshold', 1000)) {
           if (req.body && req.body.query) {
@@ -79,18 +78,13 @@ export default function(app) {
     });
   }
 
-  // Cache Middleware
-  if (get(config, 'cache.middleware')) {
-    app.use(cacheMiddleware());
-  }
-
   // Error handling.
   if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'staging') {
     app.use(errorHandler());
   }
 
   // Forest
-  forest(app);
+  await forest(app);
 
   // Cors.
   app.use(cors());
@@ -100,17 +94,17 @@ export default function(app) {
   if (has(config, 'github.clientID') && has(config, 'github.clientSecret')) {
     passport.use(new GitHubStrategy(get(config, 'github'), verify));
   } else {
-    console.warn('Configuration missing for passport GitHubStrategy, skipping.');
+    logger.info('Configuration missing for passport GitHubStrategy, skipping.');
   }
   if (has(config, 'meetup.clientID') && has(config, 'meetup.clientSecret')) {
     passport.use(new MeetupStrategy(get(config, 'meetup'), verify));
   } else {
-    console.warn('Configuration missing for passport MeetupStrategy, skipping.');
+    logger.info('Configuration missing for passport MeetupStrategy, skipping.');
   }
   if (has(config, 'twitter.consumerKey') && has(config, 'twitter.consumerSecret')) {
     passport.use(new TwitterStrategy(get(config, 'twitter'), verify));
   } else {
-    console.warn('Configuration missing for passport TwitterStrategy, skipping.');
+    logger.info('Configuration missing for passport TwitterStrategy, skipping.');
   }
 
   app.use(cookieParser());

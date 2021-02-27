@@ -1,18 +1,19 @@
-import { expect } from 'chai';
-import app from '../../../server/index';
-import request from 'supertest';
 import Promise from 'bluebird';
-import sinon from 'sinon';
-import models from '../../../server/models';
-import emailLib from '../../../server/lib/email';
-import { md5 } from '../../../server/lib/utils';
-
-import webhookBodyPayload from '../../mocks/mailgun.webhook.payload';
-import webhookBodyApprove from '../../mocks/mailgun.webhook.approve';
-import * as utils from '../../utils';
+import { expect } from 'chai';
 import config from 'config';
 import nock from 'nock';
+import sinon from 'sinon';
+import request from 'supertest';
+
+import app from '../../../server/index';
+import emailLib from '../../../server/lib/email';
+import { md5 } from '../../../server/lib/utils';
+import models from '../../../server/models';
+import webhookBodyApprove from '../../mocks/mailgun.webhook.approve';
+import webhookBodyPayload from '../../mocks/mailgun.webhook.payload';
 import initNock from '../../nocks/email.routes.test.nock.js';
+import { fakeCollective, fakeUser } from '../../test-helpers/fake-data';
+import * as utils from '../../utils';
 
 const generateToken = (email, slug, template) => {
   const uid = `${email}.${slug}.${template}.${config.keys.opencollective.jwtSecret}`;
@@ -59,8 +60,12 @@ const collectiveData = {
 let collective,
   users = [];
 
-describe('server/routes/email.test.js', () => {
-  let sandbox;
+describe('server/routes/email', () => {
+  let sandbox, expressApp;
+
+  before(async () => {
+    expressApp = await app();
+  });
 
   before(() => utils.resetTestDB());
 
@@ -105,27 +110,46 @@ describe('server/routes/email.test.js', () => {
       .catch(console.error);
   });
 
-  it('forwards emails sent to info@:slug.opencollective.com', () => {
+  it('forwards emails sent to info@:slug.opencollective.com', async () => {
     const spy = sandbox.spy(emailLib, 'sendMessage');
+    const collective = await fakeCollective();
+    const users = await Promise.all([fakeUser(), fakeUser(), fakeUser()]);
+    await Promise.all(users.map(user => collective.addUserWithRole(user, 'ADMIN')));
 
-    return request(app)
+    return request(expressApp)
       .post('/webhooks/mailgun')
       .send(
         Object.assign({}, webhookBodyPayload, {
-          recipient: 'info@testcollective.opencollective.com',
+          recipient: `info@${collective.slug}.opencollective.com`,
         }),
       )
       .then(res => {
         expect(res.statusCode).to.equal(200);
-        expect(spy.lastCall.args[0]).to.equal('info@testcollective.opencollective.com');
+        expect(spy.lastCall.args[0]).to.equal(`info@${collective.slug}.opencollective.com`);
         expect(spy.lastCall.args[1]).to.equal(webhookBodyPayload.subject);
-        expect(usersData.map(u => u.email).indexOf(spy.lastCall.args[3].bcc) !== -1).to.be.true;
+        expect(users.map(u => u.email).indexOf(spy.lastCall.args[3].bcc) !== -1).to.be.true;
       });
+  });
+
+  it('do not forwards emails sent to info@:slug.opencollective.com if disabled', async () => {
+    const spy = sandbox.spy(emailLib, 'sendMessage');
+    const collective = await fakeCollective({ settings: { features: { forwardEmails: false } } });
+    const user = await fakeUser();
+    await collective.addUserWithRole(user, 'ADMIN');
+    const endpoint = request(expressApp).post('/webhooks/mailgun');
+    const res = await endpoint.send(
+      Object.assign({}, webhookBodyPayload, {
+        recipient: `info@${collective.slug}.opencollective.com`,
+      }),
+    );
+
+    expect(res.body.error).to.exist;
+    expect(spy.lastCall).to.not.exist;
   });
 
   it('forwards the email for approval to the core members', () => {
     const spy = sandbox.spy(emailLib, 'send');
-    return request(app)
+    return request(expressApp)
       .post('/webhooks/mailgun')
       .send(webhookBodyPayload)
       .then(res => {
@@ -156,7 +180,7 @@ describe('server/routes/email.test.js', () => {
   it('skip the email if already processed', () => {
     const spy = sandbox.spy(emailLib, 'send');
 
-    return request(app)
+    return request(expressApp)
       .post('/webhooks/mailgun')
       .send(webhookBodyApprove)
       .then(res => {
@@ -170,7 +194,7 @@ describe('server/routes/email.test.js', () => {
       recipient: 'unknown@testcollective.opencollective.com',
     });
 
-    return request(app)
+    return request(expressApp)
       .post('/webhooks/mailgun')
       .send(unknownMailingListWebhook)
       .then(res => {
@@ -184,7 +208,7 @@ describe('server/routes/email.test.js', () => {
   it('approves the email', () => {
     const spy = sandbox.spy(emailLib, 'send');
 
-    return request(app)
+    return request(expressApp)
       .get(
         `/services/email/approve?messageId=eyJwIjpmYWxzZSwiayI6Ijc3NjFlZTBjLTc1NGQtNGIwZi05ZDlkLWU1NTgxODJkMTlkOSIsInMiOiI2NDhjZDg1ZTE1IiwiYyI6InNhb3JkIn0=&approver=${encodeURIComponent(
           usersData[1].email,
@@ -208,7 +232,7 @@ describe('server/routes/email.test.js', () => {
   it('return 404 if message not found', () => {
     const messageId =
       'eyJwIjpmYWxzZSwiayI6IjY5MTdlYTZlLWVhNzctNGQzOC04OGUxLWMzMTQwMzdmNGRhNiIsInMiOiIwMjNjMzgwYWFlIiwiYyI6InNhaWFkIn0=';
-    return request(app)
+    return request(expressApp)
       .get(`/services/email/approve?messageId=${messageId}&approver=xdamman%40gmail.com&mailserver=so`)
       .then(res => {
         expect(res.statusCode).to.equal(404);
@@ -246,7 +270,7 @@ describe('server/routes/email.test.js', () => {
 
     it('send please approve email when sending email to eventSlug@parentCollectiveSlug.opencollective.com', async () => {
       spy = sandbox.spy(emailLib, 'sendMessage');
-      return request(app)
+      return request(expressApp)
         .post('/webhooks/mailgun')
         .send(
           Object.assign({}, webhookBodyPayload, {
@@ -264,7 +288,7 @@ describe('server/routes/email.test.js', () => {
 
     it('approves an email sent to eventSlug@parentCollectiveSlug.opencollective.com', () => {
       spy = sandbox.spy(emailLib, 'send');
-      return request(app)
+      return request(expressApp)
         .get(
           `/services/email/approve?messageId=abJwIjpmYWxzZSwiayI6Ijc3NjFlZTBjLTc1NGQtNGIwZi05ZDlkLWU1NTgxODJkMTlkOSIsInMiOiI2NDhjZDg1ZTE1IiwiYyI6InNhb3JkIn0=&approver=${encodeURIComponent(
             usersData[1].email,
@@ -286,7 +310,7 @@ describe('server/routes/email.test.js', () => {
     };
 
     it('returns an error if invalid token', () => {
-      return request(app)
+      return request(expressApp)
         .get(
           `/services/email/unsubscribe/${encodeURIComponent(usersData[0].email)}/${
             collectiveData.slug
@@ -301,7 +325,7 @@ describe('server/routes/email.test.js', () => {
     it('sends the unsubscribe link in the footer of the email', () => {
       const spy = sandbox.stub(emailLib, 'sendMessage');
 
-      return request(app)
+      return request(expressApp)
         .get(
           `/services/email/approve?messageId=eyJwIjpmYWxzZSwiayI6Ijc3NjFlZTBjLTc1NGQtNGIwZi05ZDlkLWU1NTgxODJkMTlkOSIsInMiOiI2NDhjZDg1ZTE1IiwiYyI6InNhb3JkIn0=&approver=${encodeURIComponent(
             usersData[1].email,
@@ -324,7 +348,7 @@ describe('server/routes/email.test.js', () => {
         active: true,
       };
 
-      return request(app)
+      return request(expressApp)
         .get(generateUnsubscribeUrl(users[0].email))
         .then(() => models.Notification.count({ where }))
         .then(count => expect(count).to.equal(0));

@@ -1,14 +1,18 @@
-import { get } from 'lodash';
+import { get, pick } from 'lodash';
 import Temporal from 'sequelize-temporal';
-import { TransactionTypes } from '../constants/transactions';
-import activities from '../constants/activities';
+import { isISO31661Alpha2 } from 'validator';
+
 import status from '../constants/expense_status';
 import expenseType from '../constants/expense_type';
-import CustomDataTypes from '../models/DataTypes';
+import { TransactionTypes } from '../constants/transactions';
 import { reduceArrayToCurrency } from '../lib/currency';
+import { sanitizeTags, validateTags } from '../lib/tags';
+import CustomDataTypes from '../models/DataTypes';
+
+import { PayoutMethodTypes } from './PayoutMethod';
 import models, { Op } from './';
 
-export default function(Sequelize, DataTypes) {
+export default function (Sequelize, DataTypes) {
   const Expense = Sequelize.define(
     'Expense',
     {
@@ -27,6 +31,39 @@ export default function(Sequelize, DataTypes) {
         onDelete: 'SET NULL',
         onUpdate: 'CASCADE',
         allowNull: false,
+      },
+
+      FromCollectiveId: {
+        type: DataTypes.INTEGER,
+        references: { key: 'id', model: 'Collectives' },
+        onDelete: 'SET NULL', // Collective deletion will fail if it has expenses
+        onUpdate: 'CASCADE',
+        allowNull: false,
+      },
+
+      payeeLocation: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+        validate: {
+          isValidLocation(value) {
+            if (!value) {
+              return true;
+            }
+
+            // Validate keys
+            const validKeys = ['address', 'country', 'name', 'lat', 'long'];
+            Object.keys(value).forEach(key => {
+              if (!validKeys.includes(key)) {
+                throw new Error(`Invalid location key: ${key}`);
+              }
+            });
+
+            // Validate values
+            if (value.country && !isISO31661Alpha2(value.country)) {
+              throw new Error('Invalid Country ISO');
+            }
+          },
+        },
       },
 
       CollectiveId: {
@@ -53,7 +90,12 @@ export default function(Sequelize, DataTypes) {
         allowNull: false,
       },
 
-      payoutMethod: {
+      /**
+       * @deprecated Now using PaymentMethodId. The reason why this hadn't been removed yet
+       * is because we'd need to migrate the legacy `donation` payout types that exist in the
+       * DB and that `PayoutMethod` has no equivalent for.
+       */
+      legacyPayoutMethod: {
         type: DataTypes.STRING,
         validate: {
           isIn: {
@@ -66,9 +108,16 @@ export default function(Sequelize, DataTypes) {
         defaultValue: 'manual',
       },
 
+      PayoutMethodId: {
+        type: DataTypes.INTEGER,
+        references: { key: 'id', model: 'PayoutMethods' },
+        onDelete: 'SET NULL',
+        onUpdate: 'CASCADE',
+        allowNull: true,
+      },
+
       privateMessage: DataTypes.STRING,
-      attachment: DataTypes.STRING,
-      category: DataTypes.STRING,
+      invoiceInfo: DataTypes.TEXT,
       vat: DataTypes.INTEGER,
 
       lastEditedById: {
@@ -119,6 +168,19 @@ export default function(Sequelize, DataTypes) {
       deletedAt: {
         type: DataTypes.DATE,
       },
+
+      tags: {
+        type: DataTypes.ARRAY(DataTypes.STRING),
+        set(tags) {
+          const sanitizedTags = sanitizeTags(tags);
+          if (!tags || sanitizedTags.length === 0) {
+            this.setDataValue('tags', null);
+          } else {
+            this.setDataValue('tags', sanitizedTags);
+          }
+        },
+        validate: { validateTags },
+      },
     },
     {
       paranoid: true,
@@ -130,12 +192,13 @@ export default function(Sequelize, DataTypes) {
             id: this.id,
             UserId: this.UserId,
             CollectiveId: this.CollectiveId,
+            FromCollectiveId: this.FromCollectiveId,
             currency: this.currency,
             amount: this.amount,
             description: this.description,
-            attachment: this.attachment,
-            category: this.category,
-            payoutMethod: this.payoutMethod,
+            category: this.tags?.[1],
+            tags: this.tags,
+            legacyPayoutMethod: this.legacyPayoutMethod,
             vat: this.vat,
             privateMessage: this.privateMessage,
             lastEditedById: this.lastEditedById,
@@ -151,11 +214,13 @@ export default function(Sequelize, DataTypes) {
             id: this.id,
             UserId: this.UserId,
             CollectiveId: this.CollectiveId,
+            FromCollectiveId: this.FromCollectiveId,
             currency: this.currency,
             amount: this.amount,
             description: this.description,
-            category: this.category,
-            payoutMethod: this.payoutMethod,
+            category: this.tags?.[1],
+            tags: this.tags,
+            legacyPayoutMethod: this.legacyPayoutMethod,
             vat: this.vat,
             lastEditedById: this.lastEditedById,
             status: this.status,
@@ -166,11 +231,8 @@ export default function(Sequelize, DataTypes) {
         },
       },
       hooks: {
-        afterUpdate(expense) {
-          switch (expense.status) {
-            case status.APPROVED:
-              return expense.createActivity(activities.COLLECTIVE_EXPENSE_APPROVED);
-          }
+        afterDestroy(expense) {
+          return models.ExpenseItem.destroy({ where: { ExpenseId: expense.id } });
         },
       },
     },
@@ -179,13 +241,22 @@ export default function(Sequelize, DataTypes) {
   /**
    * Instance Methods
    */
-  Expense.prototype.createActivity = async function(type) {
-    const user = this.user || (await models.User.findByPk(this.UserId));
-    const userCollective = await models.Collective.findByPk(user.CollectiveId);
+
+  /**
+   * Create an activity to describe an expense update.
+   * @param {string} type: type of the activity, see `constants/activities.js`
+   * @param {object} user: the user who triggered the activity. Leave blank for system activities.
+   */
+  Expense.prototype.createActivity = async function (type, user) {
+    const submittedByUser = this.user || (await models.User.findByPk(this.UserId));
+    const submittedByUserCollective = await models.Collective.findByPk(submittedByUser.CollectiveId);
+    const fromCollective = this.fromCollective || (await models.Collective.findByPk(this.FromCollectiveId));
     if (!this.collective) {
       this.collective = await this.getCollective();
     }
     const host = await this.collective.getHostCollective(); // may be null
+    const payoutMethod = await this.getPayoutMethod();
+    const items = this.items || (await this.getItems());
     const transaction =
       this.status === status.PAID &&
       (await models.Transaction.findOne({
@@ -193,22 +264,29 @@ export default function(Sequelize, DataTypes) {
       }));
     await models.Activity.create({
       type,
-      UserId: this.UserId,
+      UserId: user?.id,
       CollectiveId: this.collective.id,
+      ExpenseId: this.id,
       data: {
         host: get(host, 'minimal'),
         collective: { ...this.collective.minimal, isActive: this.collective.isActive },
-        user: user.minimal,
-        fromCollective: userCollective.minimal,
+        user: submittedByUserCollective.minimal,
+        fromCollective: fromCollective.minimal,
         expense: this.info,
         transaction: transaction.info,
+        payoutMethod: payoutMethod && pick(payoutMethod.dataValues, ['id', 'type', 'data']),
+        items: items.map(item => ({
+          id: item.id,
+          incurredAt: item.incurredAt,
+          description: item.description,
+          amount: item.amount,
+          url: item.url,
+        })),
       },
     });
   };
 
-  Expense.schema('public');
-
-  Expense.prototype.setApproved = function(lastEditedById) {
+  Expense.prototype.setApproved = function (lastEditedById) {
     if (this.status === status.PAID) {
       throw new Error("Can't approve an expense that is PAID");
     }
@@ -217,7 +295,7 @@ export default function(Sequelize, DataTypes) {
     return this.save();
   };
 
-  Expense.prototype.setRejected = function(lastEditedById) {
+  Expense.prototype.setRejected = function (lastEditedById) {
     if (this.status === status.PAID) {
       throw new Error("Can't reject an expense that is PAID");
     }
@@ -226,14 +304,29 @@ export default function(Sequelize, DataTypes) {
     return this.save();
   };
 
-  Expense.prototype.setPaid = function(lastEditedById) {
+  Expense.prototype.setPaid = function (lastEditedById) {
     this.status = status.PAID;
     this.lastEditedById = lastEditedById;
     return this.save();
   };
 
-  Expense.prototype.getPaypalEmail = function() {
-    return this.getUser().then(user => user.paypalEmail || user.email);
+  Expense.prototype.setProcessing = function (lastEditedById) {
+    this.status = status.PROCESSING;
+    this.lastEditedById = lastEditedById;
+    return this.save();
+  };
+
+  Expense.prototype.setError = function (lastEditedById) {
+    this.status = status.ERROR;
+    this.lastEditedById = lastEditedById;
+    return this.save();
+  };
+
+  /**
+   * Returns the PayoutMethod.type based on the legacy `payoutMethod`
+   */
+  Expense.prototype.getPayoutMethodTypeFromLegacy = function () {
+    return Expense.getPayoutMethodTypeFromLegacy(this.legacyPayoutMethod);
   };
 
   /**
@@ -245,7 +338,7 @@ export default function(Sequelize, DataTypes) {
    * @param {*} since
    * @param {*} until
    */
-  Expense.getTotalExpensesFromUserIdInBaseCurrency = async function(userId, baseCurrency, since, until = new Date()) {
+  Expense.getTotalExpensesFromUserIdInBaseCurrency = async function (userId, baseCurrency, since, until = new Date()) {
     const userExpenses = await Expense.findAll({
       attributes: ['currency', 'amount', 'status', 'updatedAt'],
       where: {
@@ -270,6 +363,42 @@ export default function(Sequelize, DataTypes) {
       }
     }
     return reduceArrayToCurrency(arr, baseCurrency);
+  };
+
+  /**
+   * Returns the legacy `payoutMethod` based on the new `PayoutMethod` type
+   */
+  Expense.getLegacyPayoutMethodTypeFromPayoutMethod = function (payoutMethod) {
+    if (payoutMethod && payoutMethod.type === PayoutMethodTypes.PAYPAL) {
+      return 'paypal';
+    } else {
+      return 'other';
+    }
+  };
+
+  /**
+   * Returns the PayoutMethod.type based on the legacy `payoutMethod`
+   */
+  Expense.getPayoutMethodTypeFromLegacy = function (legacyPayoutMethod) {
+    return legacyPayoutMethod === 'paypal' ? PayoutMethodTypes.PAYPAL : PayoutMethodTypes.OTHER;
+  };
+
+  Expense.getMostPopularExpenseTagsForCollective = async function (collectiveId, limit = 100) {
+    return Sequelize.query(
+      `
+      SELECT UNNEST(tags) AS id, UNNEST(tags) AS tag, COUNT(id)
+      FROM "Expenses"
+      WHERE "CollectiveId" = $collectiveId
+      AND "deletedAt" IS NULL
+      GROUP BY UNNEST(tags)
+      ORDER BY count DESC
+      LIMIT $limit
+    `,
+      {
+        type: Sequelize.QueryTypes.SELECT,
+        bind: { collectiveId, limit },
+      },
+    );
   };
 
   Temporal(Expense, Sequelize);
