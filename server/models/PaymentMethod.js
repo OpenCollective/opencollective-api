@@ -1,6 +1,6 @@
 /** @module models/PaymentMethod */
 
-import libdebug from 'debug';
+import debugLib from 'debug';
 import Promise from 'bluebird';
 import { get, intersection } from 'lodash';
 import { Op } from 'sequelize';
@@ -17,7 +17,7 @@ import { isTestToken } from '../lib/stripe';
 
 import { maxInteger } from '../constants/math';
 
-const debug = libdebug('PaymentMethod');
+const debug = debugLib('PaymentMethod');
 
 export default function(Sequelize, DataTypes) {
   const { models } = Sequelize;
@@ -255,7 +255,9 @@ export default function(Sequelize, DataTypes) {
   PaymentMethod.prototype.canBeUsedForOrder = async function(order, user) {
     // if the user is trying to reuse an existing payment method,
     // we make sure it belongs to the logged in user or to a collective that the user is an admin of
-    if (!user) throw new Error('You need to be logged in to be able to use a payment method on file');
+    if (!user) {
+      throw new Error('You need to be logged in to be able to use a payment method on file');
+    }
 
     const name = `payment method (${this.service}:${this.type})`;
 

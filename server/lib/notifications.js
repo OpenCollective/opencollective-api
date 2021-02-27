@@ -11,9 +11,11 @@ import activityType from '../constants/activities';
 import models from '../models';
 import debugLib from 'debug';
 import { channels } from '../constants';
-import { sanitizeActivity } from './webhooks';
+import { sanitizeActivity, enrichActivity } from './webhooks';
+import { PayoutMethodTypes } from '../models/PayoutMethod';
 
 const debug = debugLib('notification');
+const debugActivityData = debugLib('activity.data');
 
 export default async (Sequelize, activity) => {
   // publish everything to our private channel
@@ -72,7 +74,8 @@ function publishToGitter(activity, notifConfig) {
 
 function publishToWebhook(activity, webhookUrl) {
   const sanitizedActivity = sanitizeActivity(activity);
-  return axios.post(webhookUrl, sanitizedActivity);
+  const enrichedActivity = enrichActivity(sanitizedActivity);
+  return axios.post(webhookUrl, enrichedActivity);
 }
 
 function publishToSlack(activity, webhookUrl, options) {
@@ -111,7 +114,9 @@ async function notifySubscribers(users, activity, options = {}) {
     return emailLib.send(options.template || activity.type, process.env.ONLY, data, options);
   }
   return users.map(u => {
-    if (!u) return;
+    if (!u) {
+      return;
+    }
     // skip users that have unsubscribed
     if (unsubscribedUserIds.indexOf(u.id) === -1) {
       debug('sendMessageFromActivity', activity.type, 'UserId', u.id);
@@ -182,7 +187,7 @@ async function notifyMembersOfCollective(CollectiveId, activity, options) {
 
 async function notifyByEmail(activity) {
   debug('notifyByEmail', activity.type);
-  debugLib('activity.data')('activity.data', activity.data);
+  debugActivityData('activity.data', activity.data);
   switch (activity.type) {
     case activityType.TICKET_CONFIRMED:
       notifyUserId(activity.data.UserId, activity);
@@ -275,8 +280,8 @@ async function notifyByEmail(activity) {
       activity.data.actions = {
         viewLatestExpenses: `${config.host.website}/${activity.data.collective.slug}/expenses#expense${activity.data.expense.id}`,
       };
-      if (get(activity, 'data.expense.payoutMethod') === 'paypal') {
-        activity.data.expense.payoutMethod = `PayPal (${activity.data.user.paypalEmail})`;
+      if (get(activity.data, 'payoutMethod.type') === PayoutMethodTypes.PAYPAL) {
+        activity.data.expense.payoutMethodLabel = `PayPal (${get(activity.data, 'payoutMethod.data.email')})`;
       }
       notifyUserId(activity.data.expense.UserId, activity);
       // We only notify the admins of the host if the collective is active (ie. has been approved by the host)

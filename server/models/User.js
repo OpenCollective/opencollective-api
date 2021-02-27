@@ -3,7 +3,7 @@ import config from 'config';
 import Promise from 'bluebird';
 import slugify from 'limax';
 import debugLib from 'debug';
-import { defaults, intersection } from 'lodash';
+import { defaults, intersection, pick } from 'lodash';
 import { Op } from 'sequelize';
 import { isEmailBurner } from 'burner-email-providers';
 
@@ -71,25 +71,6 @@ export default (Sequelize, DataTypes) => {
 
       emailConfirmationToken: {
         type: DataTypes.STRING,
-      },
-
-      paypalEmail: {
-        type: DataTypes.STRING,
-        unique: true, // need that? http://stackoverflow.com/questions/16356856/sequelize-js-custom-validator-check-for-unique-username-password,
-        set(val) {
-          if (val && val.toLowerCase) {
-            this.setDataValue('paypalEmail', val.toLowerCase());
-          }
-        },
-        validate: {
-          len: {
-            args: [6, 128],
-            msg: 'Email must be between 6 and 128 characters in length',
-          },
-          isEmail: {
-            msg: 'Email must be valid',
-          },
-        },
       },
 
       _salt: {
@@ -212,7 +193,6 @@ export default (Sequelize, DataTypes) => {
             emailWaitingForValidation: this.emailWaitingForValidation,
             createdAt: this.createdAt,
             updatedAt: this.updatedAt,
-            paypalEmail: this.paypalEmail,
           };
         },
 
@@ -234,7 +214,6 @@ export default (Sequelize, DataTypes) => {
             firstName: this.firstName,
             lastName: this.lastName,
             email: this.email,
-            paypalEmail: this.paypalEmail,
           };
         },
 
@@ -304,8 +283,9 @@ export default (Sequelize, DataTypes) => {
       channel,
     };
     return models.Notification.findOne({ where: notification }).then(result => {
-      if (result) return result.update({ active: false });
-      else {
+      if (result) {
+        return result.update({ active: false });
+      } else {
         notification.active = false;
         return models.Notification.create(notification);
       }
@@ -404,10 +384,14 @@ export default (Sequelize, DataTypes) => {
   };
 
   User.prototype.getPersonalDetails = function(remoteUser) {
-    if (!remoteUser) return Promise.resolve(this.public);
+    if (!remoteUser) {
+      return Promise.resolve(this.public);
+    }
     return this.populateRoles()
       .then(() => {
-        if (this.id === remoteUser.id) return true;
+        if (this.id === remoteUser.id) {
+          return true;
+        }
         // all the CollectiveIds that the remoteUser is admin of.
         const adminOfCollectives = Object.keys(remoteUser.rolesByCollectiveId).filter(CollectiveId =>
           remoteUser.isAdmin(CollectiveId),
@@ -446,28 +430,24 @@ export default (Sequelize, DataTypes) => {
       return Promise.reject(new Error('Please provide a valid email address'));
     }
     debug('findOrCreateByEmail', email, 'other attributes: ', otherAttributes);
-    return User.findByEmailOrPaypalEmail(email).then(
+    return User.findByEmail(email).then(
       user => user || models.User.createUserWithCollective(Object.assign({}, { email }, otherAttributes)),
     );
   };
 
-  User.findByEmailOrPaypalEmail = email => {
-    return User.findOne({
-      where: {
-        [Op.or]: {
-          email,
-          paypalEmail: email,
-        },
-      },
-    });
+  User.findByEmail = email => {
+    return User.findOne({ where: { email } });
   };
 
   User.createUserWithCollective = async (userData, transaction) => {
-    if (!userData) return Promise.reject(new Error('Cannot create a user: no user data provided'));
+    if (!userData) {
+      return Promise.reject(new Error('Cannot create a user: no user data provided'));
+    }
 
     const sequelizeParams = transaction ? { transaction } : undefined;
     debug('createUserWithCollective', userData);
-    const user = await User.create(userData, sequelizeParams);
+    const cleanUserData = pick(userData, ['email', 'firstName', 'lastName', 'newsletterOptIn']);
+    const user = await User.create(cleanUserData, sequelizeParams);
     let name = userData.firstName;
     if (name && userData.lastName) {
       name += ` ${userData.lastName}`;
@@ -495,6 +475,7 @@ export default (Sequelize, DataTypes) => {
       currency: userData.currency,
       hostFeePercent: userData.hostFeePercent,
       isActive: true,
+      isHostAccount: Boolean(userData.isHostAccount),
       CreatedByUserId: userData.CreatedByUserId || user.id,
       data: { UserId: user.id },
       settings: userData.settings,
