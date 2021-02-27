@@ -22,7 +22,7 @@ export async function findAccountsThatNeedToBeSentTaxForm(year) {
   } else {
     return models.Collective.findAll({
       where: { id: { [Op.in]: results.map(result => result.collectiveId) } },
-      include: [{ association: 'legalDocuments', required: false }],
+      include: [{ association: 'legalDocuments', required: false, where: { year } }],
     }).then(collectives => {
       return collectives.filter(
         collective =>
@@ -88,12 +88,13 @@ export async function sendHelloWorksUsTaxForm(client, account, year, callbackUrl
     return;
   }
 
+  const isTaxFormForUser = account.id === mainUser.collective.id;
   const participants = {
     // eslint-disable-next-line camelcase
     participant_swVuvW: {
       type: 'email',
       value: mainUser.email,
-      fullName: `${mainUser.collective.name}`,
+      fullName: isTaxFormForUser ? account.name : `${account.slug} (${mainUser.collective.name})`,
     },
   };
 

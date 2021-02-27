@@ -52,7 +52,7 @@ const getHosts = async args => {
       SELECT max(c.id) as "HostCollectiveId", count(m.id) as count
       FROM "Collectives" c
       LEFT JOIN "Members" m ON m."MemberCollectiveId" = c.id AND m.role = 'HOST' AND m."deletedAt" IS NULL
-      WHERE c."deletedAt" IS NULL ${hostConditions}
+      WHERE c."deletedAt" IS NULL AND c."isHostAccount" = TRUE ${hostConditions}
       GROUP BY c.id
       HAVING count(m.id) >= $minNbCollectivesHosted
     ) SELECT c.*, (SELECT COUNT(*) FROM all_hosts) AS __hosts_count__, SUM(all_hosts.count) as __members_count__
@@ -204,59 +204,6 @@ const getTopDonorsForCollective = (CollectiveId, options = {}) => {
   return sequelize.query(
     `
     SELECT MAX(c.slug) as slug, MAX(c.image) as image, MAX(c.name) as name, SUM("netAmountInCollectiveCurrency") as "totalDonations" FROM "Transactions" t LEFT JOIN "Collectives" c ON t."FromCollectiveId" = c.id WHERE t."CollectiveId"=:CollectiveId and t.type='CREDIT' GROUP BY c.id ORDER BY "totalDonations" DESC LIMIT :limit
-  `,
-    {
-      replacements: { CollectiveId, limit: options.limit },
-      type: sequelize.QueryTypes.SELECT,
-    },
-  );
-};
-
-/**
- * Returns an array with the top (default 3) expense submitters by amount for
- * a given CollectiveId.
- * @param {*} CollectiveId
- * @param {*} options
- */
-const getTopExpenseSubmitters = (CollectiveId, options = {}) => {
-  options.limit = options.limit || 3;
-  const since = options.since ? `AND t."createdAt" >= '${options.since.toISOString()}'` : '';
-  const until = options.until ? `AND t."createdAt" < '${options.until.toISOString()}'` : '';
-  return sequelize.query(
-    `
-    SELECT MAX(c.slug) as slug, MAX(c."twitterHandle") as "twitterHandle", MAX(c.image) as image, MAX(c.name) as name, SUM("netAmountInCollectiveCurrency") as "totalExpenses"
-    FROM "Transactions" t LEFT JOIN "Collectives" c ON t."FromCollectiveId" = c.id
-    WHERE t."CollectiveId"=:CollectiveId
-      AND t.type='DEBIT'
-      AND t."deletedAt" IS NULL
-      AND t."ExpenseId" IS NOT NULL
-      ${since} ${until}
-    GROUP BY c.id ORDER BY "totalExpenses" ASC LIMIT :limit
-  `,
-    {
-      replacements: { CollectiveId, limit: options.limit },
-      type: sequelize.QueryTypes.SELECT,
-    },
-  );
-};
-
-/**
- * Get the top expense categories for a given collective with total amount and total number of expenses
- * @param {*} CollectiveId
- * @param {*} options
- */
-const getTopExpenseCategories = (CollectiveId, options = {}) => {
-  options.limit = options.limit || 3;
-  const since = options.since ? `AND e."createdAt" >= '${options.since.toISOString()}'` : '';
-  const until = options.until ? `AND e."createdAt" < '${options.until.toISOString()}'` : '';
-
-  return sequelize.query(
-    `
-    SELECT tags[1] as category, COUNT(*) as "count", SUM("amount") as "totalExpenses"
-    FROM "Expenses" e
-    WHERE "CollectiveId"=:CollectiveId AND e.status!='REJECTED' ${since} ${until}
-    GROUP BY category
-    ORDER BY "totalExpenses" DESC LIMIT :limit
   `,
     {
       replacements: { CollectiveId, limit: options.limit },
@@ -636,7 +583,7 @@ const getMembersWithTotalDonations = (where, options = {}) => {
     return condition;
   };
 
-  const roleCond = where.role ? `AND member.role = '${where.role}'` : '';
+  const roleCond = where.role ? `AND member.role = :role` : '';
 
   let types,
     filterByMemberCollectiveType = '';
@@ -731,6 +678,7 @@ const getMembersWithTotalDonations = (where, options = {}) => {
         limit: options.limit || 100000, // we should reduce this to 100 by default but right now Webpack depends on it
         offset: options.offset || 0,
         types,
+        role: where.role,
       },
       type: sequelize.QueryTypes.SELECT,
       model: models.Collective,
@@ -742,7 +690,7 @@ const getMembersWithBalance = (where, options = {}) => {
   const { until } = options;
   const untilCondition = table =>
     until ? `AND ${table}."createdAt" < '${until.toISOString().toString().substr(0, 10)}'` : '';
-  const roleCond = where.role ? `AND member.role = '${where.role}'` : '';
+  const roleCond = where.role ? `AND member.role = :role` : '';
 
   let types,
     filterByMemberCollectiveType = '';
@@ -936,21 +884,23 @@ const getTaxFormsRequiredForExpenses = expenseIds => {
     INNER JOIN "RequiredLegalDocuments" d
       ON d."HostCollectiveId" = c."HostCollectiveId"
       AND d."documentType" = 'US_TAX_FORM'
+    INNER JOIN "Collectives" all_expenses_collectives
+      ON all_expenses_collectives.id = all_expenses."CollectiveId"
+      AND all_expenses_collectives."HostCollectiveId" = d."HostCollectiveId"
     LEFT JOIN "LegalDocuments" ld
       ON ld."CollectiveId" = analyzed_expenses."FromCollectiveId"
-      AND ld.year = date_part('year', all_expenses."incurredAt")
+      AND ld.year = date_part('year', analyzed_expenses."incurredAt")
       AND ld."documentType" = 'US_TAX_FORM'
     WHERE analyzed_expenses.id IN (:expenseIds)
     AND analyzed_expenses."FromCollectiveId" != d."HostCollectiveId"
     AND analyzed_expenses.type != 'RECEIPT'
     AND analyzed_expenses.status IN ('PENDING', 'APPROVED')
     AND analyzed_expenses."deletedAt" IS NULL
+    AND (from_collective."HostCollectiveId" IS NULL OR from_collective."HostCollectiveId" != c."HostCollectiveId")
     AND all_expenses.type != 'RECEIPT'
-    AND all_expenses.status NOT IN ('ERROR', 'REJECTED')
+    AND all_expenses.status NOT IN ('ERROR', 'REJECTED', 'DRAFT', 'UNVERIFIED')
     AND all_expenses."deletedAt" IS NULL
-    AND all_expenses."incurredAt"
-      BETWEEN date_trunc('year', analyzed_expenses."incurredAt")
-      AND (date_trunc('year', analyzed_expenses."incurredAt") + interval '1 year')
+    AND date_trunc('year', all_expenses."incurredAt") = date_trunc('year', analyzed_expenses."incurredAt")
     GROUP BY analyzed_expenses.id, analyzed_expenses."FromCollectiveId", d."documentType"
   `,
     {
@@ -979,12 +929,13 @@ const getTaxFormsRequiredForAccounts = async (accountIds = [], date = new Date()
       AND d."documentType" = 'US_TAX_FORM'
     LEFT JOIN "LegalDocuments" ld
       ON ld."CollectiveId" = account.id
-      AND ld.year = date_part('year', all_expenses."incurredAt")
+      AND ld.year = :year
       AND ld."documentType" = 'US_TAX_FORM'
     WHERE all_expenses.type != 'RECEIPT'
     ${accountIds?.length ? 'AND account.id IN (:accountIds)' : ''}
     AND account.id != d."HostCollectiveId"
-    AND all_expenses.status NOT IN ('ERROR', 'REJECTED')
+    AND (account."HostCollectiveId" IS NULL OR account."HostCollectiveId" != d."HostCollectiveId")
+    AND all_expenses.status NOT IN ('ERROR', 'REJECTED', 'DRAFT', 'UNVERIFIED')
     AND all_expenses."deletedAt" IS NULL
     AND EXTRACT('year' FROM all_expenses."incurredAt") = :year
     GROUP BY account.id, d."documentType"
@@ -1045,6 +996,25 @@ const getBalances = async (collectiveIds, until = new Date()) =>
     { type: sequelize.QueryTypes.SELECT, replacements: { ids: collectiveIds, until } },
   );
 
+const getBalancesInHostCurrency = async (collectiveIds, hostCollectiveId, until = new Date()) =>
+  sequelize.query(
+    `
+      SELECT
+        t."CollectiveId",
+        COALESCE(SUM(ROUND(t."netAmountInCollectiveCurrency" * t."hostCurrencyFxRate")), 0) AS "balance"
+      FROM
+        "Transactions" t
+      WHERE
+        t."CollectiveId" IN (:ids)
+        AND t."HostCollectiveId" = :hostCollectiveId
+        AND t."deletedAt" IS NULL
+        AND t."createdAt" < :until
+      GROUP BY
+        t."CollectiveId";
+      `,
+    { type: sequelize.QueryTypes.SELECT, replacements: { ids: collectiveIds, hostCollectiveId, until } },
+  );
+
 const serializeCollectivesResult = JSON.stringify;
 
 const unserializeCollectivesResult = string => {
@@ -1068,31 +1038,30 @@ const getCollectivesWithMinBackers = memoize(getCollectivesWithMinBackersQuery, 
 });
 
 const queries = {
-  getHosts,
   getBalances,
-  getTaxFormsRequiredForExpenses,
-  getTaxFormsRequiredForAccounts,
+  getBalancesInHostCurrency,
+  getCollectivesByTag,
   getCollectivesOrderedByMonthlySpending,
   getCollectivesOrderedByMonthlySpendingQuery,
-  getTotalDonationsByCollectiveType,
-  getTotalAnnualBudgetForHost,
-  getTopDonorsForCollective,
-  getTopExpenseSubmitters,
-  getTopExpenseCategories,
-  getTotalAnnualBudget,
-  getMembersOfCollectiveWithRole,
-  getMembersWithTotalDonations,
-  getMembersWithBalance,
-  getTopSponsors,
-  getTopBackers,
-  getCollectivesByTag,
-  getTotalNumberOfActiveCollectives,
-  getTotalNumberOfDonors,
   getCollectivesWithBalance,
-  getUniqueCollectiveTags,
-  getVirtualCardBatchesForCollective,
   getCollectivesWithMinBackers,
   getCollectivesWithMinBackersQuery,
+  getHosts,
+  getMembersOfCollectiveWithRole,
+  getMembersWithBalance,
+  getMembersWithTotalDonations,
+  getTaxFormsRequiredForAccounts,
+  getTaxFormsRequiredForExpenses,
+  getTopBackers,
+  getTopDonorsForCollective,
+  getTopSponsors,
+  getTotalAnnualBudget,
+  getTotalAnnualBudgetForHost,
+  getTotalDonationsByCollectiveType,
+  getTotalNumberOfActiveCollectives,
+  getTotalNumberOfDonors,
+  getUniqueCollectiveTags,
+  getVirtualCardBatchesForCollective,
 };
 
 export default queries;

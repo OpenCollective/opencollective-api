@@ -84,12 +84,7 @@ const TransactionFields = () => {
     refundTransaction: {
       type: TransactionInterfaceType,
       resolve(transaction) {
-        // If it's a sequelize model transaction, it means it has the method getRefundTransaction
-        // otherwise we just null
-        if (transaction && transaction.getRefundTransaction) {
-          return transaction.getRefundTransaction();
-        }
-        return null;
+        return transaction.getRefundTransaction();
       },
     },
     uuid: {
@@ -199,12 +194,12 @@ const TransactionFields = () => {
         // We don't return the user if the transaction has been created by someone who wanted to remain incognito
         // This is very suboptimal. We should probably record the CreatedByCollectiveId (or better CreatedByProfileId) instead of the User.
         if (transaction && transaction.getCreatedByUser) {
+          const collective = await transaction.getCollective();
           const fromCollective = await transaction.getFromCollective();
-          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.CollectiveId))) {
+          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective))) {
             return {};
           }
-          const collective = await transaction.getCollective();
-          if (collective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.FromCollectiveId))) {
+          if (collective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdminOfCollective(fromCollective))) {
             return {};
           }
           return transaction.getCreatedByUser();
@@ -297,52 +292,12 @@ export const TransactionExpenseType = new GraphQLObjectType({
           return transaction.description || expense;
         },
       },
-      privateMessage: {
-        type: GraphQLString,
-        deprecationReason: 'Please use transaction.expense.privateMessage',
-        resolve(transaction, args, req) {
-          // If it's a expense transaction it'll have an ExpenseId
-          // otherwise we return null
-          return transaction.ExpenseId
-            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.privateMessage)
-            : null;
-        },
-      },
-      category: {
-        type: GraphQLString,
-        deprecationReason: 'Please use transaction.expense.category',
-        resolve(transaction, args, req) {
-          // If it's a expense transaction it'll have an ExpenseId
-          // otherwise we return null
-          return transaction.ExpenseId
-            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.tags?.[0])
-            : null;
-        },
-      },
       expense: {
         type: ExpenseType,
         resolve(transaction, args, req) {
           // If it's a expense transaction it'll have an ExpenseId
           // otherwise we return null
           return transaction.ExpenseId ? req.loaders.Expense.byId.load(transaction.ExpenseId) : null;
-        },
-      },
-      attachment: {
-        type: GraphQLString,
-        deprecationReason: 'Please use transaction.expense.attachment',
-        async resolve(transaction, args, req) {
-          // If it's a expense transaction it'll have an ExpenseId otherwise we return null
-          if (!transaction.ExpenseId) {
-            return null;
-          } else {
-            const expense = req.loaders.Expense.byId.load(transaction.ExpenseId);
-            if (!expense || !(await canSeeExpenseAttachments(req, expense))) {
-              return null;
-            } else {
-              const items = await getExpenseItems(transaction.ExpenseId, req);
-              return items[0] && items[0].url;
-            }
-          }
         },
       },
     };

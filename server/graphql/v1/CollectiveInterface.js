@@ -15,12 +15,15 @@ import sequelize from 'sequelize';
 import SqlString from 'sequelize/lib/sql-string';
 
 import { types } from '../../constants/collectives';
+import { FeaturesList } from '../../constants/feature';
+import FEATURE_STATUS from '../../constants/feature-status';
 import roles from '../../constants/roles';
 import { getContributorsForCollective } from '../../lib/contributors';
 import queries from '../../lib/queries';
 import models, { Op } from '../../models';
 import { hostResolver } from '../common/collective';
 import { getContextPermission, PERMISSION_TYPE } from '../common/context-permissions';
+import { getFeatureStatusResolver } from '../common/features';
 
 import { ApplicationType } from './Application';
 import { TransactionInterfaceType } from './TransactionInterface';
@@ -242,6 +245,13 @@ export const PlanType = new GraphQLObjectType({
   name: 'PlanType',
   description: 'The name of the current plan and its characteristics.',
   fields: {
+    // We always have to return an id for apollo's caching
+    id: {
+      type: GraphQLInt,
+      resolve(collective) {
+        return collective.id;
+      },
+    },
     name: {
       type: GraphQLString,
     },
@@ -273,6 +283,12 @@ export const PlanType = new GraphQLObjectType({
       type: GraphQLInt,
     },
     transferwisePayoutsLimit: {
+      type: GraphQLInt,
+    },
+    hostFees: {
+      type: GraphQLBoolean,
+    },
+    hostFeeSharePercent: {
       type: GraphQLInt,
     },
   },
@@ -503,21 +519,6 @@ export const CollectiveStatsType = new GraphQLObjectType({
           }
         },
       },
-      topExpenses: {
-        type: GraphQLJSON,
-        resolve(collective) {
-          return Promise.all([
-            queries.getTopExpenseCategories(collective.id),
-            queries.getTopExpenseSubmitters(collective.id),
-          ]).then(results => {
-            const res = {
-              byCategory: results[0],
-              byCollective: results[1],
-            };
-            return res;
-          });
-        },
-      },
       topFundingSources: {
         type: GraphQLJSON,
         resolve(collective) {
@@ -624,11 +625,16 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
         description: 'Defines if a collective is pledged',
         type: GraphQLBoolean,
       },
-      data: { type: GraphQLJSON },
+      data: {
+        type: GraphQLJSON,
+        deprecationReason: '2020-10-08: This field is not provided anymore and will return an empty object',
+      },
+      githubContributors: { type: new GraphQLNonNull(GraphQLJSON) },
       slug: { type: GraphQLString },
       path: { type: GraphQLString },
       isHost: { type: GraphQLBoolean },
       isIncognito: { type: GraphQLBoolean },
+      isGuest: { type: GraphQLBoolean },
       canApply: { type: GraphQLBoolean },
       canContact: { type: GraphQLBoolean },
       isArchived: { type: GraphQLBoolean },
@@ -855,10 +861,32 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
         },
       },
       connectedAccounts: { type: new GraphQLList(ConnectedAccountType) },
+      features: {
+        type: new GraphQLNonNull(CollectiveFeatures),
+        description: 'Describes the features enabled and available for this collective',
+      },
       plan: { type: PlanType },
+      contributionPolicy: { type: GraphQLString },
+      categories: {
+        type: new GraphQLNonNull(new GraphQLList(GraphQLString)),
+        description: 'Categories set by Open Collective to help moderation.',
+      },
     };
   },
 });
+
+const FeaturesFields = () => {
+  return FeaturesList.reduce(
+    (obj, feature) =>
+      Object.assign(obj, {
+        [feature]: {
+          type: CollectiveFeatureStatus,
+          resolve: getFeatureStatusResolver(feature),
+        },
+      }),
+    {},
+  );
+};
 
 const CollectiveFields = () => {
   return {
@@ -950,7 +978,7 @@ const CollectiveFields = () => {
           return collective.location;
         } else if (!req.remoteUser) {
           return null;
-        } else if (req.remoteUser.isAdmin(collective.id)) {
+        } else if (req.remoteUser.isAdminOfCollective(collective)) {
           return collective.location;
         } else {
           return req.loaders.Collective.privateInfos.load(collective).then(c => c.location);
@@ -1062,8 +1090,15 @@ const CollectiveFields = () => {
     },
     data: {
       type: GraphQLJSON,
+      deprecationReason: '2020-10-08: This field is not provided anymore and will return an empty object',
+      resolve() {
+        return {};
+      },
+    },
+    githubContributors: {
+      type: new GraphQLNonNull(GraphQLJSON),
       resolve(collective) {
-        return collective.data || {};
+        return collective.data?.githubContributors || {};
       },
     },
     slug: {
@@ -1104,6 +1139,13 @@ const CollectiveFields = () => {
       type: GraphQLBoolean,
       resolve(collective) {
         return collective.isIncognito;
+      },
+    },
+    isGuest: {
+      description: 'Returns whether this collective is a guest profile',
+      type: GraphQLBoolean,
+      resolve(collective) {
+        return Boolean(collective.data?.isGuest);
       },
     },
     isArchived: {
@@ -1375,7 +1417,7 @@ const CollectiveFields = () => {
       resolve(collective, args, req) {
         // There's no reason for other people than admins to know about this.
         // Also the webhooks URL are supposed to be private (can contain tokens).
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
 
@@ -1691,7 +1733,7 @@ const CollectiveFields = () => {
         },
       },
       async resolve(collective, args, req) {
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
         let paymentMethods = await req.loaders.PaymentMethod.findByCollectiveId.load(collective.id);
@@ -1746,7 +1788,7 @@ const CollectiveFields = () => {
       type: new GraphQLList(PayoutMethodType),
       description: 'The list of payout methods that this collective can use to get paid',
       async resolve(collective, _, req) {
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return null;
         } else {
           return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
@@ -1759,7 +1801,7 @@ const CollectiveFields = () => {
         'List all the gift cards batches emitted by this collective. May include `null` for unbatched gift cards.',
       resolve: async (collective, _args, req) => {
         // Must be admin of the collective
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
 
@@ -1780,7 +1822,7 @@ const CollectiveFields = () => {
       },
       resolve: async (collective, args, req) => {
         // Must be admin of the collective
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
 
@@ -1829,6 +1871,11 @@ const CollectiveFields = () => {
         return req.loaders.Collective.connectedAccounts.load(collective.id);
       },
     },
+    features: {
+      type: new GraphQLNonNull(CollectiveFeatures),
+      description: 'Describes the features enabled and available for this collective',
+      resolve: collective => collective,
+    },
     plan: {
       type: PlanType,
       resolve(collective) {
@@ -1841,8 +1888,48 @@ const CollectiveFields = () => {
         return collective;
       },
     },
+    contributionPolicy: {
+      type: GraphQLString,
+      resolve(collective) {
+        return collective.contributionPolicy;
+      },
+    },
+    categories: {
+      type: new GraphQLNonNull(new GraphQLList(GraphQLString)),
+      resolve(collective) {
+        return get(collective.data, 'categories', []);
+      },
+    },
   };
 };
+
+export const CollectiveFeatureStatus = new GraphQLEnumType({
+  name: 'CollectiveFeatureStatus',
+  values: {
+    [FEATURE_STATUS.ACTIVE]: {
+      description: 'The feature is enabled and is actively used',
+    },
+    [FEATURE_STATUS.AVAILABLE]: {
+      description: 'The feature is enabled, but there is no data for it',
+    },
+    [FEATURE_STATUS.DISABLED]: {
+      description: 'The feature is disabled, but can be enabled by an admin',
+    },
+    [FEATURE_STATUS.UNSUPPORTED]: {
+      description: 'The feature is disabled and cannot be activated for this account',
+    },
+  },
+});
+
+export const CollectiveFeatures = new GraphQLObjectType({
+  name: 'CollectiveFeatures',
+  description: 'Describes the features enabled and available for this collective',
+  fields: () => {
+    return {
+      ...FeaturesFields(),
+    };
+  },
+});
 
 export const CollectiveType = new GraphQLObjectType({
   name: 'Collective',

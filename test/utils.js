@@ -77,6 +77,7 @@ export const inspectSpy = (spy, argsCount) => {
  * E.g. await waitForCondition(() => emailSendMessageSpy.callCount === 1)
  * @param {*} cond
  * @param {*} options: { timeout, delay }
+ * @returns {Promise}
  */
 export const waitForCondition = (cond, options = { timeout: 10000, delay: 0 }) =>
   new Promise(resolve => {
@@ -141,7 +142,7 @@ export const graphqlQuery = async (query, variables, remoteUser, schema = schema
  * @param {object} variables - Variables to use in the queries and mutations. Example: { id: 1 }
  * @param {object} remoteUser - The user to add to the context. It is not required.
  */
-export async function graphqlQueryV2(query, variables, remoteUser) {
+export async function graphqlQueryV2(query, variables, remoteUser = null) {
   return graphqlQuery(query, variables, remoteUser, schemaV2);
 }
 

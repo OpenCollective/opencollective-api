@@ -1,6 +1,9 @@
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
+import GraphQLJSON from 'graphql-type-json';
+import { pick } from 'lodash';
 
+import expenseStatus from '../../../constants/expense_status';
 import models, { Op } from '../../../models';
 import { allowContextPermission, PERMISSION_TYPE } from '../../common/context-permissions';
 import * as ExpensePermissionsLib from '../../common/expenses';
@@ -20,6 +23,8 @@ import ExpenseItem from './ExpenseItem';
 import ExpensePermissions from './ExpensePermissions';
 import { Location } from './Location';
 import PayoutMethod from './PayoutMethod';
+
+const EXPENSE_DRAFT_PUBLIC_FIELDS = ['items', 'payee', 'recipientNote', 'invitedByCollectiveId', 'attachedFiles'];
 
 const Expense = new GraphQLObjectType({
   name: 'Expense',
@@ -217,6 +222,24 @@ const Expense = new GraphQLObjectType({
             return null;
           } else {
             return req.loaders.Expense.requiredLegalDocuments.load(expense.id);
+          }
+        },
+      },
+      draft: {
+        type: GraphQLJSON,
+        description: 'Drafted field values that were still not persisted',
+        async resolve(expense) {
+          if (expense.status == expenseStatus.DRAFT) {
+            return pick(expense.data, EXPENSE_DRAFT_PUBLIC_FIELDS);
+          }
+        },
+      },
+      requestedByAccount: {
+        type: Account,
+        description: 'The account that requested this expense to be submitted',
+        async resolve(expense, _, req) {
+          if (expense.data?.invitedByCollectiveId) {
+            return await req.loaders.Collective.byId.load(expense.data.invitedByCollectiveId);
           }
         },
       },

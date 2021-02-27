@@ -1,17 +1,19 @@
 import { GraphQLInt, GraphQLObjectType, GraphQLString } from 'graphql';
 
 import { Account, AccountFields } from '../interface/Account';
+import { AccountWithContributions, AccountWithContributionsFields } from '../interface/AccountWithContributions';
 
 import { Host } from './Host';
 
 export const Organization = new GraphQLObjectType({
   name: 'Organization',
   description: 'This represents an Organization account',
-  interfaces: () => [Account],
+  interfaces: () => [Account, AccountWithContributions],
   isTypeOf: collective => collective.type === 'ORGANIZATION',
   fields: () => {
     return {
       ...AccountFields,
+      ...AccountWithContributionsFields,
       balance: {
         description: 'Amount of money in cents in the currency of the collective currently available to spend',
         deprecationReason: '2020/04/09 - Should not have been introduced. Use stats.balance.value',
@@ -47,7 +49,7 @@ export const Organization = new GraphQLObjectType({
       },
       host: {
         type: Host,
-        description: 'If the organization if a host account, this will return the matchig Host object',
+        description: 'If the organization if a host account, this will return the matching Host object',
         resolve(collective) {
           if (collective.isHostAccount) {
             return collective;
