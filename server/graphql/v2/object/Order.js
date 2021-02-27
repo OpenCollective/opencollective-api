@@ -1,11 +1,12 @@
 import { GraphQLObjectType, GraphQLString } from 'graphql';
-// import { GraphQLInt } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
 
+import models from '../../../models';
 import { OrderFrequency, OrderStatus } from '../enum';
 import { idEncode } from '../identifiers';
 import { Account } from '../interface/Account';
 import { Amount } from '../object/Amount';
+import { PaymentMethod } from '../object/PaymentMethod';
 import { Tier } from '../object/Tier';
 
 export const Order = new GraphQLObjectType({
@@ -34,7 +35,7 @@ export const Order = new GraphQLObjectType({
       amount: {
         type: Amount,
         resolve(order) {
-          return { value: order.totalAmount };
+          return { value: order.totalAmount, currency: order.currency };
         },
       },
       status: {
@@ -94,13 +95,21 @@ export const Order = new GraphQLObjectType({
       },
       totalDonations: {
         type: Amount,
-        description: 'UNSUPPORTED: Total amount donated between collectives',
+        description:
+          'WARNING: Total amount donated between collectives, though there will be edge cases especially when looking on the Order level, as the order id is not used in calculating this.',
         async resolve(order, args, req) {
           const value = await req.loaders.Transaction.totalAmountDonatedFromTo.load({
             FromCollectiveId: order.FromCollectiveId,
             CollectiveId: order.CollectiveId,
           });
-          return { value };
+          return { value, currency: order.currency };
+        },
+      },
+      // needed for recurring contributions work, but we should update to encoded id and write v2 payment method object soon
+      paymentMethod: {
+        type: PaymentMethod,
+        resolve(order) {
+          return models.PaymentMethod.findByPk(order.PaymentMethodId);
         },
       },
     };

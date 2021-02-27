@@ -287,6 +287,10 @@ async function notifyByEmail(activity) {
       };
       if (get(activity.data, 'payoutMethod.type') === PayoutMethodTypes.PAYPAL) {
         activity.data.expense.payoutMethodLabel = `PayPal (${get(activity.data, 'payoutMethod.data.email')})`;
+      } else if (get(activity.data, 'payoutMethod.type') === PayoutMethodTypes.BANK_ACCOUNT) {
+        activity.data.expense.payoutMethodLabel = 'Wire Transfer';
+      } else {
+        activity.data.expense.payoutMethodLabel = 'Other';
       }
       notifyUserId(activity.data.expense.UserId, activity);
       // We only notify the admins of the host if the collective is active (ie. has been approved by the host)
@@ -331,11 +335,29 @@ async function notifyByEmail(activity) {
       notifyUserId(activity.data.expense.UserId, activity);
       break;
 
+    case activityType.COLLECTIVE_EXPENSE_SCHEDULED_FOR_PAYMENT:
+      break;
+
     case activityType.COLLECTIVE_APPROVED:
+      // Funds MVP
+      if (get(activity, 'data.collective.settings.fund') === true) {
+        if (get(activity, 'data.host.slug') === 'foundation') {
+          notifyAdminsOfCollective(activity.data.collective.id, activity, {
+            template: 'fund.approved.foundation',
+          });
+        }
+        break;
+      }
+
       notifyAdminsOfCollective(activity.data.collective.id, activity);
       break;
 
     case activityType.COLLECTIVE_REJECTED:
+      // Funds MVP
+      if (get(activity, 'data.collective.settings.fund') === true) {
+        break;
+      }
+
       notifyAdminsOfCollective(
         activity.data.collective.id,
         activity,
@@ -351,19 +373,38 @@ async function notifyByEmail(activity) {
         template: 'collective.apply.for.host',
         replyTo: activity.data.user.email,
       });
+
+      // Funds MVP, we assume the info is already sent in COLLECTIVE_CREATED
+      if (get(activity, 'data.collective.settings.fund') === true) {
+        break;
+      }
+
       notifyAdminsOfCollective(activity.data.collective.id, activity, {
         from: `hello@${activity.data.host.slug}.opencollective.com`,
       });
       break;
 
     case activityType.COLLECTIVE_CREATED:
+      // Meetups
       if ((get(activity, 'data.collective.tags') || []).includes('meetup')) {
         notifyAdminsOfCollective(activity.data.collective.id, activity, {
           template: 'collective.created.meetup',
         });
-      } else {
-        notifyAdminsOfCollective(activity.data.collective.id, activity);
+        break;
       }
+
+      // Funds MVP
+      if (get(activity, 'data.collective.settings.fund') === true) {
+        if (get(activity, 'data.host.slug') === 'foundation') {
+          notifyAdminsOfCollective(activity.data.collective.id, activity, {
+            template: 'fund.created.foundation',
+          });
+        }
+        break;
+      }
+
+      // Normal case
+      notifyAdminsOfCollective(activity.data.collective.id, activity);
       break;
 
     case activityType.COLLECTIVE_CREATED_GITHUB:

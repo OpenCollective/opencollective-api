@@ -1,8 +1,10 @@
-import { GraphQLBoolean, GraphQLInt, GraphQLObjectType } from 'graphql';
+import { GraphQLBoolean, GraphQLInt, GraphQLNonNull, GraphQLObjectType } from 'graphql';
 import { GraphQLDateTime } from 'graphql-iso-date';
 
 import { types as collectiveTypes } from '../../../constants/collectives';
+import models from '../../../models';
 import { hostResolver } from '../../common/collective';
+import { TierCollection } from '../collection/TierCollection';
 import { AccountType } from '../enum/AccountType';
 import { Account, AccountFields } from '../interface/Account';
 
@@ -43,6 +45,13 @@ export const Collective = new GraphQLObjectType({
           return collective.isApproved();
         },
       },
+      isActive: {
+        description: 'Returns whether this collective is active',
+        type: GraphQLBoolean,
+        resolve(collective) {
+          return Boolean(collective.isActive);
+        },
+      },
       totalFinancialContributors: {
         description: 'Number of unique financial contributors of the collective.',
         type: GraphQLInt,
@@ -61,6 +70,14 @@ export const Collective = new GraphQLObjectType({
           } else {
             return stats[args.accountType] || 0;
           }
+        },
+      },
+      tiers: {
+        type: new GraphQLNonNull(TierCollection),
+        async resolve(collective) {
+          const query = { where: { CollectiveId: collective.id }, order: [['amount', 'ASC']] };
+          const result = await models.Tier.findAndCountAll(query);
+          return { nodes: result.rows, totalCount: result.count };
         },
       },
     };

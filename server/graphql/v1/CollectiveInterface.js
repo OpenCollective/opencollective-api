@@ -4,6 +4,7 @@ import {
   GraphQLInt,
   GraphQLInterfaceType,
   GraphQLList,
+  GraphQLNonNull,
   GraphQLObjectType,
   GraphQLString,
 } from 'graphql';
@@ -14,12 +15,15 @@ import sequelize from 'sequelize';
 import SqlString from 'sequelize/lib/sql-string';
 
 import { types } from '../../constants/collectives';
+import FEATURE from '../../constants/feature';
+import FEATURE_STATUS from '../../constants/feature-status';
 import roles from '../../constants/roles';
 import { getContributorsForCollective } from '../../lib/contributors';
 import queries from '../../lib/queries';
 import models, { Op } from '../../models';
 import { hostResolver } from '../common/collective';
 import { getContextPermission, PERMISSION_TYPE } from '../common/context-permissions';
+import { getFeatureStatusResolver } from '../common/features';
 
 import { ApplicationType } from './Application';
 import { TransactionInterfaceType } from './TransactionInterface';
@@ -484,11 +488,17 @@ export const CollectiveStatsType = new GraphQLObjectType({
       yearlyBudget: {
         type: GraphQLInt,
         resolve(collective) {
-          // If the current collective is a host, we aggregate the yearly budget across all the hosted collectives
-          if (collective.id === collective.HostCollectiveId) {
-            return queries.getTotalAnnualBudgetForHost(collective.id);
-          }
           return collective.getYearlyIncome();
+        },
+      },
+      yearlyBudgetManaged: {
+        type: GraphQLInt,
+        resolve(collective) {
+          if (collective.isHostAccount) {
+            return queries.getTotalAnnualBudgetForHost(collective.id);
+          } else {
+            return 0;
+          }
         },
       },
       topExpenses: {
@@ -832,6 +842,10 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
         },
       },
       connectedAccounts: { type: new GraphQLList(ConnectedAccountType) },
+      features: {
+        type: new GraphQLNonNull(CollectiveFeatures),
+        description: 'Describes the features enabled and available for this collective',
+      },
       plan: { type: PlanType },
     };
   },
@@ -1111,7 +1125,8 @@ const CollectiveFields = () => {
         } else if (collective.type === types.EVENT) {
           const ParentCollectiveId = collective.ParentCollectiveId;
           const parentCollective = ParentCollectiveId && (await req.loaders.Collective.byId.load(ParentCollectiveId));
-          return parentCollective && parentCollective.isApproved();
+          // In the future, we should make it possible to directly read the approvedAt of the event
+          return parentCollective && (parentCollective.isHostAccount || parentCollective.isApproved());
         } else {
           return collective.isApproved();
         }
@@ -1787,6 +1802,11 @@ const CollectiveFields = () => {
         return req.loaders.Collective.connectedAccounts.load(collective.id);
       },
     },
+    features: {
+      type: new GraphQLNonNull(CollectiveFeatures),
+      description: 'Describes the features enabled and available for this collective',
+      resolve: collective => collective,
+    },
     plan: {
       type: PlanType,
       resolve(collective) {
@@ -1801,6 +1821,55 @@ const CollectiveFields = () => {
     },
   };
 };
+
+const CollectiveFeatureStatus = new GraphQLEnumType({
+  name: 'CollectiveFeatureStatus',
+  values: {
+    [FEATURE_STATUS.ACTIVE]: {
+      description: 'The feature is enabled and is actively used',
+    },
+    [FEATURE_STATUS.AVAILABLE]: {
+      description: 'The feature is enabled, but there is no data for it',
+    },
+    [FEATURE_STATUS.DISABLED]: {
+      description: 'The feature is disabled, but can be enabled by an admin',
+    },
+    [FEATURE_STATUS.UNSUPPORTED]: {
+      description: 'The feature is disabled and cannot be activated for this account',
+    },
+  },
+});
+
+export const CollectiveFeatures = new GraphQLObjectType({
+  name: 'CollectiveFeatures',
+  description: 'Describes the features enabled and available for this collective',
+  fields: {
+    [FEATURE.CONVERSATIONS]: {
+      type: CollectiveFeatureStatus,
+      resolve: getFeatureStatusResolver(FEATURE.CONVERSATIONS),
+    },
+    [FEATURE.COLLECTIVE_GOALS]: {
+      type: CollectiveFeatureStatus,
+      resolve: getFeatureStatusResolver(FEATURE.COLLECTIVE_GOALS),
+    },
+    [FEATURE.RECEIVE_EXPENSES]: {
+      type: CollectiveFeatureStatus,
+      resolve: getFeatureStatusResolver(FEATURE.RECEIVE_EXPENSES),
+    },
+    [FEATURE.UPDATES]: {
+      type: CollectiveFeatureStatus,
+      resolve: getFeatureStatusResolver(FEATURE.UPDATES),
+    },
+    [FEATURE.TRANSFERWISE]: {
+      type: CollectiveFeatureStatus,
+      resolve: getFeatureStatusResolver(FEATURE.TRANSFERWISE),
+    },
+    [FEATURE.PAYPAL_PAYOUTS]: {
+      type: CollectiveFeatureStatus,
+      resolve: getFeatureStatusResolver(FEATURE.PAYPAL_PAYOUTS),
+    },
+  },
+});
 
 export const CollectiveType = new GraphQLObjectType({
   name: 'Collective',
