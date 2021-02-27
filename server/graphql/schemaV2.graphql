@@ -300,6 +300,14 @@ enum AccountType {
   PROJECT
 }
 
+input AccountUpdateInput {
+  """
+  The public id identifying the account (ie: dgm9bnk8-0437xqry-ejpvzeol-jdayw5re)
+  """
+  id: String!
+  currency: Currency
+}
+
 """
 An account that can receive financial contributions
 """
@@ -994,6 +1002,7 @@ Describes the features enabled and available for this collective
 type CollectiveFeatures {
   RECEIVE_FINANCIAL_CONTRIBUTIONS: CollectiveFeatureStatus
   RECURRING_CONTRIBUTIONS: CollectiveFeatureStatus
+  TRANSACTIONS: CollectiveFeatureStatus
   EVENTS: CollectiveFeatureStatus
   PROJECTS: CollectiveFeatureStatus
   USE_EXPENSES: CollectiveFeatureStatus
@@ -1008,7 +1017,6 @@ type CollectiveFeatures {
   CONTACT_COLLECTIVE: CollectiveFeatureStatus
   CONTACT_FORM: CollectiveFeatureStatus
   CREATE_COLLECTIVE: CollectiveFeatureStatus
-  TRANSACTIONS: CollectiveFeatureStatus
   CROSS_CURRENCY_MANUAL_TRANSACTIONS: CollectiveFeatureStatus
   TRANSFERWISE: CollectiveFeatureStatus
   PAYPAL_PAYOUTS: CollectiveFeatureStatus
@@ -1046,7 +1054,7 @@ type Comment {
   id: String
   createdAt: DateTime
   html: String
-  markdown: String
+  markdown: String @deprecated(reason: "2020-01-25: Use html")
   fromAccount: Account
   account: Account
 
@@ -1080,8 +1088,8 @@ input CommentCreateInput {
   If your comment is linked to an expense, set it here
   """
   expense: ExpenseReferenceInput
-  ExpenseId: Int
   ConversationId: String
+  update: UpdateReferenceInput
 }
 
 input CommentReferenceInput {
@@ -3312,12 +3320,6 @@ input ExpenseCreateInput {
   payoutMethod: PayoutMethodInput!
 
   """
-  @deprecated 2020-04-08: Please use the items field - The list of items for
-  this expense. Total amount will be computed from them.
-  """
-  attachments: [ExpenseItemCreateInput]
-
-  """
   The list of items for this expense. Total amount will be computed from them.
   """
   items: [ExpenseItemCreateInput]
@@ -4320,6 +4322,7 @@ type HostApplication {
   createdAt: DateTime!
   status: HostApplicationStatus
   message: String
+  customData: JSON
 }
 
 """
@@ -4404,6 +4407,11 @@ type HostMetrics {
   hostFeeShare: Amount
 
   """
+  Amount in host fee shared  requiring settlement
+  """
+  pendingHostFeeShare: Amount
+
+  """
   Total amount managed on behalf of hosted collectives
   """
   totalMoneyManaged: Amount
@@ -4418,6 +4426,11 @@ type HostMetrics {
 The name of the current plan and its characteristics.
 """
 type HostPlan {
+  """
+  The public id identifying the account (ie: 5v08jk63-w4g9nbpz-j7qmyder-p7ozax5g)
+  """
+  id: String
+
   """
   The name of the plan
   """
@@ -4693,7 +4706,19 @@ type Individual implements Account {
   isGuest: Boolean!
   isFollowingConversation(id: String!): Boolean!
   hasTwoFactorAuth: Boolean
+
+  """
+  If the individual is a host account, this will return the matching Host object
+  """
+  host: Host
 }
+
+input IndividualCreateInput {
+  name: String!
+  email: String!
+}
+
+scalar IsoDateString
 
 """
 ISO-8601 date
@@ -4892,6 +4917,11 @@ type Mutation {
     host: AccountReferenceInput
 
     """
+    User information to create along with the collective
+    """
+    user: IndividualCreateInput
+
+    """
     Wether to trigger the automated approval for Open Source collectives with GitHub.
     """
     automateApprovalWithGithub: Boolean = false
@@ -4900,6 +4930,11 @@ type Mutation {
     A message to attach for the host to review the application
     """
     message: String
+
+    """
+    Further information about collective applying to host
+    """
+    applicationData: JSON
   ): Collective
   createFund(
     """
@@ -5144,7 +5179,7 @@ type Mutation {
     A message to attach for the host to review the application
     """
     message: String
-  ): Collective!
+  ): Account!
 
   """
   Reply to a host application
@@ -5246,7 +5281,7 @@ type Mutation {
   """
   editHostPlan(
     """
-    Account that will have 2FA added to it
+    Account where the host plan will be edited.
     """
     account: AccountReferenceInput!
 
@@ -5254,6 +5289,16 @@ type Mutation {
     The name of the plan to subscribe to.
     """
     plan: String!
+  ): Host!
+
+  """
+  Edit key properties of an account.
+  """
+  editAccount(
+    """
+    Account to edit.
+    """
+    account: AccountUpdateInput!
   ): Host!
 
   """
@@ -5458,6 +5503,11 @@ type Mutation {
     """
     message: String
   ): Member!
+  createUpdate(update: UpdateCreateInput!): Update!
+  editUpdate(update: UpdateUpdateInput!): Update!
+  publishUpdate(id: String!, notificationAudience: UpdateAudienceType!): Update!
+  unpublishUpdate(id: String!): Update!
+  deleteUpdate(id: String!): Update!
 }
 
 input NewAccountOrganizationInput {
@@ -5690,7 +5740,7 @@ type OrderWithPayment {
   order: Order!
 
   """
-  If donating as a guest, this will contain your guest token to contribute again in the future
+  If donating as a guest, this will contain your guest token to confirm your order
   """
   guestToken: String
 
@@ -5941,7 +5991,7 @@ type Organization implements Account & AccountWithContributions {
   email: String
 
   """
-  If the organization if a host account, this will return the matchig Host object
+  If the organization if a host account, this will return the matching Host object
   """
   host: Host
 }
@@ -6787,6 +6837,27 @@ type Query {
     """
     includeIncognitoTransactions: Boolean! = false
   ): TransactionCollection
+  update(
+    """
+    Public identifier
+    """
+    id: String
+
+    """
+    The update slug identifying the update
+    """
+    updateSlug: String
+
+    """
+    The update slug identifying the update
+    """
+    slug: String
+
+    """
+    When fetching by slug, an account must be provided
+    """
+    account: AccountReferenceInput
+  ): Update
   loggedInAccount: Account
 }
 
@@ -7048,6 +7119,11 @@ type Update {
   tags: [String]
   fromAccount: Account
   account: Account
+
+  """
+  List the comments for this update. Not backed by a loader, don't use this in lists.
+  """
+  comments(limit: Int, offset: Int): CommentCollection
 }
 
 """
@@ -7078,6 +7154,38 @@ type UpdateCollection implements Collection {
   limit: Int
   totalCount: Int
   nodes: [Update]
+}
+
+"""
+Input type for UpdateType
+"""
+input UpdateCreateInput {
+  title: String!
+  isPrivate: Boolean
+  makePublicOn: IsoDateString
+  html: String
+  fromAccount: AccountReferenceInput
+  account: AccountReferenceInput!
+}
+
+input UpdateReferenceInput {
+  """
+  The public id identifying the update
+  """
+  id: String
+}
+
+"""
+Input type for UpdateType
+"""
+input UpdateUpdateInput {
+  id: String!
+  slug: String
+  title: String
+  isPrivate: Boolean
+  makePublicOn: ISODateTime
+  html: String
+  fromAccount: AccountReferenceInput
 }
 
 """
