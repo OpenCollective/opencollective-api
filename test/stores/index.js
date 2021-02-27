@@ -102,7 +102,7 @@ export async function newIncognitoProfile(user) {
  * @returns {Object} with references for `hostCollective`,
  *  `hostAdmin`.
  */
-export async function newHost(name, currency, hostFee, userData = {}) {
+export async function newHost(name, currency, hostFee, userData = {}, hostData = {}) {
   // Host Admin
   const slug = slugify(name);
   const hostAdmin = (await newUser(`${name} Admin`, { firstName: 'host', lastName: 'admin', ...userData })).user;
@@ -115,6 +115,7 @@ export async function newHost(name, currency, hostFee, userData = {}) {
     CreatedByUserId: hostAdmin.id,
     isActive: true,
     settings: { apply: true },
+    ...hostData,
   });
   await hostCollective.addUserWithRole(hostAdmin, 'ADMIN');
   return { hostAdmin, hostCollective, [slug]: hostCollective };
@@ -158,7 +159,9 @@ export async function newCollectiveWithHost(name, currency, hostCurrency, hostFe
   const slug = slugify(name);
   const { hostFeePercent } = hostCollective;
   const args = { ...data, name, slug, currency, hostFeePercent };
-  if (user) args['CreatedByUserId'] = user.id;
+  if (user) {
+    args['CreatedByUserId'] = user.id;
+  }
   const collective = await models.Collective.create(args);
   await collective.addHost(hostCollective, hostAdmin);
   // We activate the collective
@@ -169,7 +172,9 @@ export async function newCollectiveWithHost(name, currency, hostCurrency, hostFe
     collective.currency = currency;
   }
   await collective.save();
-  if (user) await collective.addUserWithRole(user, 'ADMIN');
+  if (user) {
+    await collective.addUserWithRole(user, 'ADMIN');
+  }
   return { hostCollective, hostAdmin, collective, [slug]: collective };
 }
 
@@ -189,7 +194,9 @@ export async function newCollectiveInHost(name, currency, hostCollective, user =
   const slug = slugify(name);
   const { hostFeePercent } = hostCollective;
   const args = { ...data, name, slug, currency, hostFeePercent };
-  if (user) args['CreatedByUserId'] = user.id;
+  if (user) {
+    args['CreatedByUserId'] = user.id;
+  }
   const collective = await models.Collective.create(args);
   user = user || (await models.User.createUserWithCollective({ email: randEmail(), name: 'Test' }));
   await collective.addUserWithRole(user, 'ADMIN');
@@ -333,7 +340,9 @@ export async function stripeOneTimeDonation(opt) {
   // Freeze the time to guarantee that all the objects have the
   // requested creation date. It will be reset right after the
   // execution of the order.
-  if (createdAt) sandbox.useFakeTimers(new Date(createdAt).getTime());
+  if (createdAt) {
+    sandbox.useFakeTimers(new Date(createdAt).getTime());
+  }
 
   // Stub the stripe calls before executing the order.
   try {

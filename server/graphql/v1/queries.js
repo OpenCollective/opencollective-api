@@ -43,7 +43,9 @@ import {
   OrderType,
   PaginatedExpensesType,
   PaymentMethodType,
+  MemberInvitationType,
 } from './types';
+import { Forbidden, ValidationFailed } from '../errors';
 
 const queries = {
   Collective: {
@@ -245,6 +247,12 @@ const queries = {
     async resolve(_, args, req) {
       const { dateFrom, dateTo, fromCollectiveSlug, collectiveSlug } = args.invoiceInputType;
 
+      if (!dateFrom || !dateTo) {
+        throw new ValidationFailed({ message: 'A valid date range must be provided' });
+      } else if (!fromCollectiveSlug || !collectiveSlug) {
+        throw new ValidationFailed({ message: 'You must provide a collective and a fromCollective' });
+      }
+
       const fromCollective = await models.Collective.findOne({
         where: { slug: fromCollectiveSlug },
       });
@@ -391,10 +399,14 @@ const queries = {
     async resolve(_, args) {
       // Load collective
       const { CollectiveId, collectiveSlug } = args;
-      if (!CollectiveId && !collectiveSlug) throw new Error('You must specify a collective ID or a Slug');
+      if (!CollectiveId && !collectiveSlug) {
+        throw new Error('You must specify a collective ID or a Slug');
+      }
       const where = CollectiveId ? { id: CollectiveId } : { slug: collectiveSlug };
       const collective = await models.Collective.findOne({ where });
-      if (!collective) throw new Error('This collective does not exist');
+      if (!collective) {
+        throw new Error('This collective does not exist');
+      }
 
       return collective.getTransactions({
         order: [['createdAt', 'DESC']],
@@ -504,10 +516,18 @@ const queries = {
     },
     resolve(_, args) {
       const query = { where: {} };
-      if (args.ExpenseId) query.where.ExpenseId = args.ExpenseId;
-      if (args.UpdateId) query.where.UpdateId = args.UpdateId;
-      if (args.limit) query.limit = args.limit;
-      if (args.offset) query.offset = args.offset;
+      if (args.ExpenseId) {
+        query.where.ExpenseId = args.ExpenseId;
+      }
+      if (args.UpdateId) {
+        query.where.UpdateId = args.UpdateId;
+      }
+      if (args.limit) {
+        query.limit = args.limit;
+      }
+      if (args.offset) {
+        query.offset = args.offset;
+      }
       query.order = [['createdAt', 'ASC']];
       return models.Comment.findAll(query);
     },
@@ -526,8 +546,12 @@ const queries = {
     },
     resolve(_, args, req) {
       const query = { where: {} };
-      if (args.limit) query.limit = args.limit;
-      if (args.offset) query.offset = args.offset;
+      if (args.limit) {
+        query.limit = args.limit;
+      }
+      if (args.offset) {
+        query.offset = args.offset;
+      }
       query.order = [
         ['publishedAt', 'DESC'],
         ['createdAt', 'DESC'],
@@ -579,10 +603,18 @@ const queries = {
     async resolve(_, args) {
       const query = { where: {} };
       const CollectiveId = args.CollectiveId || (await fetchCollectiveId(args.collectiveSlug));
-      if (args.status) query.where.status = args.status;
-      if (args.category) query.where.category = { [Op.iLike]: args.category };
-      if (args.limit) query.limit = args.limit;
-      if (args.offset) query.offset = args.offset;
+      if (args.status) {
+        query.where.status = args.status;
+      }
+      if (args.category) {
+        query.where.category = { [Op.iLike]: args.category };
+      }
+      if (args.limit) {
+        query.limit = args.limit;
+      }
+      if (args.offset) {
+        query.offset = args.offset;
+      }
       query.order = [
         ['createdAt', 'DESC'],
         ['id', 'DESC'],
@@ -637,10 +669,18 @@ const queries = {
         }
         query.where.UserId = user.id;
       }
-      if (args.status) query.where.status = args.status;
-      if (args.category) query.where.category = { [Op.iLike]: args.category };
-      if (args.limit) query.limit = args.limit;
-      if (args.offset) query.offset = args.offset;
+      if (args.status) {
+        query.where.status = args.status;
+      }
+      if (args.category) {
+        query.where.category = { [Op.iLike]: args.category };
+      }
+      if (args.limit) {
+        query.limit = args.limit;
+      }
+      if (args.offset) {
+        query.offset = args.offset;
+      }
       query.order = [['createdAt', 'DESC']];
       return req.loaders.Collective.byId.load(args.CollectiveId).then(collective => {
         if (!collective) {
@@ -728,8 +768,12 @@ const queries = {
         query.where.UserId = collectiveUser.id;
       }
 
-      if (category) query.where.category = { [Op.iLike]: category };
-      if (status) query.where.status = status;
+      if (category) {
+        query.where.category = { [Op.iLike]: category };
+      }
+      if (status) {
+        query.where.status = status;
+      }
 
       if (CollectiveId || CollectiveSlug) {
         query.where.CollectiveId = CollectiveId || (await fetchCollectiveId(CollectiveSlug));
@@ -870,16 +914,30 @@ const queries = {
             MemberCollectiveId: args.memberOfCollectiveId,
           },
         };
-        if (args.role) memberCond.where.role = args.role.toUpperCase();
+        if (args.role) {
+          memberCond.where.role = args.role.toUpperCase();
+        }
         query.include.push(memberCond);
       }
 
-      if (args.HostCollectiveId) query.where.HostCollectiveId = args.HostCollectiveId;
-      if (args.ParentCollectiveId) query.where.ParentCollectiveId = args.ParentCollectiveId;
-      if (args.type) query.where.type = args.type;
-      if (args.tags) query.where.tags = { [Op.overlap]: args.tags };
-      if (typeof args.isActive === 'boolean') query.where.isActive = args.isActive;
-      if (typeof args.isPledged === 'boolean') query.where.isPledged = args.isPledged;
+      if (args.HostCollectiveId) {
+        query.where.HostCollectiveId = args.HostCollectiveId;
+      }
+      if (args.ParentCollectiveId) {
+        query.where.ParentCollectiveId = args.ParentCollectiveId;
+      }
+      if (args.type) {
+        query.where.type = args.type;
+      }
+      if (args.tags) {
+        query.where.tags = { [Op.overlap]: args.tags };
+      }
+      if (typeof args.isActive === 'boolean') {
+        query.where.isActive = args.isActive;
+      }
+      if (typeof args.isPledged === 'boolean') {
+        query.where.isPledged = args.isPledged;
+      }
 
       if (args.orderBy === 'balance' && (args.ParentCollectiveId || args.HostCollectiveId || args.tags)) {
         const { total, collectives } = await rawQueries.getCollectivesWithBalance(query.where, args);
@@ -938,7 +996,9 @@ const queries = {
         return { total, collectives, limit: args.limit, offset: args.offset };
       }
 
-      if (args.offset) query.offset = args.offset;
+      if (args.offset) {
+        query.offset = args.offset;
+      }
 
       // this will elminate the odd test accounts and older data we need to cleanup
       query.where = {
@@ -1090,7 +1150,9 @@ const queries = {
       const memberTable = args.MemberCollectiveId ? 'collective' : 'memberCollective';
       const attr = args.CollectiveId ? 'CollectiveId' : 'MemberCollectiveId';
       const where = { [attr]: args[attr] };
-      if (args.role) where.role = args.role.toUpperCase();
+      if (args.role) {
+        where.role = args.role.toUpperCase();
+      }
       if (where.role === 'HOST') {
         where.HostCollectiveId = args.MemberCollectiveId;
       }
@@ -1150,7 +1212,9 @@ const queries = {
           });
       } else {
         const query = { where, include: [] };
-        if (args.TierId) query.where.TierId = args.TierId;
+        if (args.TierId) {
+          query.where.TierId = args.TierId;
+        }
 
         // If we request the data of the member, we do a JOIN query
         // that allows us to sort by Member.member.name
@@ -1168,8 +1232,12 @@ const queries = {
           });
           query.order = [[sequelize.literal(`"${memberTable}".name`), 'ASC']];
         }
-        if (args.limit) query.limit = args.limit;
-        if (args.offset) query.offset = args.offset;
+        if (args.limit) {
+          query.limit = args.limit;
+        }
+        if (args.offset) {
+          query.offset = args.offset;
+        }
 
         return getCollectiveIds()
           .then(collectiveIds => {
@@ -1205,6 +1273,39 @@ const queries = {
             }
           });
       }
+    },
+  },
+
+  memberInvitations: {
+    type: new GraphQLList(MemberInvitationType),
+    description: '[AUTHENTICATED] Returns the pending invitations',
+    args: {
+      CollectiveId: { type: GraphQLInt },
+      MemberCollectiveId: { type: GraphQLInt },
+    },
+    resolve(collective, args, { remoteUser }) {
+      if (!remoteUser) {
+        new Forbidden({ message: 'Only collective admins can see pending invitations' });
+      }
+      if (!args.CollectiveId && !args.MemberCollectiveId) {
+        throw new ValidationFailed({ message: 'You must either provide a CollectiveId or a MemberCollectiveId' });
+      }
+
+      // Must be an admin to see pending invitations
+      const isAdminOfCollective = args.CollectiveId && remoteUser.isAdmin(args.CollectiveId);
+      const isAdminOfMemberCollective = args.MemberCollectiveId && remoteUser.isAdmin(args.MemberCollectiveId);
+      if (!isAdminOfCollective && !isAdminOfMemberCollective) {
+        new Forbidden({ message: 'Only collective admins can see pending invitations' });
+      }
+
+      const where = {};
+      if (args.CollectiveId) {
+        where.CollectiveId = args.CollectiveId;
+      }
+      if (args.MemberCollectiveId) {
+        where.MemberCollectiveId = args.MemberCollectiveId;
+      }
+      return models.MemberInvitation.findAll({ where });
     },
   },
 
@@ -1390,14 +1491,24 @@ const queries = {
         },
         order: [['createdAt', 'DESC']],
       };
-      if (args.type) query.where.type = args.type;
-      if (args.limit) query.limit = args.limit;
-      if (args.offset) query.offset = args.offset;
+      if (args.type) {
+        query.where.type = args.type;
+      }
+      if (args.limit) {
+        query.limit = args.limit;
+      }
+      if (args.offset) {
+        query.offset = args.offset;
+      }
 
       if (args.dateFrom || args.dateTo) {
         query.where.createdAt = {};
-        if (args.dateFrom) query.where.createdAt[Op.gte] = args.dateFrom;
-        if (args.dateTo) query.where.createdAt[Op.lte] = args.dateTo;
+        if (args.dateFrom) {
+          query.where.createdAt[Op.gte] = args.dateFrom;
+        }
+        if (args.dateTo) {
+          query.where.createdAt[Op.lte] = args.dateTo;
+        }
       }
       const transactions = await models.Transaction.findAll(query);
       return transactions;

@@ -10,15 +10,33 @@ import models, { Op, sequelize } from '../../models';
 import { sortResults, createDataLoaderWithOptions } from './helpers';
 
 // Loaders generators
-import generateCommentsLoader from './comments';
-import generateConversationLoaders from './conversation';
+import commentsLoader from './comments';
+import conversationLoaders from './conversation';
+import { generateExpenseAttachmentsLoader } from './expenses';
+import { generateCollectivePaypalPayoutMethodsLoader, generateCollectivePayoutMethodsLoader } from './payout-method';
+import { generateCanSeeUserPrivateInfoLoader } from './user';
 
 export const loaders = req => {
   const cache = {};
   const context = createContext(sequelize);
 
-  context.loaders.Comment = generateCommentsLoader(req, cache);
-  context.loaders.Conversation = generateConversationLoaders(req, cache);
+  // Comment
+  context.loaders.Comment.findAllByAttribute = commentsLoader.findAllByAttribute(req, cache);
+  context.loaders.Comment.countByExpenseId = commentsLoader.countByExpenseId(req, cache);
+
+  // Conversation
+  context.loaders.Conversation.followers = conversationLoaders.followers(req, cache);
+  context.loaders.Conversation.commentsCount = conversationLoaders.commentsCount(req, cache);
+
+  // Expense
+  context.loaders.ExpenseAttachment.byExpenseId = generateExpenseAttachmentsLoader(req, cache);
+
+  // Payout method
+  context.loaders.PayoutMethod.paypalByCollectiveId = generateCollectivePaypalPayoutMethodsLoader(req, cache);
+  context.loaders.PayoutMethod.byCollectiveId = generateCollectivePayoutMethodsLoader(req, cache);
+
+  // User
+  context.loaders.User.canSeeUserPrivateInfo = generateCanSeeUserPrivateInfoLoader(req, cache);
 
   /** *** Collective *****/
 
@@ -50,6 +68,14 @@ export const loaders = req => {
     }).then(results => sortResults(ids, results, 'CollectiveId', [])),
   );
 
+  /** Returns the collective if remote user has access to private infos or an empty object otherwise */
+  context.loaders.Collective.privateInfos = new DataLoader(async collectives => {
+    const allCollectiveIds = collectives.map(c => c.id);
+    const accessibleCollectiveIdsList = await getListOfAccessibleMembers(req.remoteUser, allCollectiveIds);
+    const accessibleCollectiveIdsSet = new Set(accessibleCollectiveIdsList);
+    return collectives.map(collective => (accessibleCollectiveIdsSet.has(collective.id) ? collective : {}));
+  });
+
   // Collective - Stats
   context.loaders.Collective.stats = {
     collectives: new DataLoader(ids =>
@@ -65,64 +91,43 @@ export const loaders = req => {
         .map(result => get(result, 'dataValues.count') || 0),
     ),
     backers: new DataLoader(ids => {
-      const query = {
+      return models.Member.findAll({
         attributes: [
           'CollectiveId',
-          'UsingVirtualCardFromCollectiveId',
-          [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('FromCollectiveId'))), 'count'],
+          'memberCollective.type',
+          [sequelize.fn('COALESCE', sequelize.fn('COUNT', '*'), 0), 'count'],
         ],
         where: {
           CollectiveId: { [Op.in]: ids },
-          type: 'CREDIT',
+          role: 'BACKER',
         },
-        include: [
-          {
-            model: models.Collective,
-            as: 'fromCollective',
-            attributes: ['id', 'type'],
-            required: true,
-          },
-          {
-            model: models.Collective,
-            as: 'usingVirtualCardFromCollective',
-            attributes: ['type'],
-            required: false,
-          },
-        ],
-        group: [
-          'CollectiveId',
-          'UsingVirtualCardFromCollectiveId',
-          'usingVirtualCardFromCollective.type',
-          'fromCollective.id',
-          'fromCollective.type',
-        ],
-        raw: true, // need this otherwise it automatically also fetches Transaction.id which messes up everything
-      };
-      const fromCollectiveIdKey = 'fromCollective.id';
-      const fromCollectiveTypeKey = 'fromCollective.type';
-      const vcEmitterCollectiveTypeKey = 'usingVirtualCardFromCollective.type';
-      return models.Transaction.findAll(query)
-        .then(results => sortResults(ids, results, 'CollectiveId', []))
-        .map(result => {
-          const stats = { all: 0 };
-          const countedCollectiveIds = [];
-          const addToStats = (type, collectiveId, count) => {
-            // Ensure we only count a collective one time
-            if (!countedCollectiveIds.includes(collectiveId)) {
-              stats[type] = (stats[type] || 0) + count;
-              stats.all += count;
-              countedCollectiveIds.push(collectiveId);
-            }
-          };
-          result.forEach(r => {
-            stats.id = r.CollectiveId;
-            if (r.UsingVirtualCardFromCollectiveId) {
-              addToStats(r[vcEmitterCollectiveTypeKey], r.UsingVirtualCardFromCollectiveId, r.count);
-            }
-            addToStats(r[fromCollectiveTypeKey], r[fromCollectiveIdKey], r.count);
+        include: {
+          model: models.Collective,
+          as: 'memberCollective',
+          attributes: ['type'],
+        },
+        group: ['CollectiveId', 'memberCollective.type'],
+        raw: true,
+      })
+        .then(rows => {
+          const results = groupBy(rows, 'CollectiveId');
+          return ids.map(id => {
+            const result = get(results, id, []);
+            const stats = result.reduce(
+              (acc, value) => {
+                acc.all += value.count;
+                acc[value.type] = value.count;
+                return acc;
+              },
+              { id, all: 0 },
+            );
+            return {
+              CollectiveId: Number(id),
+              ...stats,
+            };
           });
-          return stats;
-        });
+        })
+        .then(results => sortResults(ids, results, 'CollectiveId'));
     }),
     expenses: new DataLoader(ids =>
       models.Expense.findAll({
@@ -449,7 +454,7 @@ export const loaders = req => {
   };
 
   /** *** Member *****/
-  /* context.loaders.Member.findByTierId = new DataLoader(tiersIds => 
+  /* context.loaders.Member.findByTierId = new DataLoader(tiersIds =>
     models.Member.findAll({
       where: { TierId: { [Op.in]: tiersIds } },
       order: [['createdAt', 'DESC']],
