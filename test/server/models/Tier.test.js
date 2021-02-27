@@ -1,12 +1,13 @@
 import { expect } from 'chai';
 import { SequelizeValidationError } from 'sequelize';
+
 import models from '../../../server/models';
+import { newCollectiveWithHost, randEmail } from '../../stores';
 import * as utils from '../../utils';
-import { randEmail, newCollectiveWithHost } from '../../stores';
 
 const { Collective, User } = models;
 
-describe('Collective model', () => {
+describe('server/models/Tier', () => {
   let collective = {},
     tiers;
 

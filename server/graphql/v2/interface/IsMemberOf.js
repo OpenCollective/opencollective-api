@@ -1,10 +1,10 @@
-import { GraphQLInt, GraphQLList } from 'graphql';
+import { GraphQLBoolean, GraphQLInt, GraphQLList } from 'graphql';
+import { isNil } from 'lodash';
 
+import models, { Op } from '../../../models';
 import { MemberOfCollection } from '../collection/MemberCollection';
 import { AccountType, AccountTypeToModelMapping } from '../enum/AccountType';
 import { MemberRole } from '../enum/MemberRole';
-
-import models, { Op } from '../../../models';
 
 export const IsMemberOfFields = {
   memberOf: {
@@ -14,8 +14,18 @@ export const IsMemberOfFields = {
       offset: { type: GraphQLInt },
       role: { type: new GraphQLList(MemberRole) },
       accountType: { type: new GraphQLList(AccountType) },
+      isHostAccount: {
+        type: GraphQLBoolean,
+        description: 'Filter on whether the account is a host or not',
+      },
+      includeIncognito: {
+        type: GraphQLBoolean,
+        defaultValue: true,
+        description:
+          'Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.',
+      },
     },
-    resolve(collective, args) {
+    async resolve(collective, args, req) {
       const where = { MemberCollectiveId: collective.id };
 
       if (args.role && args.role.length > 0) {
@@ -27,7 +37,13 @@ export const IsMemberOfFields = {
           [Op.in]: args.accountType.map(value => AccountTypeToModelMapping[value]),
         };
       }
-      return models.Member.findAndCountAll({
+      if (!args.includeIncognito || !req.remoteUser?.isAdmin(collective.id)) {
+        collectiveConditions.isIncognito = false;
+      }
+      if (!isNil(args.isHostAccount)) {
+        collectiveConditions.isHostAccount = args.isHostAccount;
+      }
+      const result = await models.Member.findAndCountAll({
         where,
         limit: args.limit,
         offset: args.offset,
@@ -39,6 +55,8 @@ export const IsMemberOfFields = {
           },
         ],
       });
+
+      return { nodes: result.rows, totalCount: result.count, limit: args.limit, offset: args.offset };
     },
   },
 };

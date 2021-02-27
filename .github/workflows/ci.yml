@@ -1,6 +1,14 @@
 name: CI
 
-on: [push]
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 env:
   TZ: UTC
@@ -8,19 +16,22 @@ env:
   NODE_ENV: ci
   AWS_KEY: ${{ secrets.AWS_KEY }}
   AWS_SECRET: ${{ secrets.AWS_SECRET }}
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
 jobs:
   lint:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -48,14 +59,16 @@ jobs:
   prettier:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -83,14 +96,16 @@ jobs:
   typescript:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -115,17 +130,56 @@ jobs:
 
       - run: npm run type:check
 
-  build:
+  depcheck:
     runs-on: ubuntu-latest
+
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
+
+      - name: Restore node_modules
+        uses: actions/cache@v1
+        id: api-node-modules
         with:
-          node-version: '12.x'
+          path: node_modules
+          key: ${{ runner.os }}-api-node-modules-${{ hashFiles('package-lock.json') }}
+
+      - name: Restore .npm cache
+        if: steps.api-node-modules.outputs.cache-hit != 'true'
+        uses: actions/cache@v1
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-api-npm-cache-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            - ${{ runner.os }}-api-npm-cache-${{ hashFiles('package-lock.json') }}
+            - ${{ runner.os }}-api-npm-cache-
+
+      - name: Install dependencies
+        if: steps.api-node-modules.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit
+
+      - run: npm run depcheck
+
+  build:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2-beta
+
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -160,6 +214,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     services:
       redis:
         image: redis
@@ -179,10 +235,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -207,14 +263,14 @@ jobs:
 
       - run: npm run db:setup
 
-      - run: npm run test:lib
-      - run: npm run test:models
-      - run: npm run test:payment-providers
-      - run: npm run test:routes
-      - run: npm run test:scripts
+      - run: npx nyc mocha --ignore "test/server/graphql/**"
+
+      - run: npm run test:coverage
 
   test-graphql:
     runs-on: ubuntu-latest
+
+    timeout-minutes: 30
 
     services:
       redis:
@@ -235,10 +291,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -264,3 +320,5 @@ jobs:
       - run: npm run db:setup
 
       - run: npm run test:graphql
+
+      - run: npm run test:coverage

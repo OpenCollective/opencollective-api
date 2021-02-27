@@ -1,14 +1,14 @@
+import { expect } from 'chai';
 import config from 'config';
 import moment from 'moment';
 import nodemailer from 'nodemailer';
-import request from 'supertest-as-promised';
 import sinon from 'sinon';
-import { expect } from 'chai';
+import request from 'supertest-as-promised';
 
 import app from '../../../server/index';
-import * as utils from '../../utils';
-import models from '../../../server/models';
 import * as auth from '../../../server/lib/auth.js';
+import models from '../../../server/models';
+import * as utils from '../../utils';
 
 /**
  * Variables.
@@ -18,8 +18,12 @@ const application = utils.data('application');
 /**
  * Tests.
  */
-describe('routes/users.test.js', () => {
-  let nm;
+describe('server/routes/users', () => {
+  let nm, expressApp;
+
+  before(async () => {
+    expressApp = await app();
+  });
 
   beforeEach(() => utils.resetTestDB());
 
@@ -53,7 +57,7 @@ describe('routes/users.test.js', () => {
   describe('existence', () => {
     it('returns true', done => {
       models.User.create({ email: 'john@smith.com' }).then(() => {
-        request(app)
+        request(expressApp)
           .get(`/users/exists?email=john@smith.com&api_key=${application.api_key}`)
           .end((e, res) => {
             expect(res.body.exists).to.be.true;
@@ -63,7 +67,7 @@ describe('routes/users.test.js', () => {
     });
 
     it('returns false', done => {
-      request(app)
+      request(expressApp)
         .get(`/users/exists?email=john2@smith.com&api_key=${application.api_key}`)
         .end((e, res) => {
           expect(res.body.exists).to.be.false;
@@ -79,7 +83,7 @@ describe('routes/users.test.js', () => {
     const updateTokenUrl = `/users/update-token?api_key=${application.api_key}`;
 
     it('should fail if no token is provided', async () => {
-      const response = await request(app).post(updateTokenUrl);
+      const response = await request(expressApp).post(updateTokenUrl);
       expect(response.statusCode).to.equal(401);
     });
     it('should fail if expired token is provided', async () => {
@@ -88,9 +92,7 @@ describe('routes/users.test.js', () => {
       const expiredToken = user.jwt({}, -1);
 
       // When the endpoint is hit with an expired token
-      const response = await request(app)
-        .post(updateTokenUrl)
-        .set('Authorization', `Bearer ${expiredToken}`);
+      const response = await request(expressApp).post(updateTokenUrl).set('Authorization', `Bearer ${expiredToken}`);
 
       // Then the API rejects the request
       expect(response.statusCode).to.equal(401);
@@ -101,9 +103,7 @@ describe('routes/users.test.js', () => {
       const currentToken = user.jwt();
 
       // When the endpoint is hit with a valid token
-      const response = await request(app)
-        .post(updateTokenUrl)
-        .set('Authorization', `Bearer ${currentToken}`);
+      const response = await request(expressApp).post(updateTokenUrl).set('Authorization', `Bearer ${currentToken}`);
 
       // Then it responds with success
       expect(response.statusCode).to.equal(200);
