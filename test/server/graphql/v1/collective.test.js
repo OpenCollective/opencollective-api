@@ -2,13 +2,12 @@ import { expect } from 'chai';
 import { describe, it } from 'mocha';
 import sinon from 'sinon';
 
-import models, { Op } from '../../../../server/models';
-import cache from '../../../../server/lib/cache';
 import * as expenses from '../../../../server/graphql/v1/mutations/expenses';
-
-import * as utils from '../../../utils';
+import cache from '../../../../server/lib/cache';
+import models, { Op } from '../../../../server/models';
 import * as store from '../../../stores';
 import { fakeUser } from '../../../test-helpers/fake-data';
+import * as utils from '../../../utils';
 
 describe('server/graphql/v1/collective', () => {
   beforeEach(async () => {
@@ -74,14 +73,15 @@ describe('server/graphql/v1/collective', () => {
       });
       // And given some expenses
       const expense = await store.createApprovedExpense(user, {
-        category: 'Engineering',
+        category: 'engineering',
         amount: 100 * (i + 1),
         description: 'test',
         currency,
-        payoutMethod: 'manual',
+        legacyPayoutMethod: 'manual',
+        items: [{ amount: 100 * (i + 1), url: store.randUrl() }],
         collective: { id: apex.id },
       });
-      await expenses.payExpense(hostAdmin, { id: expense.id });
+      await expenses.payExpense(utils.makeRequest(hostAdmin), { id: expense.id });
     }
 
     // When the following query is executed
@@ -213,7 +213,7 @@ describe('server/graphql/v1/collective', () => {
     });
 
     expect(collective.stats.topExpenses).to.deep.equal({
-      byCategory: [{ category: 'Engineering', count: 10, totalExpenses: 5500 }],
+      byCategory: [{ category: 'engineering', count: 10, totalExpenses: 5500 }],
       byCollective: [
         {
           slug: 'testuser9',
@@ -293,8 +293,9 @@ describe('server/graphql/v1/collective', () => {
       amount,
       description,
       currency: 'EUR',
-      payoutMethod: 'manual',
+      legacyPayoutMethod: 'manual',
       collective: { id: cid },
+      items: [{ url: store.randUrl(), amount }],
     });
 
     // And given that we add some expenses to brussels together:
@@ -905,7 +906,16 @@ describe('server/graphql/v1/collective', () => {
     });
 
     it('apply to host', async () => {
-      const { hostCollective } = await store.newHost('brusselstogether', 'EUR', 5);
+      const { hostCollective } = await store.newHost(
+        'brusselstogether',
+        'EUR',
+        5,
+        {},
+        {
+          type: 'ORGANIZATION',
+          isHostAccount: true,
+        },
+      );
 
       const collective = {
         id: pubnubCollective.id,
@@ -966,6 +976,7 @@ describe('server/graphql/v1/collective', () => {
         amount: 20000,
       });
       const message = 'I am happy to support this collective!';
+      cacheDelSpy.resetHistory();
       const res = await utils.graphqlQuery(
         QUERY,
         {
@@ -1019,6 +1030,7 @@ describe('server/graphql/v1/collective', () => {
         },
       );
       expect(quantityUpdated).to.equal(2);
+      cacheDelSpy.resetHistory();
       const res = await utils.graphqlQuery(
         QUERY,
         {

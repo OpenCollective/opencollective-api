@@ -1,25 +1,25 @@
-import config from 'config';
-import debug from 'debug';
-import nock from 'nock';
-import { expect } from 'chai';
+import { execSync } from 'child_process';
 
 import Promise from 'bluebird';
+import { expect } from 'chai';
+import config from 'config';
+import debug from 'debug';
 import { graphql } from 'graphql';
-import { isArray, values, get, cloneDeep } from 'lodash';
-import { execSync } from 'child_process';
+import { cloneDeep, get, isArray, values } from 'lodash';
+import nock from 'nock';
+
+import * as dbRestore from '../scripts/db_restore';
+import { loaders } from '../server/graphql/loaders';
+import schemaV1 from '../server/graphql/v1/schema';
+import schemaV2 from '../server/graphql/v2/schema';
+import cache from '../server/lib/cache';
+import * as libpayments from '../server/lib/payments';
+/* Server code being used */
+import stripe from '../server/lib/stripe';
+import { sequelize } from '../server/models';
 
 /* Test data */
 import jsonData from './mocks/data';
-
-/* Server code being used */
-import stripe from '../server/lib/stripe';
-import schemaV1 from '../server/graphql/v1/schema';
-import schemaV2 from '../server/graphql/v2/schema';
-import { loaders } from '../server/graphql/loaders';
-import { sequelize } from '../server/models';
-import cache from '../server/lib/cache';
-import * as libpayments from '../server/lib/payments';
-import * as db_restore from '../scripts/db_restore';
 
 if (process.env.RECORD) {
   nock.recorder.rec();
@@ -27,8 +27,10 @@ if (process.env.RECORD) {
 
 jsonData.application = {
   name: 'client',
-  api_key: config.keys.opencollective.apiKey,
+  api_key: config.keys.opencollective.apiKey, // eslint-disable-line camelcase
 };
+
+const debugWaitForCondition = debug('waitForCondition');
 
 export const data = path => {
   const copy = cloneDeep(get(jsonData, path)); // to avoid changing these data
@@ -47,7 +49,7 @@ export const resetTestDB = async () => {
 };
 
 export async function loadDB(dbname) {
-  await db_restore.main({ force: true, file: dbname });
+  await dbRestore.main({ force: true, file: dbname });
 }
 
 export const stringify = json => {
@@ -89,7 +91,7 @@ export const waitForCondition = (cond, options = { timeout: 10000, delay: 0 }) =
     }, options.timeout || 10000);
     const isConditionMet = () => {
       hasConditionBeenMet = Boolean(cond());
-      debug('waitForCondition')(options.tag, `Has condition been met?`, hasConditionBeenMet);
+      debugWaitForCondition(options.tag, `Has condition been met?`, hasConditionBeenMet);
       if (hasConditionBeenMet) {
         return setTimeout(resolve, options.delay || 0);
       } else {
@@ -200,8 +202,8 @@ export const createStripeToken = async () => {
     .create({
       card: {
         number: '4242424242424242',
-        exp_month: 12,
-        exp_year: 2028,
+        exp_month: 12, // eslint-disable-line camelcase
+        exp_year: 2028, // eslint-disable-line camelcase
         cvc: 222,
       },
     })
@@ -239,13 +241,13 @@ export function stubStripeCreate(sandbox, overloadDefaults) {
 }
 
 export function stubStripeBalance(sandbox, amount, currency, applicationFee = 0, stripeFee = 0) {
-  const fee_details = [];
+  const feeDetails = [];
   const fee = applicationFee + stripeFee;
   if (applicationFee && applicationFee > 0) {
-    fee_details.push({ type: 'application_fee', amount: applicationFee });
+    feeDetails.push({ type: 'application_fee', amount: applicationFee });
   }
   if (stripeFee && stripeFee > 0) {
-    fee_details.push({ type: 'stripe_fee', amount: stripeFee });
+    feeDetails.push({ type: 'stripe_fee', amount: stripeFee });
   }
 
   const balanceTransaction = {
@@ -254,7 +256,7 @@ export function stubStripeBalance(sandbox, amount, currency, applicationFee = 0,
     amount,
     currency: currency.toLowerCase(),
     fee,
-    fee_details,
+    fee_details: feeDetails, // eslint-disable-line camelcase
     net: amount - fee,
     status: 'pending',
     type: 'charge',

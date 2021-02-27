@@ -1,19 +1,16 @@
-import _ from 'lodash';
-import moment from 'moment';
 import Promise from 'bluebird';
-import debugLib from 'debug';
-import models, { sequelize, Op } from '../server/models';
-import emailLib from '../server/lib/email';
 import config from 'config';
-import { exportToPDF } from '../server/lib/utils';
+import debugLib from 'debug';
+import { keyBy, pick } from 'lodash';
+import moment from 'moment';
+
+import emailLib from '../server/lib/email';
+import { getBackersStats, getHostedCollectives, sumTransactions } from '../server/lib/hostlib';
 import { getTransactions } from '../server/lib/transactions';
-import { getHostedCollectives, getBackersStats, sumTransactions } from '../server/lib/hostlib';
+import { exportToPDF } from '../server/lib/utils';
+import models, { Op, sequelize } from '../server/models';
 
 const debug = debugLib('hostreport');
-
-if (process.env.SKIP_PLATFORM_STATS) {
-  console.log('Skipping computing platform stats');
-}
 
 const summary = {
   totalHosts: 0,
@@ -44,19 +41,17 @@ async function HostReport(year, month, hostId) {
     endDate = new Date(d.getFullYear() + 1, 0, 1);
   }
 
-  const endDateIncluded = moment(endDate)
-    .subtract(1, 'days')
-    .toDate();
+  const endDateIncluded = moment(endDate).subtract(1, 'days').toDate();
 
   const dateRange = {
     createdAt: { [Op.gte]: startDate, [Op.lt]: endDate },
   };
 
-  const emailTemplate = yearlyReport ? 'host.yearlyreport' : 'host.monthlyreport';
+  const emailTemplate = yearlyReport ? 'host.yearlyreport' : 'host.monthlyreport'; // NOTE: this will be later converted to 'host.report'
   const reportName = yearlyReport ? `${year} Yearly Host Report` : `${year}/${month + 1} Monthly Host Report`;
   const dateFormat = yearlyReport ? 'YYYY' : 'YYYYMM';
-  const csv_filename = `${moment(d).format(dateFormat)}-transactions.csv`;
-  const pdf_filename = `${moment(d).format(dateFormat)}-expenses.pdf`;
+  const csvFilename = `${moment(d).format(dateFormat)}-transactions.csv`;
+  const pdfFilename = `${moment(d).format(dateFormat)}-expenses.pdf`;
   console.log('startDate', startDate, 'endDate', endDate);
 
   year = year || startDate.getFullYear();
@@ -74,7 +69,10 @@ async function HostReport(year, month, hostId) {
   if (process.env.SLUGS) {
     const slugs = process.env.SLUGS.split(',');
     previewCondition = `AND c.slug IN ('${slugs.join("','")}')`;
-    process.env.SKIP_PLATFORM_STATS = true;
+  }
+  if (process.env.SKIP_SLUGS) {
+    const slugs = process.env.SKIP_SLUGS.split(',');
+    previewCondition = `AND c.slug NOT IN ('${slugs.join("','")}')`;
   }
 
   const getHostStats = (host, collectiveids) => {
@@ -186,8 +184,8 @@ async function HostReport(year, month, hostId) {
     let page = 1;
     let currentPage = 0;
 
-    data.host = host;
-    data.collective = host;
+    data.host = host.info;
+    data.collective = host.info;
     data.reportDate = endDate;
     data.reportName = reportName;
     data.month = !yearlyReport && moment(startDate).format('MMMM');
@@ -195,7 +193,7 @@ async function HostReport(year, month, hostId) {
     data.startDate = startDate;
     data.endDate = endDate;
     data.endDateIncluded = endDateIncluded;
-    data.config = _.pick(config, 'host');
+    data.config = pick(config, 'host');
     data.maxSlugSize = 0;
     data.notes = null;
     data.expensesPerPage = [[]];
@@ -224,7 +222,15 @@ async function HostReport(year, month, hostId) {
     };
 
     const processTransaction = transaction => {
-      const t = transaction;
+      const t = {
+        ...transaction.info,
+        Expense: transaction.Expense
+          ? {
+              ...transaction.Expense.info,
+              items: transaction.Expense.items.map(item => item.dataValues),
+            }
+          : null,
+      };
       t.collective = collectivesById[t.CollectiveId].dataValues;
       t.collective.shortSlug = t.collective.slug.replace(/^wwcode-?(.)/, '$1');
       t.notes = t.Expense && t.Expense.privateMessage;
@@ -261,14 +267,32 @@ async function HostReport(year, month, hostId) {
 
     return getHostedCollectives(host.id, endDate)
       .tap(collectives => {
-        collectivesById = _.keyBy(collectives, 'id');
+        collectivesById = keyBy(collectives, 'id');
         data.stats.totalCollectives = collectives.filter(c => c.type === 'COLLECTIVE').length;
         summary.totalCollectives += data.stats.totalCollectives;
         console.log(`>>> processing ${data.stats.totalCollectives} collectives`);
       })
       .then(() =>
         getTransactions(Object.keys(collectivesById), startDate, endDate, {
-          include: [{ model: models.Expense }, { model: models.User, as: 'createdByUser' }],
+          include: [
+            {
+              model: models.Expense,
+              include: [
+                'fromCollective',
+                {
+                  model: models.ExpenseItem,
+                  as: 'items',
+                  where: {
+                    url: { [Op.not]: null },
+                  },
+                },
+              ],
+            },
+            {
+              model: models.User,
+              as: 'createdByUser',
+            },
+          ],
         }),
       )
       .tap(transactions => {
@@ -281,21 +305,28 @@ async function HostReport(year, month, hostId) {
       .tap(transactions => {
         const csv = models.Transaction.exportCSV(transactions, collectivesById);
         attachments.push({
-          filename: csv_filename,
+          filename: `${host.slug}-${csvFilename}`,
           content: csv,
         });
       })
       .then(transactions => (data.transactions = transactions))
-      .then(() =>
-        exportToPDF('expenses', data, {
+      .then(() => {
+        // Don't generate PDF in email if it's the yearly report
+        if (yearlyReport || process.env.SKIP_PDF) {
+          return;
+        }
+        return exportToPDF('expenses', data, {
           paper: host.currency === 'USD' ? 'Letter' : 'A4',
-        }),
-      )
-      .then(pdf => {
-        attachments.push({
-          filename: pdf_filename,
-          content: pdf,
         });
+      })
+      .then(pdf => {
+        if (pdf) {
+          attachments.push({
+            filename: `${host.slug}-${pdfFilename}`,
+            content: pdf,
+          });
+          data.expensesPdf = true;
+        }
       })
       .then(() => getHostStats(host, Object.keys(collectivesById)))
       .then(stats => {
@@ -325,7 +356,7 @@ async function HostReport(year, month, hostId) {
         data.stats = {
           ...data.stats,
           ...stats,
-          totalActiveCollectives: Object.keys(_.keyBy(data.transactions, 'CollectiveId')).length,
+          totalActiveCollectives: Object.keys(keyBy(data.transactions, 'CollectiveId')).length,
           numberTransactions: data.transactions.length,
           numberDonations: data.transactions.length - data.stats.numberPaidExpenses,
         };
@@ -348,7 +379,7 @@ async function HostReport(year, month, hostId) {
       .then(() => getHostAdminsEmails(host))
       .then(admins => sendEmail(admins, data, attachments))
       .catch(e => {
-        console.error(`Error in processing host ${host.slug}:`, e.message, e);
+        console.error(`Error in processing host ${host.slug}:`, e.message);
         debug(e);
       });
   };

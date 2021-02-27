@@ -1,8 +1,9 @@
-import models, { Op } from '../../models';
-import * as libpayments from '../../lib/payments';
-import * as currency from '../../lib/currency';
-import { TransactionTypes, OC_FEE_PERCENT } from '../../constants/transactions';
 import { get } from 'lodash';
+
+import { OC_FEE_PERCENT, TransactionTypes } from '../../constants/transactions';
+import * as currency from '../../lib/currency';
+import * as libpayments from '../../lib/payments';
+import models, { Op } from '../../models';
 
 /** Get the balance of a prepaid credit card
  *
@@ -82,7 +83,9 @@ async function processOrder(order) {
     throw new Error("This payment method doesn't have enough funds to complete this order");
   }
 
-  const platformFeePercent = get(order, 'data.platformFeePercent', OC_FEE_PERCENT);
+  const defaultPlatformFee =
+    order.collective.platformFeePercent === null ? OC_FEE_PERCENT : order.collective.platformFeePercent;
+  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFee);
   const platformFeeInHostCurrency = libpayments.calcFee(order.totalAmount, platformFeePercent);
 
   const hostFeePercent = get(order, 'data.hostFeePercent', order.collective.hostFeePercent);

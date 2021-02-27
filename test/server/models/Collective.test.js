@@ -1,13 +1,28 @@
 import { expect } from 'chai';
-import models, { Op } from '../../../server/models';
-import * as utils from '../../utils';
 import sinon from 'sinon';
+
+import { expenseStatus, roles } from '../../../server/constants';
+import plans from '../../../server/constants/plans';
+import { getFxRate } from '../../../server/lib/currency';
 import emailLib from '../../../server/lib/email';
-import { roles } from '../../../server/constants';
+import models, { Op } from '../../../server/models';
+import { PayoutMethodTypes } from '../../../server/models/PayoutMethod';
+import {
+  fakeCollective,
+  fakeEvent,
+  fakeExpense,
+  fakeHost,
+  fakeOrder,
+  fakePaymentMethod,
+  fakePayoutMethod,
+  fakeTransaction,
+  fakeUser,
+} from '../../test-helpers/fake-data';
+import * as utils from '../../utils';
 
 const { Transaction, Collective, User } = models;
 
-describe('Collective model', () => {
+describe('server/models/Collective', () => {
   let collective = {},
     opensourceCollective,
     user1,
@@ -99,8 +114,13 @@ describe('Collective model', () => {
       type: 'CREDIT',
       CreatedByUserId: 2,
       FromCollectiveId: 2,
+      platformFeeInHostCurrency: 0,
     },
   ];
+
+  beforeEach(async () => {
+    await utils.resetCaches();
+  });
 
   before(() => {
     sandbox = sinon.createSandbox();
@@ -135,6 +155,7 @@ describe('Collective model', () => {
           amount: 1000,
           currency: 'USD',
           UserId: user1.id,
+          FromCollectiveId: user1.CollectiveId,
           lastEditedById: user1.id,
           incurredAt: transactions[0].createdAt,
           createdAt: transactions[0].createdAt,
@@ -147,6 +168,7 @@ describe('Collective model', () => {
           amount: 15000,
           currency: 'USD',
           UserId: user1.id,
+          FromCollectiveId: user1.CollectiveId,
           lastEditedById: user1.id,
           incurredAt: transactions[1].createdAt,
           createdAt: transactions[1].createdAt,
@@ -159,6 +181,7 @@ describe('Collective model', () => {
           amount: 60100,
           currency: 'USD',
           UserId: user2.id,
+          FromCollectiveId: user2.CollectiveId,
           lastEditedById: user2.id,
           incurredAt: transactions[1].createdAt,
           createdAt: transactions[1].createdAt,
@@ -209,6 +232,41 @@ describe('Collective model', () => {
       expect(collective.slug).to.contain('incognito-');
       expect(collective.slug.length).to.equal(18);
     });
+  });
+
+  it('frees up current slug when deleted', async () => {
+    const slug = 'hi-this-is-an-unique-slug';
+    const collective = await fakeCollective({ slug });
+    await collective.destroy();
+
+    expect(slug).to.not.be.equal(collective.slug);
+    expect(/-\d+$/.test(collective.slug)).to.be.true;
+  });
+
+  it('prevents collective creation and limit user if spam is detected', async () => {
+    const user = await fakeUser();
+    const spamCollectiveData = {
+      name: 'BUY MY KETO',
+      website: 'https://supplementslove.com/buy-stuff',
+      CreatedByUserId: user.id,
+    };
+
+    // Should prevent collective creation
+    await expect(models.Collective.create(spamCollectiveData)).to.be.eventually.rejectedWith(
+      Error,
+      'Collective creation failed',
+    );
+
+    // Should limit user account
+    await user.reload();
+    expect(user.data.features.ALL).to.be.false;
+
+    // User should not be able to create any new collectives
+    const legitCollectiveData = { name: 'Legit project', CreatedByUserId: user.id };
+    await expect(models.Collective.create(legitCollectiveData)).to.be.eventually.rejectedWith(
+      Error,
+      "You're not authorized to create new collectives at the moment.",
+    );
   });
 
   it('does not create collective with a blacklisted slug', () => {
@@ -288,6 +346,7 @@ describe('Collective model', () => {
     it('fails to add another host', async () => {
       try {
         await collective.addHost(newHost, user1);
+        throw new Error("Didn't throw expected error!");
       } catch (e) {
         expect(e.message).to.contain('This collective already has a host');
       }
@@ -296,8 +355,18 @@ describe('Collective model', () => {
     it('fails to change host if there is a pending balance', async () => {
       try {
         await collective.changeHost();
+        throw new Error("Didn't throw expected error!");
       } catch (e) {
         expect(e.message).to.contain('Unable to change host: you still have a balance of $965');
+      }
+    });
+
+    it('fails to deactivate as host if it is hosting any collective', async () => {
+      try {
+        await hostUser.collective.deactivateAsHost();
+        throw new Error("Didn't throw expected error!");
+      } catch (e) {
+        expect(e.message).to.contain("You can't deactivate hosting while still hosting");
       }
     });
 
@@ -344,6 +413,40 @@ describe('Collective model', () => {
       expect(applyArgs).to.exist;
       expect(applyArgs[0]).to.equal(user1.email);
       expect(applyArgs[3].from).to.equal('hello@wwcode.opencollective.com');
+    });
+
+    it('updates hostFeePercent for collective and events when adding or changing host', async () => {
+      const collective = await fakeCollective({ hostFeePercent: 0, HostCollectiveId: null });
+      const event = await fakeEvent({
+        ParentCollectiveId: collective.id,
+        hostFeePercent: 0,
+      });
+      const host = await fakeHost({ hostFeePercent: 3 });
+      // Adding new host
+      await collective.addHost(host, user2);
+      await Promise.all([event.reload(), collective.reload()]);
+      expect(collective.hostFeePercent).to.be.equal(3);
+      expect(event.hostFeePercent).to.be.equal(3);
+
+      // Changing hosts
+      const newHost = await fakeHost({ hostFeePercent: 30 });
+      await collective.changeHost(newHost.id, user2);
+      await Promise.all([event.reload(), collective.reload()]);
+      expect(collective.hostFeePercent).to.be.equal(30);
+      expect(event.hostFeePercent).to.be.equal(30);
+    });
+
+    it('returns active plan', async () => {
+      const plan = await hostUser.collective.getPlan();
+
+      expect(plan).to.deep.equal({
+        name: 'default',
+        hostedCollectives: 2,
+        addedFunds: 0,
+        bankTransfers: 0,
+        transferwisePayouts: 0,
+        ...plans.default,
+      });
     });
   });
 
@@ -401,6 +504,37 @@ describe('Collective model', () => {
       expect(balance).to.equal(sum);
       done();
     });
+  });
+
+  it('computes the balance deducting expenses scheduled for payment', async () => {
+    const collective = await fakeCollective();
+    await fakeTransaction({
+      createdAt: new Date(),
+      CollectiveId: collective.id,
+      amount: 500,
+      amountInHostCurrency: 50000,
+      netAmountInCollectiveCurrency: 45000,
+      currency: 'USD',
+      type: 'CREDIT',
+      CreatedByUserId: 2,
+      FromCollectiveId: 2,
+      platformFeeInHostCurrency: 0,
+    });
+    await fakeExpense({
+      CollectiveId: collective.id,
+      status: expenseStatus.SCHEDULED_FOR_PAYMENT,
+      amount: 20000,
+    });
+    await fakeExpense({
+      CollectiveId: collective.id,
+      status: expenseStatus.PROCESSING,
+      amount: 10000,
+      // eslint-disable-next-line camelcase
+      data: { payout_batch_id: 1 },
+    });
+
+    const balance = await collective.getBalance();
+    expect(balance).to.equal(45000 - 30000);
   });
 
   it('computes the number of backers', () =>
@@ -533,6 +667,23 @@ describe('Collective model', () => {
             expect(transactions[0].collective).to.have.property('name');
           });
       });
+    });
+  });
+
+  describe('canBeUsedAsPayoutProfile', () => {
+    const shouldBeUsableAsPayout = account => expect(account.canBeUsedAsPayoutProfile()).to.be.true;
+    const shouldNotBeUsableAsPayout = account => expect(account.canBeUsedAsPayoutProfile()).to.be.false;
+
+    it('is true for users and organizations (even if host)', async () => {
+      shouldBeUsableAsPayout(await fakeCollective({ type: 'USER' }));
+      shouldBeUsableAsPayout(await fakeCollective({ type: 'ORGANIZATION' }));
+      shouldBeUsableAsPayout(await fakeCollective({ type: 'ORGANIZATION', isHostAccount: true }));
+    });
+
+    it('is false for incognito profiles, collectives and events', async () => {
+      shouldNotBeUsableAsPayout(await fakeCollective({ type: 'USER', isIncognito: true }));
+      shouldNotBeUsableAsPayout(await fakeCollective({ type: 'COLLECTIVE' }));
+      shouldNotBeUsableAsPayout(await fakeCollective({ type: 'EVENT' }));
     });
   });
 
@@ -761,6 +912,149 @@ describe('Collective model', () => {
 
       expect(usersOverThreshold.length).to.eq(1);
       expect(usersOverThreshold[0].email).to.eq(users[1].email);
+    });
+  });
+
+  describe('getTotalBankTransfers', () => {
+    let collective, order;
+    beforeEach(async () => {
+      await utils.resetTestDB();
+
+      collective = await fakeCollective({ isHostAccount: true });
+      order = await fakeOrder({ status: 'PAID', PaymentMethodId: null, totalAmount: 100000, processedAt: new Date() });
+      await fakeTransaction({
+        amount: 100000,
+        HostCollectiveId: collective.id,
+        currency: 'USD',
+        OrderId: order.id,
+      });
+    });
+
+    it('should return the sum of all bank transfers', async () => {
+      const totalBankTransfers = await collective.getTotalBankTransfers();
+      expect(totalBankTransfers).to.equals(100000);
+    });
+
+    it('should consider the fx rate if another currency', async () => {
+      order = await fakeOrder({
+        status: 'PAID',
+        currency: 'EUR',
+        PaymentMethodId: null,
+        totalAmount: 20000,
+        processedAt: new Date(),
+      });
+      await fakeTransaction({
+        amount: 100000,
+        HostCollectiveId: collective.id,
+        currency: 'EUR',
+        hostCurrency: 'GBP',
+        OrderId: order.id,
+      });
+
+      const fx = await getFxRate('EUR', 'USD');
+      const totalBankTransfers = await collective.getTotalBankTransfers();
+      expect(totalBankTransfers).to.equals(100000 + 100000 * fx);
+    });
+  });
+
+  describe('getTotalAddedFunds', () => {
+    let collective, order, paymentMethod;
+    beforeEach(async () => {
+      await utils.resetTestDB();
+
+      collective = await fakeCollective({ isHostAccount: true });
+      paymentMethod = await fakePaymentMethod({
+        service: 'opencollective',
+        type: 'collective',
+        data: {},
+        CollectiveId: collective.id,
+      });
+      order = await fakeOrder({
+        status: 'PAID',
+        totalAmount: 100000,
+        processedAt: new Date(),
+        PaymentMethodId: paymentMethod.id,
+      });
+      await fakeTransaction({
+        amount: 100000,
+        HostCollectiveId: collective.id,
+        currency: 'USD',
+        OrderId: order.id,
+      });
+    });
+
+    it('should return the sum of all bank transfers', async () => {
+      const totalAddedFunds = await collective.getTotalAddedFunds();
+      expect(totalAddedFunds).to.equals(100000);
+    });
+
+    it('should consider the fx rate if another currency', async () => {
+      order = await fakeOrder({
+        status: 'PAID',
+        currency: 'EUR',
+        PaymentMethodId: paymentMethod.id,
+        totalAmount: 20000,
+        processedAt: new Date(),
+      });
+      await fakeTransaction({
+        amount: 100000,
+        HostCollectiveId: collective.id,
+        currency: 'EUR',
+        hostCurrency: 'GBP',
+        OrderId: order.id,
+      });
+
+      const fx = await getFxRate('EUR', 'USD');
+      const totalAddedFunds = await collective.getTotalAddedFunds();
+      expect(totalAddedFunds).to.equals(100000 + 100000 * fx);
+    });
+  });
+
+  describe('getTotalTransferwisePayouts', () => {
+    let collective, expense, payoutMethod;
+    beforeEach(async () => {
+      await utils.resetTestDB();
+
+      collective = await fakeCollective({ isHostAccount: true });
+      payoutMethod = await fakePayoutMethod({
+        type: PayoutMethodTypes.BANK_ACCOUNT,
+      });
+      expense = await fakeExpense({
+        status: 'PAID',
+        amount: 100000,
+        PayoutMethodId: payoutMethod.id,
+      });
+      await fakeTransaction({
+        amount: 100000,
+        HostCollectiveId: collective.id,
+        currency: 'USD',
+        ExpenseId: expense.id,
+        type: 'DEBIT',
+      });
+    });
+
+    it('should return the sum of all bank transfers', async () => {
+      const totalAddedFunds = await collective.getTotalTransferwisePayouts();
+      expect(totalAddedFunds).to.equals(100000);
+    });
+
+    it('should consider the fx rate if another currency', async () => {
+      await fakeExpense({
+        status: 'PAID',
+        amount: 50000,
+        PayoutMethodId: payoutMethod.id,
+      });
+      await fakeTransaction({
+        amount: 50000,
+        HostCollectiveId: collective.id,
+        currency: 'EUR',
+        ExpenseId: expense.id,
+        type: 'DEBIT',
+      });
+
+      const fx = await getFxRate('EUR', 'USD');
+      const totalAddedFunds = await collective.getTotalTransferwisePayouts();
+      expect(totalAddedFunds).to.equals(100000 + 50000 * fx);
     });
   });
 });
