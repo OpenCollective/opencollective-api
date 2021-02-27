@@ -1,5 +1,7 @@
-import { Request, Response, NextFunction } from 'express';
+import { NextFunction, Request, Response } from 'express';
+
 import paymentProviders from '../paymentProviders';
+import paypalWebhookHandler from '../paymentProviders/paypal/webhook';
 import transferwiseWebhookHandler from '../paymentProviders/transferwise/webhook';
 
 export async function stripeWebhook(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -14,7 +16,19 @@ export async function transferwiseWebhook(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  await transferwiseWebhookHandler(req)
-    .then(() => res.sendStatus(200))
-    .catch(next);
+  try {
+    await transferwiseWebhookHandler(req);
+    res.sendStatus(200);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function paypalWebhook(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await paypalWebhookHandler(req);
+    res.sendStatus(200);
+  } catch (e) {
+    next(e);
+  }
 }

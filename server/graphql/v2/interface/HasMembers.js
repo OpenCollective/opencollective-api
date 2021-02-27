@@ -1,10 +1,10 @@
-import { GraphQLInt, GraphQLList } from 'graphql';
+import { GraphQLInt, GraphQLList, GraphQLNonNull } from 'graphql';
 
+import models, { Op } from '../../../models';
 import { MemberCollection } from '../collection/MemberCollection';
 import { AccountType, AccountTypeToModelMapping } from '../enum/AccountType';
 import { MemberRole } from '../enum/MemberRole';
-
-import models, { Op } from '../../../models';
+import { ChronologicalOrderInput } from '../input/ChronologicalOrderInput';
 
 export const HasMembersFields = {
   members: {
@@ -15,8 +15,17 @@ export const HasMembersFields = {
       offset: { type: GraphQLInt, defaultValue: 0 },
       role: { type: new GraphQLList(MemberRole) },
       accountType: { type: new GraphQLList(AccountType) },
+      orderBy: {
+        type: new GraphQLNonNull(ChronologicalOrderInput),
+        defaultValue: { field: 'createdAt', direction: 'ASC' },
+        description: 'Order of the results',
+      },
     },
-    async resolve(collective, args) {
+    async resolve(collective, args, req) {
+      if (collective.isIncognito && !req.remoteUser?.isAdmin(collective.id)) {
+        return { offset: args.offset, limit: args.limit, totalCount: 0, nodes: [] };
+      }
+
       const where = { CollectiveId: collective.id };
 
       if (args.role && args.role.length > 0) {
@@ -33,6 +42,7 @@ export const HasMembersFields = {
         where,
         limit: args.limit,
         offset: args.offset,
+        order: [[args.orderBy.field, args.orderBy.direction]],
         include: [
           {
             model: models.Collective,
@@ -42,7 +52,7 @@ export const HasMembersFields = {
         ],
       });
 
-      return { limit: args.limit, offset: args.offset, ...result };
+      return { nodes: result.rows, totalCount: result.count, limit: args.limit, offset: args.offset };
     },
   },
 };
