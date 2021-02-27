@@ -11,7 +11,7 @@ You are currently contributing {{{currency order.Subscription.amount currency=or
 [increase your contribution]({{../config.host.website}}/{{../fromCollective.slug}}/subscriptions)
 [share their goal](https://twitter.com/intent/tweet?text={{{encodeURIComponent nextGoal.tweet}}})
 {{else}}
-You have contributed {{{currency order.totalAmount currency=order.currency}}}.
+You have contributed {{{order.totalAmount}}}.
 [increase your contribution]({{../config.host.website}}/{{slug}}/donate)
 [share their goal](https://twitter.com/intent/tweet?text={{{encodeURIComponent nextGoal.tweet}}})
 {{/if}}
@@ -25,7 +25,7 @@ You have contributed {{{currency order.totalAmount currency=order.currency}}}.
 {{name}}:
 {{publicUrl}}
 Backers: {{stats.backers.lastMonth}} (+{{stats.backers.new}}{{#if stats.backers.lost}}, -{{stats.backers.lost}}{{/if}})
-Current balance: {{{currency stats.balance currency=currency}}} (+{{{currency stats.totalDonations currency=currency}}}{{#if stats.totalPaidExpenses}}, {{{currency stats.totalPaidExpenses currency=currency}}}{{/if}}) 
+Current balance: {{{currency stats.balance currency=currency}}} (+{{{currency stats.totalDonations currency=currency}}}{{#if stats.totalPaidExpenses}}, -{{{currency stats.totalPaidExpenses currency=currency}}}{{/if}}) 
 {{#if nextGoal}}
 Next goal: {{{currency nextGoal.amount currency=currency}}}{{#if nextGoal.interval}}/{{nextGoal.interval}}{{/if}} to {{nextGoal.title}} ({{nextGoal.percentage}} - missing {{{currency nextGoal.missing.amount currency=currency}}}{{#if nextGoal.missing.interval}}/{{nextGoal.missing.interval}}{{/if}})
 {{/if}}
@@ -33,7 +33,7 @@ Next goal: {{{currency nextGoal.amount currency=currency}}}{{#if nextGoal.interv
 Your contribution: {{currency order.Subscription.amount currency=order.Subscription.currency}} per {{order.Subscription.interval}}
 Member since: {{{moment order.subscription.createdAt format="MMMM YYYY"}}}
 {{else}}
-Your contribution: {{currency order.totalAmount currency=order.currency}}
+Your contribution: {{order.totalAmount}}
 {{/if}}
 {{#if updates}}
 

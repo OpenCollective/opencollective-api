@@ -1,16 +1,22 @@
 /** @module paymentProviders/opencollective */
 
 import collective from './collective';
+import manual from './manual';
 import prepaid from './prepaid';
-import giftcard from './giftcard';
+import virtualcard from './virtualcard';
 
 /** Process orders from Open Collective payment method types */
 async function processOrder(order) {
   switch (order.paymentMethod.type) {
-  case 'prepaid': return prepaid.processOrder(order);
-  case 'giftcard': return giftcard.processOrder(order);
-  case 'collective':        // Fall through
-  default: return collective.processOrder(order);
+    case 'prepaid':
+      return prepaid.processOrder(order);
+    case 'virtualcard':
+      return virtualcard.processOrder(order);
+    case 'manual':
+      return manual.processOrder(order);
+    case 'collective': // Fall through
+    default:
+      return collective.processOrder(order);
   }
 }
 
@@ -21,8 +27,9 @@ export default {
   types: {
     default: collective,
     collective,
-    giftcard,
+    manual,
     prepaid,
+    virtualcard,
   },
   processOrder,
 };

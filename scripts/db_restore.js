@@ -1,4 +1,8 @@
+#!/usr/bin/env node
+import '../server/env';
+
 import { ArgumentParser } from 'argparse';
+
 import * as libdb from '../server/lib/db';
 
 /** Help on how to use this script */
@@ -17,7 +21,7 @@ async function hasData(client) {
 }
 
 /** Launcher that recreates a database & load a dump into it. */
-async function main(args) {
+export async function main(args) {
   if (!args.file) {
     usage();
     return;
@@ -27,7 +31,7 @@ async function main(args) {
 
   const data = await hasData(clientApp);
 
-  if (!data || data && args.force) {
+  if (!data || (data && args.force)) {
     await libdb.loadDB(args.file);
   }
 
@@ -38,7 +42,7 @@ async function main(args) {
 function parseCommandLineArguments() {
   const parser = new ArgumentParser({
     addHelp: true,
-    description: 'Restore dump file into a Database'
+    description: 'Restore dump file into a Database',
   });
   parser.addArgument(['-q', '--quiet'], {
     help: 'Silence output',
@@ -47,16 +51,18 @@ function parseCommandLineArguments() {
     constant: false,
   });
   parser.addArgument(['-f', '--force'], {
-    help: "Overwrite existing database",
+    help: 'Overwrite existing database',
     defaultValue: false,
     action: 'storeConst',
     constant: true,
   });
   parser.addArgument(['file'], {
-    help: "Path for the dump file",
+    help: 'Path for the dump file',
     action: 'store',
   });
   return parser.parseArgs();
 }
 
-if (!module.parent) main(parseCommandLineArguments());
+if (!module.parent) {
+  main(parseCommandLineArguments());
+}

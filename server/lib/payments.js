@@ -1,21 +1,32 @@
 /** @module lib/payments */
-
 import Promise from 'bluebird';
-import { includes, pick, get, find } from 'lodash';
+import config from 'config';
+import debugLib from 'debug';
+import { find, get, includes, pick } from 'lodash';
 import { Op } from 'sequelize';
 
+import activities from '../constants/activities';
+import status from '../constants/order_status';
+import roles from '../constants/roles';
+import tiers from '../constants/tiers';
+import { OC_FEE_PERCENT } from '../constants/transactions';
+import { createGiftCardPrepaidPaymentMethod, isGiftCardPrepaidBudgetOrder } from '../lib/gift-cards';
+import { formatAccountDetails } from '../lib/transferwise';
+import { formatCurrency } from '../lib/utils';
 import models from '../models';
-import emailLib from './email';
-import { types } from '../constants/collectives';
 import paymentProviders from '../paymentProviders';
+
+import emailLib from './email';
+import { subscribeOrUpgradePlan, validatePlanRequest } from './plans';
 import * as libsubscription from './subscriptions';
 import * as libtransactions from './transactions';
-import { getRecommendedCollectives } from './data';
+
+const debug = debugLib('payments');
 
 /** Check if paymentMethod has a given fully qualified name
  *
  * Payment Provider names are composed by service and type joined with
- * a dot. E.g.: `opencollective.giftcard`, `stripe.creditcard`,
+ * a dot. E.g.: `opencollective.virtualcard`, `stripe.creditcard`,
  * etc. This function returns true if a *paymentMethod* instance has a
  * given *fqn*.
  *
@@ -26,7 +37,7 @@ import { getRecommendedCollectives } from './data';
  * @returns {Boolean} true if *paymentMethod* has a fully qualified
  *  name that equals *fqn*.
  * @example
- * > isProvider('opencollective.giftcard', { service: 'foo', type: 'bar' })
+ * > isProvider('opencollective.virtualcard', { service: 'foo', type: 'bar' })
  * false
  * > isProvider('stripe.creditcard', { service: 'stripe', type: 'creditcard' })
  * true
@@ -41,13 +52,21 @@ export function isProvider(fqn, paymentMethod) {
  * @param {models.PaymentMethod} paymentMethod This must point to a row in the
  *  `PaymentMethods` table. That information is retrieved and the
  *  fields `service' & `type' are used to figure out which payment
- *  {service: 'stripe', type: 'bitcoin'}.
+ *  {service: 'stripe', type: 'creditcard'}.
  * @return the payment method's JS module.
  */
 export function findPaymentMethodProvider(paymentMethod) {
-  const provider = paymentMethod ? paymentMethod.service : 'manual';
-  const methodType = paymentMethod.type || 'default';
-  return paymentProviders[provider].types[methodType]; // eslint-disable-line import/namespace
+  const provider = get(paymentMethod, 'service') || 'opencollective';
+  const methodType = get(paymentMethod, 'type') || 'default';
+  let paymentMethodProvider = paymentProviders[provider];
+  if (!paymentMethodProvider) {
+    throw new Error(`No payment provider found for ${provider}`);
+  }
+  paymentMethodProvider = paymentMethodProvider.types[methodType]; // eslint-disable-line import/namespace
+  if (!paymentMethodProvider) {
+    throw new Error(`No payment provider found for ${provider}:${methodType}`);
+  }
+  return paymentMethodProvider;
 }
 
 /** Process an order using its payment information
@@ -57,8 +76,12 @@ export function findPaymentMethodProvider(paymentMethod) {
  *  the `PaymentMethods` table.
  */
 export async function processOrder(order, options) {
-  const paymentMethod = findPaymentMethodProvider(order.paymentMethod);
-  return await paymentMethod.processOrder(order, options);
+  const paymentMethodProvider = findPaymentMethodProvider(order.paymentMethod);
+  if (get(paymentMethodProvider, 'features.waitToCharge') && !get(order, 'paymentMethod.paid')) {
+    return;
+  } else {
+    return await paymentMethodProvider.processOrder(order, options);
+  }
 }
 
 /** Refund a transaction
@@ -70,8 +93,16 @@ export async function processOrder(order, options) {
  *  associated to the refund transaction as who performed the refund.
  */
 export async function refundTransaction(transaction, user) {
-  const paymentMethod = findPaymentMethodProvider(transaction.PaymentMethod);
-  return await paymentMethod.refundTransaction(transaction, user);
+  // If no payment method was used, it means that we're using a manual payment method
+  const paymentMethodProvider = transaction.PaymentMethod
+    ? findPaymentMethodProvider(transaction.PaymentMethod)
+    : paymentProviders.opencollective.types.manual;
+
+  if (!paymentMethodProvider.refundTransaction) {
+    throw new Error('This payment method provider does not support refunds');
+  }
+
+  return await paymentMethodProvider.refundTransaction(transaction, user);
 }
 
 /** Calculates how much an amount's fee is worth.
@@ -83,7 +114,7 @@ export async function refundTransaction(transaction, user) {
  * @return {Number} fee-percent of the amount rounded
  */
 export function calcFee(amount, fee) {
-  return Math.round(amount * fee / 100);
+  return Math.round((amount * fee) / 100);
 }
 
 /** Create refund transactions
@@ -113,15 +144,26 @@ export function calcFee(amount, fee) {
 export async function createRefundTransaction(transaction, refundedPaymentProcessorFee, data, user) {
   /* If the transaction passed isn't the one from the collective
    * perspective, the opposite transaction is retrieved. */
-  const collectiveLedger = (transaction.type === 'CREDIT') ? transaction :
-        await models.Transaction.find({ where: {
-          TransactionGroup: transaction.TransactionGroup,
-          id: { [Op.ne]: transaction.id }
-        } });
+  const collectiveLedger =
+    transaction.type === 'CREDIT'
+      ? transaction
+      : await models.Transaction.findOne({
+          where: {
+            TransactionGroup: transaction.TransactionGroup,
+            id: { [Op.ne]: transaction.id },
+          },
+        });
   const userLedgerRefund = pick(collectiveLedger, [
-    'FromCollectiveId', 'CollectiveId', 'HostCollectiveId', 'PaymentMethodId',
-    'OrderId', 'hostCurrencyFxRate', 'hostCurrency',
-    'hostFeeInHostCurrency', 'platformFeeInHostCurrency',
+    'currency',
+    'FromCollectiveId',
+    'CollectiveId',
+    'HostCollectiveId',
+    'PaymentMethodId',
+    'OrderId',
+    'hostCurrencyFxRate',
+    'hostCurrency',
+    'hostFeeInHostCurrency',
+    'platformFeeInHostCurrency',
     'paymentProcessorFeeInHostCurrency',
   ]);
   userLedgerRefund.CreatedByUserId = user.id;
@@ -140,8 +182,7 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
    * of the fee will be transferred from the host to the user so the
    * user can get the full refund. */
   if (refundedPaymentProcessorFee === 0) {
-    userLedgerRefund.hostFeeInHostCurrency +=
-      userLedgerRefund.paymentProcessorFeeInHostCurrency;
+    userLedgerRefund.hostFeeInHostCurrency += userLedgerRefund.paymentProcessorFeeInHostCurrency;
     userLedgerRefund.paymentProcessorFeeInHostCurrency = 0;
   }
 
@@ -153,19 +194,28 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
   return models.Transaction.createDoubleEntry(userLedgerRefund);
 }
 
-export async function associateTransactionRefundId(transaction, refund) {
+export async function associateTransactionRefundId(transaction, refund, data) {
   const [tr1, tr2, tr3, tr4] = await models.Transaction.findAll({
     order: ['id'],
-    where: { [Op.or]: [
-      { TransactionGroup: transaction.TransactionGroup },
-      { TransactionGroup: refund.TransactionGroup },
-    ] }
+    where: {
+      [Op.or]: [{ TransactionGroup: transaction.TransactionGroup }, { TransactionGroup: refund.TransactionGroup }],
+    },
   });
+  // After refunding a transaction, in some cases the data may
+  // be update as well(stripe data changes after refunds)
+  if (data) {
+    tr1.data = data;
+    tr2.data = data;
+  }
 
-  tr1.RefundTransactionId = tr4.id; await tr1.save(); // User Ledger
-  tr2.RefundTransactionId = tr3.id; await tr2.save(); // Collective Ledger
-  tr3.RefundTransactionId = tr2.id; await tr3.save(); // Collective Ledger
-  tr4.RefundTransactionId = tr1.id; await tr4.save(); // User Ledger
+  tr1.RefundTransactionId = tr4.id;
+  await tr1.save(); // User Ledger
+  tr2.RefundTransactionId = tr3.id;
+  await tr2.save(); // Collective Ledger
+  tr3.RefundTransactionId = tr2.id;
+  await tr3.save(); // Collective Ledger
+  tr4.RefundTransactionId = tr1.id;
+  await tr4.save(); // User Ledger
 
   // We need to return the same transactions we received because the
   // graphql mutation needs it to return to the user. However we have
@@ -173,29 +223,71 @@ export async function associateTransactionRefundId(transaction, refund) {
   return find([tr1, tr2, tr3, tr4], { id: transaction.id });
 }
 
+export const sendEmailNotifications = (order, transaction) => {
+  debug('sendEmailNotifications');
+  // for gift cards and manual payment methods
+  if (!transaction) {
+    sendOrderProcessingEmail(order);
+    sendManualPendingOrderEmail(order);
+  } else {
+    order.transaction = transaction;
+    sendOrderConfirmedEmail(order); // async
+  }
+};
+
+export const createSubscription = async order => {
+  const subscription = await models.Subscription.create({
+    amount: order.totalAmount,
+    interval: order.interval,
+    currency: order.currency,
+  });
+  // The order instance doesn't have the Subscription field
+  // here because it was just created and no models were
+  // included so we're doing that manually here. Not the
+  // cutest but works.
+  order.Subscription = subscription;
+  const updatedDates = libsubscription.getNextChargeAndPeriodStartDates('new', order);
+  order.Subscription.nextChargeDate = updatedDates.nextChargeDate;
+  order.Subscription.nextPeriodStart = updatedDates.nextPeriodStart || order.Subscription.nextPeriodStart;
+
+  // Both subscriptions and one time donations are charged
+  // immediately and there won't be a better time to update
+  // this field after this. Please notice that it will change
+  // when the issue #729 is tackled.
+  // https://github.com/opencollective/opencollective/issues/729
+  order.Subscription.chargeNumber = 1;
+  order.Subscription.activate();
+  await order.update({
+    status: status.ACTIVE,
+    SubscriptionId: order.Subscription.id,
+  });
+};
+
 /**
  * Execute an order as user using paymentMethod
  * Note: validation of the paymentMethod happens in `models.Order.setPaymentMethod`. Not here anymore.
  * @param {Object} order { tier, description, totalAmount, currency, interval (null|month|year), paymentMethod }
- * @param {Object} options { hostFeePercent, platformFeePercent} (only
- *  for add funds and if remoteUser is admin of host or root)
+ * @param {Object} options { hostFeePercent, platformFeePercent} (only for add funds and if remoteUser is admin of host or root)
  */
-export const executeOrder = (user, order, options) => {
-
-  if (! (order instanceof models.Order)) {
-    return Promise.reject(new Error("order should be an instance of the Order model"));
+export const executeOrder = async (user, order, options) => {
+  if (!(user instanceof models.User)) {
+    return Promise.reject(new Error('user should be an instance of the User model'));
+  }
+  if (!(order instanceof models.Order)) {
+    return Promise.reject(new Error('order should be an instance of the Order model'));
   }
   if (!order) {
-    return Promise.reject(new Error("No order provided"));
+    return Promise.reject(new Error('No order provided'));
   }
   if (order.processedAt) {
     return Promise.reject(new Error(`This order (#${order.id}) has already been processed at ${order.processedAt}`));
   }
+  debug('executeOrder', user.email, order.description, order.totalAmount, options);
 
   const payment = {
     amount: order.totalAmount,
     interval: order.interval,
-    currency: order.currency
+    currency: order.currency,
   };
 
   try {
@@ -204,84 +296,57 @@ export const executeOrder = (user, order, options) => {
     return Promise.reject(error);
   }
 
-  return order.populate()
-    .then(() => {
-      if (payment.interval) {
-        // @lincoln: shouldn't this section be executed after we successfully charge the user for the first payment? (ie. after `processOrder`)
-        return models.Subscription.create(payment).then(subscription => {
-          // The order instance doesn't have the Subscription field
-          // here because it was just created and no models were
-          // included so we're doing that manually here. Not the
-          // cutest but works.
-          order.Subscription = subscription;
-          const updatedDates = libsubscription.getNextChargeAndPeriodStartDates('new', order);
-          order.Subscription.nextChargeDate = updatedDates.nextChargeDate;
-          order.Subscription.nextPeriodStart = updatedDates.nextPeriodStart || order.Subscription.nextPeriodStart;
+  await order.populate();
+  await validatePlanRequest(order);
 
-          // Both subscriptions and one time donations are charged
-          // immediatelly and there won't be a better time to update
-          // this field after this. Please notice that it will change
-          // when the issue #729 is tackled.
-          // https://github.com/opencollective/opencollective/issues/729
-          order.Subscription.chargeNumber = 1;
-          return subscription.save();
-        }).then((subscription) => {
-          return order.update({ SubscriptionId: subscription.id });
-        });
-      }
-      return null;
-    })
-    .then(() => {
-      return processOrder(order, options)
-        .tap(async () => {
-          if (!order.matchingFund) return null;
-          const matchingFundCollective = await models.Collective.findById(order.matchingFund.CollectiveId);
-          // if there is a matching fund, we execute the order
-          // also adds the owner of the matching fund as a BACKER of collective
-          const matchingOrder = {
-            ...pick(order, ['id', 'collective', 'tier', 'currency']),
-            totalAmount: order.totalAmount * order.matchingFund.matching,
-            paymentMethod: order.matchingFund,
-            FromCollectiveId: order.matchingFund.CollectiveId,
-            fromCollective: matchingFundCollective,
-            description: `Matching ${order.matchingFund.matching}x ${order.fromCollective.name}'s donation`,
-            createdByUser: await matchingFundCollective.getUser()
-          };
+  const transaction = await processOrder(order, options);
+  if (transaction) {
+    await order.update({ status: status.PAID, processedAt: new Date() });
 
-          // processOrder expects an update function to update `order.processedAt`
-          matchingOrder.update = () => {};
+    // Register user as collective backer
+    await order.collective.findOrAddUserWithRole(
+      { id: user.id, CollectiveId: order.FromCollectiveId },
+      roles.BACKER,
+      { TierId: get(order, 'tier.id') },
+      { order },
+    );
 
-          return paymentProviders[order.paymentMethod.service].types[order.paymentMethod.type || 'default'].processOrder(matchingOrder, options) // eslint-disable-line import/namespace
-            .then(transaction => {
-              sendOrderConfirmedEmail({
-                ...order,
-                transaction
-              });
-            });
-        });
-    })
-    .then(transaction => {
-      // for gift cards
-      if (!transaction && isProvider('opencollective.giftcard', order.paymentMethod)) {
-        sendOrderProcessingEmail(order)
-        .then(() => sendSupportEmailForManualIntervention(order)); // async
-      } else if (!transaction && order.paymentMethod.service === 'stripe' && order.paymentMethod.type === 'bitcoin') {
-        sendOrderProcessingEmail(order); // async
-      } else {
-        order.transaction = transaction;
-        sendOrderConfirmedEmail(order); // async
-      }
-      return transaction;
-    })
-    .tap(async (transaction) => {
-      // Credit card charges are synchronous. If the transaction is
-      // created here it means that the payment went through so it's
-      // safe to enable subscriptions after this.
-      if (payment.interval && transaction) await order.Subscription.activate();
-    });
+    // Update collective plan if subscribing to opencollective's tier plans
+    await subscribeOrUpgradePlan(order);
+
+    // Create a Pre-Paid Payment Method for the Gift Card budget
+    if (isGiftCardPrepaidBudgetOrder(order)) {
+      await createGiftCardPrepaidPaymentMethod(transaction);
+    }
+  }
+
+  // If the user asked for it, mark the payment method as saved for future financial contributions
+  if (order.data && order.data.savePaymentMethod) {
+    order.paymentMethod.saved = true;
+    order.paymentMethod.save();
+  }
+
+  sendEmailNotifications(order, transaction);
+
+  // Register VirtualCard emitter as collective backer too
+  if (transaction && transaction.UsingVirtualCardFromCollectiveId) {
+    await order.collective.findOrAddUserWithRole(
+      { id: user.id, CollectiveId: transaction.UsingVirtualCardFromCollectiveId },
+      roles.BACKER,
+      { TierId: get(order, 'tier.id') },
+      { order, skipActivity: true },
+    );
+  }
+
+  // Credit card charges are synchronous. If the transaction is
+  // created here it means that the payment went through so it's
+  // safe to create subscription after this.
+
+  // The order will be updated to ACTIVE
+  order.interval && transaction && (await createSubscription(order));
 };
 
-const validatePayment = (payment) => {
+const validatePayment = payment => {
   if (payment.interval && !includes(['month', 'year'], payment.interval)) {
     throw new Error('Interval should be null, month or year.');
   }
@@ -289,90 +354,156 @@ const validatePayment = (payment) => {
   if (!payment.amount) {
     throw new Error('payment.amount missing');
   }
-
-  if (payment.amount < 50) {
-    throw new Error('payment.amount must be at least $0.50');
-  }
 };
 
-const sendOrderConfirmedEmail = async (order) => {
+const sendOrderConfirmedEmail = async order => {
   const { collective, tier, interval, fromCollective } = order;
   const user = order.createdByUser;
+  const host = await collective.getHostCollective();
 
-  if (collective.type === types.EVENT) {
-    return emailLib.send('ticket.confirmed', user.email,
-      {
-        order: pick(order, ['totalAmount', 'currency', 'createdAt', 'quantity']),
-        user: user.info,
+  if (tier && tier.type === tiers.TICKET) {
+    return models.Activity.create({
+      type: activities.TICKET_CONFIRMED,
+      data: {
+        EventCollectiveId: collective.id,
+        UserId: user.id,
         recipient: { name: fromCollective.name },
-        collective: collective.info,
-        tier: tier.info
+        order: pick(order, ['totalAmount', 'currency', 'createdAt', 'quantity']),
+        tier: tier && tier.info,
+        host: host ? host.info : {},
       },
-      {
-        from: `${collective.name} <hello@${collective.slug}.opencollective.com>`
-      });
+    });
   } else {
     // normal order
     const relatedCollectives = await order.collective.getRelatedCollectives(3, 0);
-    const recommendedCollectives = await getRecommendedCollectives(order.collective, 3);
-    const emailOptions = { from: `${collective.name} <hello@${collective.slug}.opencollective.com>` };
+    const emailOptions = {
+      from: `${collective.name} <hello@${collective.slug}.opencollective.com>`,
+    };
     const data = {
       order: pick(order, ['totalAmount', 'currency', 'createdAt']),
       transaction: pick(order.transaction, ['createdAt', 'uuid']),
       user: user.info,
       collective: collective.info,
+      host: host ? host.info : {},
       fromCollective: fromCollective.minimal,
       interval,
       relatedCollectives,
-      recommendedCollectives,
-      monthlyInterval: (interval === 'month'),
+      monthlyInterval: interval === 'month',
       firstPayment: true,
-      subscriptionsLink: interval && user.generateLoginLink(`/${fromCollective.slug}/subscriptions`)
+      subscriptionsLink: interval && `${config.host.website}/${fromCollective.slug}/subscriptions`,
     };
 
-    let matchingFundCollective;
-    if (order.matchingFund) {
-      matchingFundCollective = await models.Collective.findById(order.matchingFund.CollectiveId);
-      data.matchingFund = {
-        collective: pick(matchingFundCollective, ['slug', 'name', 'image']),
-        matching: order.matchingFund.matching,
-        amount: order.matchingFund.matching * order.totalAmount
-      };
-    }
-
-    // sending the order confirmed email to the matching fund owner or to the donor
-    if (get(order, 'transaction.FromCollectiveId') === get(order, 'matchingFund.CollectiveId')) {
-      const recipients = await matchingFundCollective.getEmails();
-      return emailLib.send('donationmatched', recipients, data, emailOptions);
-    } else {
-      return emailLib.send('thankyou', user.email, data, emailOptions);
-    }
+    return emailLib.send('thankyou', user.email, data, emailOptions);
   }
 };
 
-const sendSupportEmailForManualIntervention = (order) => {
+// Assumes one-time payments,
+export const sendOrderProcessingEmail = async order => {
+  const { collective, fromCollective } = order;
   const user = order.createdByUser;
-  return emailLib.sendMessage(
-    'support@opencollective.com',
-    'Gift card order needs manual attention',
-    null,
-    { text: `Order Id: ${order.id} by userId: ${user.id}`});
+  const host = await collective.getHostCollective();
+  const parentCollective = await collective.getParentCollective();
+  const manualPayoutMethod = await models.PayoutMethod.findOne({
+    where: { CollectiveId: host.id, data: { isManualBankTransfer: true } },
+  });
+  const account = manualPayoutMethod && formatAccountDetails(manualPayoutMethod.data);
+
+  const data = {
+    account,
+    order: order.info,
+    user: user.info,
+    collective: collective.info,
+    host: host.info,
+    fromCollective: fromCollective.activity,
+    subscriptionsLink: `${config.host.website}/${fromCollective.slug}/subscriptions`,
+  };
+  const instructions = get(host, 'settings.paymentMethods.manual.instructions');
+  if (instructions) {
+    const formatValues = {
+      account,
+      orderid: order.id,
+      reference: order.id,
+      amount: formatCurrency(order.totalAmount, order.currency),
+      collective: parentCollective ? `${parentCollective.slug} event` : order.collective.slug,
+      tier: get(order, 'tier.slug') || get(order, 'tier.name'),
+    };
+    data.instructions = instructions.replace(/{([\s\S]+?)}/g, (match, p1) => {
+      if (p1) {
+        const key = p1.toLowerCase();
+        if (formatValues[key]) {
+          return formatValues[key];
+        }
+      }
+      return match;
+    });
+  }
+  return emailLib.send('order.processing', user.email, data, {
+    from: `${collective.name} <hello@${collective.slug}.opencollective.com>`,
+  });
 };
 
-// Assumes one-time payments,
-const sendOrderProcessingEmail = (order) => {
-    const { collective, fromCollective } = order;
+const sendManualPendingOrderEmail = async order => {
+  const { collective, fromCollective } = order;
   const user = order.createdByUser;
+  const host = await collective.getHostCollective();
+  const data = {
+    order: order.info,
+    user: user.info,
+    collective: collective.info,
+    host: host.info,
+    fromCollective: fromCollective.activity,
+    pendingOrderLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
+  };
 
-  return emailLib.send(
-      'processing',
-      user.email,
-      { order: order.info,
-        user: user.info,
-        collective: collective.info,
-        fromCollective: fromCollective.minimal,
-        subscriptionsLink: user.generateLoginLink(`/${fromCollective.slug}/subscriptions`)
-      }, {
-        from: `${collective.name} <hello@${collective.slug}.opencollective.com>`
-      });
+  return emailLib.send('order.new.pendingFinancialContribution', user.email, data, {
+    from: `${collective.name} <hello@${collective.slug}.opencollective.com>`,
+  });
+};
+
+export const sendReminderPendingOrderEmail = async order => {
+  const { collective, fromCollective } = order;
+  const host = await collective.getHostCollective();
+
+  // It could be that pending orders are from pledged collective and don't have an host
+  // In this case, we should skip it
+  // TODO: we should be able to more precisely query orders and exclude these
+  if (!host) {
+    return;
+  }
+
+  const data = {
+    order: order.info,
+    collective: collective.info,
+    host: host.info,
+    fromCollective: fromCollective.activity,
+    viewDetailsLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
+  };
+
+  const adminUsers = await host.getAdminUsers();
+  for (const adminUser of adminUsers) {
+    await emailLib.send('order.reminder.pendingFinancialContribution', adminUser.email, data);
+  }
+};
+
+export const sendExpiringCreditCardUpdateEmail = async data => {
+  data = {
+    ...data,
+    updateDetailsLink: `${config.host.website}/${data.slug}/paymentmethod/${data.id}/update`,
+  };
+
+  return emailLib.send('payment.creditcard.expiring', data.email, data);
+};
+
+export const getPlatformFee = order => {
+  const orderPlatformFee = get(order, 'data.platformFee');
+  if (!isNaN(orderPlatformFee)) {
+    return orderPlatformFee;
+  }
+
+  const defaultPlatformFeePercent =
+    order.collective.platformFeePercent === null ? OC_FEE_PERCENT : order.collective.platformFeePercent;
+
+  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFeePercent);
+
+  return parseInt((order.totalAmount * platformFeePercent) / 100, 10);
 };

@@ -1,9 +1,9 @@
 #!/bin/bash
 
 usage() {
-  echo "Usage: db_restore.sh -d DBNAME -U dbuser -f DBDUMP_FILE";
+  echo "Usage: db_restore.sh -d DBNAME -U DBUSER -f DBDUMP_FILE";
   echo "e.g.";
-  echo "> db_restore.sh -d wwcode_test -U dbuser -f opencollective-api/test/dbdumps/wwcode_test.pgsql"
+  echo "> db_restore.sh -d opencollective_dvl -U opencollective -f test/dbdumps/opencollective_dvl.pgsql"
   exit 0;
 }
 
@@ -32,6 +32,8 @@ shift # past argument or value
 done
 
 LOCALDBUSER=${LOCALDBUSER:-"opencollective"}
+LOCALDBNAME=${LOCALDBNAME:-"opencollective_dvl"}
+DBDUMP_FILE=${DBDUMP_FILE:-"test/dbdumps/opencollective_dvl.pgsql"}
 
 echo "LOCALDBUSER=$LOCALDBUSER"
 echo "LOCALDBNAME=$LOCALDBNAME"
@@ -48,8 +50,8 @@ if [ -z "$LOCALDBNAME" ]; then usage; fi;
 # where pg_stat_activity.datname = '$LOCALDBNAME'
 # EOF
 
-dropdb $LOCALDBNAME;
-createdb -O $LOCALDBUSER $LOCALDBNAME 2> /dev/null
+dropdb --if-exists $LOCALDBNAME;
+createdb $LOCALDBNAME 2> /dev/null
 
 # Add POSTGIS extension
 psql "${LOCALDBNAME}" -c "CREATE EXTENSION POSTGIS;" 1> /dev/null
@@ -85,3 +87,7 @@ echo "DB restored to postgres://localhost/${LOCALDBNAME}"
   psql "${LOCALDBNAME}" -c "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${LOCALDBUSER};"
 
 } | tee >/dev/null
+
+# Note: I have to run after this script:
+# $> psql opencollective_test -c "REASSIGN OWNED BY xdamman TO opencollective;"
+# Because the views created by the CIS extension are not owned by the opencollective user

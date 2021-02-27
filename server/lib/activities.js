@@ -1,16 +1,17 @@
-import activities from '../constants/activities';
 import flatten from 'flat';
-import currencies from '../constants/currencies';
+
+import activities from '../constants/activities';
 import { TransactionTypes } from '../constants/transactions';
 
-export default {
+import { formatCurrency } from './currency';
 
+export default {
   /*
    * Formats an activity *FOR INTERNAL USE* based on its type
    */
   formatMessageForPrivateChannel: (activity, format) => {
-
-    let userString = '', hostString = '';
+    let userString = '',
+      hostString = '';
     let userId;
     let collectiveName = '';
     let publicUrl = '';
@@ -24,7 +25,6 @@ export default {
     let connectedAccountUsername = '';
     let connectedAccountLink = '';
     let lastEditedById = 0;
-
 
     // get user data
     if (activity.data.user) {
@@ -48,20 +48,20 @@ export default {
 
     // get donation data
     if (activity.data.order) {
-      amount = activity.data.order.totalAmount/100;
+      amount = activity.data.order.totalAmount / 100;
       ({ currency } = activity.data.order);
     }
 
     // get subscription data
     if (activity.data.subscription) {
       ({ interval } = activity.data.subscription);
-      amount = amount || activity.data.subscription.amount/100;
+      amount = amount || activity.data.subscription.amount / 100;
       recurringAmount = amount + (interval ? `/${interval}` : '');
     }
 
     // get transaction data
     if (activity.data.transaction) {
-      amount = activity.data.transaction.amount/100;
+      amount = activity.data.transaction.amount / 100;
       recurringAmount = amount + (interval ? `/${interval}` : '');
       ({ currency } = activity.data.transaction);
       ({ description } = activity.data.transaction);
@@ -69,7 +69,7 @@ export default {
 
     // get expense data
     if (activity.data.expense) {
-      amount = activity.data.expense.amount/100;
+      amount = activity.data.expense.amount / 100;
       ({ currency } = activity.data.expense);
       ({ description } = activity.data.expense);
       ({ lastEditedById } = activity.data.expense);
@@ -92,7 +92,6 @@ export default {
     const collective = linkify(format, publicUrl, collectiveName);
 
     switch (activity.type) {
-
       // Currently used for both new donation and expense
       case activities.COLLECTIVE_TRANSACTION_CREATED:
         if (activity.data.transaction.type === TransactionTypes.CREDIT) {
@@ -101,13 +100,13 @@ export default {
         break;
 
       case activities.COLLECTIVE_EXPENSE_CREATED:
-        return `New Expense: ${userString} submitted an expense to ${collective}: ${currency} ${amount} for ${description}!`
+        return `New Expense: ${userString} submitted an expense to ${collective}: ${currency} ${amount} for ${description}!`;
 
       case activities.COLLECTIVE_EXPENSE_REJECTED:
-        return `Expense rejected: ${currency} ${amount} for ${description} in ${collective} by userId: ${lastEditedById}!`
+        return `Expense rejected: ${currency} ${amount} for ${description} in ${collective} by userId: ${lastEditedById}!`;
 
       case activities.COLLECTIVE_EXPENSE_APPROVED:
-        return `Expense approved: ${currency} ${amount} for ${description} in ${collective} by userId: ${lastEditedById}!`
+        return `Expense approved: ${currency} ${amount} for ${description} in ${collective} by userId: ${lastEditedById}!`;
 
       case activities.CONNECTED_ACCOUNT_CREATED:
         return `New Connected Account created by ${connectedAccountUsername} on ${service}. ${connectedAccountLink}`;
@@ -119,7 +118,7 @@ export default {
           const remaining = Number(details.maxTotalAmountOfAllPayments) - Number(details.curPaymentsAmount);
           remainingClause = `(${remaining} ${currency} remaining on preapproval key)`;
         } else {
-          remainingClause = `[Manual payment]`;
+          remainingClause = '[Manual payment]';
         }
         return `Expense paid on ${collective}: ${currency} ${amount} for '${description}' ${remainingClause}`;
       }
@@ -153,8 +152,8 @@ export default {
    * because many of them aren't relevant externally (like USER_CREATED)
    */
   formatMessageForPublicChannel: (activity, format) => {
-
-    let userString = '', hostString  = '';
+    let userString = '',
+      hostString = '';
     let collectiveName = '';
     let publicUrl = '';
     let amount = null;
@@ -188,30 +187,31 @@ export default {
 
     // get donation data
     if (activity.data.order) {
-      amount = activity.data.order.totalAmount/100;
+      amount = activity.data.order.totalAmount / 100;
       ({ currency } = activity.data.order);
     }
 
     // get subscription data
     if (activity.data.subscription) {
       ({ interval } = activity.data.subscription);
-      amount = amount || activity.data.subscription.amount/100;
+      amount = amount || activity.data.subscription.amount / 100;
       recurringAmount = amount + (interval ? `/${interval}` : '');
     }
 
     // get transaction data
     if (activity.data.transaction) {
-      amount = activity.data.transaction.amount/100;
+      amount = activity.data.transaction.amount / 100;
       recurringAmount = amount + (interval ? `/${interval}` : '');
       ({ currency } = activity.data.transaction);
       ({ description } = activity.data.transaction);
     }
 
-    let tweetLink, tweetThis = '';
+    let tweetLink,
+      tweetThis = '';
 
     // get expense data
     if (activity.data.expense) {
-      amount = activity.data.expense.amount/100;
+      amount = activity.data.expense.amount / 100;
       ({ currency } = activity.data.expense);
       ({ description } = activity.data.expense);
     }
@@ -222,42 +222,57 @@ export default {
     } else {
       collective = collectiveName;
     }
-    switch (activity.type) {
 
+    switch (activity.type) {
       // Currently used for both new donation and expense
       case activities.COLLECTIVE_TRANSACTION_CREATED:
-
         switch (activity.data.transaction.type) {
           case TransactionTypes.CREDIT:
             if (userTwitter) {
-              tweet = encodeURIComponent(`@${userTwitter} thanks for your ${currencies[currency].format(recurringAmount)} donation to ${collectiveTwitter ? `@${collectiveTwitter}` : collectiveName} 👍 ${publicUrl}`);
-              tweetLink = linkify(format, `https://twitter.com/intent/tweet?status=${tweet}`,"Thank that person on Twitter");
+              tweet = encodeURIComponent(
+                `@${userTwitter} thanks for your ${formatCurrency(currency, recurringAmount)} contribution to ${
+                  collectiveTwitter ? `@${collectiveTwitter}` : collectiveName
+                } 👍 ${publicUrl}`,
+              );
+              tweetLink = linkify(
+                format,
+                `https://twitter.com/intent/tweet?status=${tweet}`,
+                'Thank that person on Twitter',
+              );
               tweetThis = ` [${tweetLink}]`;
             }
             return `New Donation: ${userString} gave ${currency} ${amount} to ${collective}!${tweetThis}`;
 
           case TransactionTypes.DEBIT:
-            return `New Expense: ${userString} submitted an expense to ${collective}: ${currency} ${amount} for ${description}!`
+            return `New Expense: ${userString} submitted an expense to ${collective}: ${currency} ${amount} for ${description}!`;
         }
 
         break;
 
       case activities.COLLECTIVE_EXPENSE_CREATED:
-        return `New Expense: ${userString} submitted an expense to ${collective}: ${currency} ${amount} for ${description}!`
+        return `New Expense: ${userString} submitted an expense to ${collective}: ${currency} ${amount} for ${description}!`;
 
       case activities.COLLECTIVE_EXPENSE_REJECTED:
-        return `Expense rejected: ${currency} ${amount} for ${description} in ${collective}!`
+        return `Expense rejected: ${currency} ${amount} for ${description} in ${collective}!`;
 
       case activities.COLLECTIVE_EXPENSE_APPROVED:
-        return `Expense approved: ${currency} ${amount} for ${description} in ${collective}!`
+        return `Expense approved: ${currency} ${amount} for ${description} in ${collective}!`;
 
       case activities.COLLECTIVE_EXPENSE_PAID:
         return `Expense paid on ${collective}: ${currency} ${amount} for '${description}'`;
 
       case activities.SUBSCRIPTION_CONFIRMED:
         if (userTwitter) {
-          tweet = encodeURIComponent(`@${userTwitter} thanks for your ${currencies[currency].format(recurringAmount)} donation to ${collectiveTwitter ? `@${collectiveTwitter}` : collectiveName} 👍 ${publicUrl}`);
-          tweetLink = linkify(format, `https://twitter.com/intent/tweet?status=${tweet}`,"Thank that person on Twitter");
+          tweet = encodeURIComponent(
+            `@${userTwitter} thanks for your ${formatCurrency(currency, recurringAmount)} contribution to ${
+              collectiveTwitter ? `@${collectiveTwitter}` : collectiveName
+            } 👍 ${publicUrl}`,
+          );
+          tweetLink = linkify(
+            format,
+            `https://twitter.com/intent/tweet?status=${tweet}`,
+            'Thank that person on Twitter',
+          );
           tweetThis = ` [${tweetLink}]`;
         }
         return `New subscription confirmed: ${currency} ${recurringAmount} from ${userString} to ${collective}!${tweetThis}`;
@@ -265,19 +280,22 @@ export default {
       case activities.COLLECTIVE_CREATED:
         return `New collective created by ${userString}: ${collective} ${hostString}`.trim();
 
+      case activities.ORDERS_SUSPICIOUS:
+        return `Suspicious Order: ${userString} gave ${currency} ${amount} to ${collective}. Score: ${activity.data.recaptchaResponse.score}`;
+
       default:
         return '';
     }
   },
 
-  formatAttachment: (attachment) => {
+  formatAttachment: attachment => {
     const flattenedData = flatten(attachment);
     const rows = Object.keys(flattenedData)
       .filter(key => flattenedData[key])
       .map(key => `${key}: ${flattenedData[key]}`);
     return rows.join('\n');
-  }
-}
+  },
+};
 
 /**
  * Generates a url for Slack
@@ -289,7 +307,7 @@ const linkify = (format, link, text) => {
         text = link;
       } else if (!link && text) {
         return text;
-      } else if (!link && !text){
+      } else if (!link && !text) {
         return '';
       }
       return `<${link}|${text}>`;
@@ -298,7 +316,7 @@ const linkify = (format, link, text) => {
     default:
       return `[${text}](${link})`;
   }
-}
+};
 
 /**
  * Generates a userString given a user's info
@@ -306,7 +324,9 @@ const linkify = (format, link, text) => {
 const getUserString = (format, userCollective, email) => {
   userCollective = userCollective || {};
   const userString = userCollective.name || userCollective.twitterHandle || 'someone';
-  const link = userCollective.twitterHandle ? `https://twitter.com/${userCollective.twitterHandle}` : userCollective.website;
+  const link = userCollective.twitterHandle
+    ? `https://twitter.com/${userCollective.twitterHandle}`
+    : userCollective.website;
 
   let returnVal;
   if (link) {
@@ -319,4 +339,4 @@ const getUserString = (format, userCollective, email) => {
     returnVal += ` (${email})`;
   }
   return returnVal;
-}
+};
