@@ -1,20 +1,24 @@
-import AccountQuery from './AccountQuery';
-import CollectiveQuery from './CollectiveQuery';
-import ExpenseQuery from './ExpenseQuery';
-import ConversationQuery from './ConversationQuery';
-
-// import TransactionQuery from './TransactionQuery';
-// import TransactionsQuery from './TransactionsQuery';
-
+import models from '../../../models';
 import { Account } from '../interface/Account';
 
-import models from '../../../models';
+import HostsCollectionQuery from './collection/HostsCollectionQuery';
+import AccountQuery from './AccountQuery';
+import CollectiveQuery from './CollectiveQuery';
+import ConversationQuery from './ConversationQuery';
+import ExpenseQuery from './ExpenseQuery';
+import ExpensesQuery from './ExpensesQuery';
+import HostQuery from './HostQuery';
+import IndividualQuery from './IndividualQuery';
 
 const query = {
   account: AccountQuery,
   collective: CollectiveQuery,
+  host: HostQuery,
+  individual: IndividualQuery,
   conversation: ConversationQuery,
+  expenses: ExpensesQuery,
   expense: ExpenseQuery,
+  hosts: HostsCollectionQuery,
   // transaction: TransactionQuery,
   // transactions: TransactionsQuery,
   loggedInAccount: {

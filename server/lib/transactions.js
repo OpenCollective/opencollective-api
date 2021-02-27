@@ -1,10 +1,10 @@
-import models, { Op, sequelize } from '../models';
-import { PayoutMethodTypes } from '../models/PayoutMethod';
-import errors from '../lib/errors';
 import { TransactionTypes } from '../constants/transactions';
 import { getFxRate } from '../lib/currency';
-import { exportToCSV } from '../lib/utils';
+import errors from '../lib/errors';
 import { toNegative } from '../lib/math';
+import { exportToCSV } from '../lib/utils';
+import models, { Op, sequelize } from '../models';
+import { PayoutMethodTypes } from '../models/PayoutMethod';
 
 /**
  * Export transactions as CSV
@@ -112,9 +112,9 @@ export async function createFromPaidExpense(
     hostCurrencyFxRate = 1 / parseFloat(currencyConversion.exchangeRate); // paypal returns a float from host.currency to expense.currency
     paymentProcessorFeeInHostCurrency = Math.round(hostCurrencyFxRate * paymentProcessorFeeInCollectiveCurrency);
   } else if (payoutMethodType === PayoutMethodTypes.BANK_ACCOUNT) {
-    // Notice this is the FX rate between Host and Collective, the user is not involved here and that's why TransferWise quote rate is irrelavant here.
+    // Notice this is the FX rate between Host and Collective, the user is not involved here and that's why TransferWise quote rate is irrelevant here.
     hostCurrencyFxRate = await getFxRate(expense.currency, host.currency);
-    paymentProcessorFeeInHostCurrency = Math.round(transactionData.quote.fee * 100);
+    paymentProcessorFeeInHostCurrency = transactionData ? Math.round(transactionData.quote.fee * 100) : 0;
     paymentProcessorFeeInCollectiveCurrency = Math.round((1 / hostCurrencyFxRate) * paymentProcessorFeeInHostCurrency);
     hostFeeInCollectiveCurrency = Math.round((1 / hostCurrencyFxRate) * hostFeeInHostCurrency);
     platformFeeInCollectiveCurrency = Math.round((1 / hostCurrencyFxRate) * platformFeeInHostCurrency);

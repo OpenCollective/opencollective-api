@@ -21,6 +21,9 @@
       }
     }
   },
+  "graphql": {
+    "apolloEngineAPIKey": "APOLLO_ENGINE_API_KEY"
+  },
   "memcache": {
     "servers": "MEMCACHE_SERVERS",
     "username": "MEMCACHE_USERNAME",
@@ -142,6 +145,16 @@
     "minNbStars": "GITHUB_FLOW_MIN_NB_STARS"
   },
   "transferwise": {
-    "api": "TRANSFERWISE_API"
+    "apiUrl": "TRANSFERWISE_API_URL"
+  },
+  "fixie": {
+    "url": "FIXIE_URL"
+  },
+  "hyperwatch": {
+    "enabled": "HYPERWATCH_ENABLED",
+    "path": "HYPERWATCH_PATH",
+    "realm": "HYPERWATCH_REALM",
+    "username": "HYPERWATCH_USERNAME",
+    "secret": "HYPERWATCH_SECRET"
   }
 }

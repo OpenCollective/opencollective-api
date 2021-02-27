@@ -1,19 +1,19 @@
 import {
-  GraphQLInt,
-  GraphQLFloat,
   GraphQLBoolean,
-  GraphQLList,
-  GraphQLInputObjectType,
-  GraphQLNonNull,
-  GraphQLString,
-  GraphQLScalarType,
-  GraphQLError,
   GraphQLEnumType,
+  GraphQLError,
+  GraphQLFloat,
+  GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLScalarType,
+  GraphQLString,
 } from 'graphql';
-
 import GraphQLJSON from 'graphql-type-json';
 import { Kind } from 'graphql/language';
-import { IsoDateString, DateString, PayoutMethodTypeEnum } from './types';
+
+import { DateString, IsoDateString, PayoutMethodTypeEnum } from './types';
 
 const EmailType = new GraphQLScalarType({
   name: 'Email',
@@ -187,6 +187,7 @@ export const CollectiveInputType = new GraphQLInputObjectType({
     firstName: { type: GraphQLString },
     lastName: { type: GraphQLString },
     isIncognito: { type: GraphQLBoolean },
+    isActive: { type: GraphQLBoolean },
   }),
 });
 
@@ -316,6 +317,7 @@ export const OrderInputType = new GraphQLInputObjectType({
     totalAmount: { type: GraphQLInt },
     hostFeePercent: { type: GraphQLInt },
     platformFeePercent: { type: GraphQLInt },
+    platformFee: { type: GraphQLInt },
     currency: { type: GraphQLString },
     interval: { type: GraphQLString },
     description: { type: GraphQLString },
@@ -356,6 +358,7 @@ export const ConfirmOrderInputType = new GraphQLInputObjectType({
 export const CommentInputType = new GraphQLInputObjectType({
   name: 'CommentInputType',
   description: 'Input type for CommentType',
+  deprecationReason: 'Comments are now fully supported by API V2',
   fields: () => ({
     id: { type: GraphQLInt },
     markdown: { type: GraphQLString, deprecationReason: 'Markdown editor is deprecated, please use html instead.' },
@@ -369,9 +372,18 @@ export const CommentInputType = new GraphQLInputObjectType({
       deprecationReason:
         '2019-11-28: This field is not used by the query. Collective ID is automatically guessed from linked entity (expense, update or conversation)',
     },
-    ExpenseId: { type: GraphQLInt },
-    UpdateId: { type: GraphQLInt },
-    ConversationId: { type: GraphQLInt },
+    ExpenseId: {
+      type: GraphQLInt,
+      deprecationReason: '2020-03-18: Comments on expenses must use API V2',
+    },
+    UpdateId: {
+      type: GraphQLInt,
+      deprecationReason: '2020-03-18: Comments on updates are not yet supported',
+    },
+    ConversationId: {
+      type: GraphQLInt,
+      deprecationReason: '2020-03-18: Comments on conversations must use API V2',
+    },
   }),
 });
 
@@ -380,23 +392,15 @@ export const CommentAttributesInputType = new GraphQLInputObjectType({
   description: 'Input type for CommentType',
   fields: () => ({
     id: { type: GraphQLInt },
-    markdown: { type: GraphQLString },
+    markdown: {
+      deprecationReason: 'Deprecated since 2020-03-18: Please use html.',
+      type: GraphQLString,
+    },
     html: { type: GraphQLString },
-    /** @deprecated since 2019-11-25: This field is not editable. */
-    FromCollectiveId: {
+    UpdateId: {
+      deprecationReason: 'Deprecated since 2020-03-18: This field has never been active and will be removed soon.',
       type: GraphQLInt,
-      description: 'Deprecated since 2019-11-25: This field is not editable.',
     },
-    /** @deprecated since 2019-11-25: This field is not editable. */
-    CollectiveId: {
-      type: GraphQLInt,
-      description: 'Deprecated since 2019-11-25: This field is not editable.',
-    },
-    ExpenseId: {
-      type: GraphQLInt,
-      deprecationReason: '2019-11-25: Not editable.',
-    },
-    UpdateId: { type: GraphQLInt },
   }),
 });
 
@@ -437,12 +441,13 @@ export const UpdateAttributesInputType = new GraphQLInputObjectType({
   }),
 });
 
-export const ExpenseAttachmentInputType = new GraphQLInputObjectType({
-  name: 'ExpenseAttachmentInputType',
-  description: 'Fields for creating or editing an expense attachment',
+export const ExpenseItemInputType = new GraphQLInputObjectType({
+  name: 'ExpenseItemInputType',
+  description: 'Fields for creating or editing an expense item',
+  deprecationReason: '2020-04-08: Please use API V2 to create expenses',
   fields: {
     id: { type: GraphQLInt },
-    url: { type: new GraphQLNonNull(DateString) },
+    url: { type: GraphQLString },
     amount: { type: new GraphQLNonNull(GraphQLInt) },
     incurredAt: { type: DateString },
     description: { type: GraphQLString },
@@ -483,7 +488,6 @@ export const ExpenseInputType = new GraphQLInputObjectType({
         deprecationReason: '2020-21-01: Please use PayoutMethod',
       },
       PayoutMethod: {
-        id: { type: GraphQLInt },
         type: PayoutMethodInputType,
       },
       privateMessage: { type: GraphQLString },
@@ -491,7 +495,11 @@ export const ExpenseInputType = new GraphQLInputObjectType({
         type: GraphQLString,
         deprecationReason: '2020-01-13 - Expenses now support multiple attachments. Please use attachments instead.',
       },
-      attachments: { type: new GraphQLList(ExpenseAttachmentInputType) },
+      attachments: {
+        type: new GraphQLList(ExpenseItemInputType),
+        deprecationReason: '2020-04-08 - Please use items instead.',
+      },
+      items: { type: new GraphQLList(ExpenseItemInputType) },
       user: {
         type: UserInputType,
         deprecationReason: '2020-21-01: Please use PayoutMethod to pass the paypal email',

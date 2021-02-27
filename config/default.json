@@ -12,7 +12,8 @@
         "max": 10,
         "acquire": 1200000
       },
-      "logging": false
+      "logging": false,
+      "benchmark": true
     }
   },
   "maintenancedb": {
@@ -54,13 +55,10 @@
     "searchEmailPerHour": 150,
     "searchEmailPerHourPerIp": 50,
     "collectiveEmailMessagePerHour": 5,
-    "maxMemberInvitationsPerCollective": 20
+    "maxMemberInvitationsPerCollective": 50
   },
   "email": {
     "from": "Open Collective <info@opencollective.com>"
-  },
-  "cache": {
-    "middleware": false
   },
   "log": {
     "level": "info",
@@ -132,6 +130,13 @@
     "minNbStars": 100
   },
   "transferwise": {
-    "api": "https://api.sandbox.transferwise.tech"
+    "apiUrl": "https://api.sandbox.transferwise.tech"
+  },
+  "fixie": {},
+  "hyperwatch": {
+    "enabled": false,
+    "path": "/_hyperwatch",
+    "realm": null,
+    "username": "opencollective"
   }
 }

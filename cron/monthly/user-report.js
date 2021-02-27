@@ -10,20 +10,22 @@ if (process.env.NODE_ENV === 'production' && today.getDate() !== 1 && !process.e
 
 process.env.PORT = 3066;
 
-import { get, pick, uniq, groupBy } from 'lodash';
-import moment from 'moment';
-import config from 'config';
-import Promise from 'bluebird';
-import fetch from 'node-fetch';
-import debugLib from 'debug';
-import models, { Op } from '../../server/models';
-import emailLib from '../../server/lib/email';
-import roles from '../../server/constants/roles';
-import ORDER_STATUS from '../../server/constants/order_status';
-import { formatCurrencyObject, formatArrayToString } from '../../server/lib/utils';
-import { convertToCurrency } from '../../server/lib/currency';
-import path from 'path';
 import fs from 'fs';
+import path from 'path';
+
+import Promise from 'bluebird';
+import config from 'config';
+import debugLib from 'debug';
+import { get, groupBy, pick, uniq } from 'lodash';
+import moment from 'moment';
+import fetch from 'node-fetch';
+
+import ORDER_STATUS from '../../server/constants/order_status';
+import roles from '../../server/constants/roles';
+import { convertToCurrency } from '../../server/lib/currency';
+import emailLib from '../../server/lib/email';
+import { formatArrayToString, formatCurrencyObject } from '../../server/lib/utils';
+import models, { Op } from '../../server/models';
 
 const d = process.env.START_DATE ? new Date(process.env.START_DATE) : new Date();
 d.setMonth(d.getMonth() - 1);
@@ -58,7 +60,7 @@ const fetchUserSubscribers = async (notificationType, backerCollective) => {
   );
 
   const admins = await backerCollective.getAdminUsers();
-  const subscribers = admins.filter(a => unsubscribedUserIds.indexOf(a.id) === -1);
+  const subscribers = admins.filter(a => a && unsubscribedUserIds.indexOf(a.id) === -1);
 
   return subscribers;
 };
@@ -214,7 +216,7 @@ const processBacker = async FromCollectiveId => {
     if (ordersByCollectiveId[collective.id]) {
       collectivesWithOrders.push({
         ...collective,
-        orders: ordersByCollectiveId[collective.id],
+        orders: ordersByCollectiveId[collective.id].map(order => order.info),
         order: computeOrderSummary(ordersByCollectiveId[collective.id]),
       });
     }
@@ -228,17 +230,17 @@ const processBacker = async FromCollectiveId => {
     false,
     'c."createdAt"',
     'DESC',
-  );
+  ).then(({ collectives }) => collectives);
 
   try {
     await Promise.each(subscribers, user => {
       const data = {
         config: { host: config.host },
         month,
-        fromCollective: backerCollective,
+        fromCollective: backerCollective.info,
         collectives: collectivesWithOrders,
         manageSubscriptionsUrl: `${config.host.website}/subscriptions`,
-        relatedCollectives,
+        relatedCollectives: relatedCollectives,
         stats,
         tags: stats.allTags || {},
       };
@@ -277,9 +279,9 @@ const processEvents = events => {
     });
 
     if (new Date(event.startsAt) > now) {
-      res.upcoming.push(event);
+      res.upcoming.push(event.info);
     } else {
-      res.past.push(event);
+      res.past.push(event.info);
     }
   });
   return res;
@@ -367,9 +369,9 @@ const processCollective = async CollectiveId => {
       ? Object.keys(collective.data.githubContributors).length
       : data.collective.stats.backers.lastMonth;
   data.collective.yearlyIncome = results[5];
-  data.collective.expenses = results[6];
+  data.collective.expenses = results[6].map(expense => expense.info);
   data.collective.events = processEvents(results[7]);
-  data.collective.updates = results[8];
+  data.collective.updates = results[8].map(update => update.info);
   data.collective.stats.updates = results[8].length;
   const nextGoal = results[9];
   if (nextGoal) {
@@ -390,11 +392,11 @@ const getTopKeysFromObject = (obj, valueAttr, limit = 3) => {
   Object.keys(obj).map(t => {
     values.push({
       value: t,
-      occurences: valueAttr ? obj[t][valueAttr] : obj[t],
+      occurrences: valueAttr ? obj[t][valueAttr] : obj[t],
     });
   });
   values.sort((a, b) => {
-    if (a.occurences > b.occurences) {
+    if (a.occurrences > b.occurrences) {
       return -1;
     } else {
       return 1;
@@ -419,7 +421,7 @@ const computeOrderSummary = orders => {
       orderSummary.totalAmountPerCurrency[order.currency] += order.totalAmount;
 
       if (order.Subscription && order.Subscription.isActive) {
-        orderSummary.Subscription = order.Subscription;
+        orderSummary.Subscription = order.Subscription.dataValues;
       }
     }
   }
@@ -455,16 +457,16 @@ const computeStats = async (collectives, currency = 'USD') => {
       stats.expenses += expenses.length;
       await Promise.map(expenses, async expense => {
         const amountInBackerCurrency = await convertToCurrency(expense.amount, expense.currency, currency);
-        categories[expense.category] = categories[expense.category] || {
-          occurences: 0,
+        categories[expense.tags?.[0]] = categories[expense.tags?.[0]] || {
+          occurrences: 0,
           totalAmountPerCurrency: {},
           totalAmountInBackerCurrency: 0,
         };
-        categories[expense.category].occurences++;
-        categories[expense.category].totalAmountPerCurrency[expense.currency] =
-          categories[expense.category].totalAmountPerCurrency[expense.currency] || 0;
-        categories[expense.category].totalAmountPerCurrency[expense.currency] += expense.amount;
-        categories[expense.category].totalAmountInBackerCurrency += amountInBackerCurrency;
+        categories[expense.tags?.[0]].occurrences++;
+        categories[expense.tags?.[0]].totalAmountPerCurrency[expense.currency] =
+          categories[expense.tags?.[0]].totalAmountPerCurrency[expense.currency] || 0;
+        categories[expense.tags?.[0]].totalAmountPerCurrency[expense.currency] += expense.amount;
+        categories[expense.tags?.[0]].totalAmountInBackerCurrency += amountInBackerCurrency;
         stats.totalSpentPerCurrency[expense.currency] = stats.totalSpentPerCurrency[expense.currency] || 0;
         stats.totalSpentPerCurrency[expense.currency] += expense.amount;
       });

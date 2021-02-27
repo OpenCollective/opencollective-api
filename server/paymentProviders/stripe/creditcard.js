@@ -1,11 +1,11 @@
 import config from 'config';
 import { get, result } from 'lodash';
 
-import models from '../../models';
-import logger from '../../lib/logger';
-import stripe, { extractFees } from '../../lib/stripe';
 import * as constants from '../../constants/transactions';
+import logger from '../../lib/logger';
 import * as paymentsLib from '../../lib/payments';
+import stripe, { extractFees } from '../../lib/stripe';
+import models from '../../models';
 
 const UNKNOWN_ERROR_MSG = 'Something went wrong with the payment, please contact support@opencollective.com.';
 
@@ -97,16 +97,15 @@ const getOrCreateCustomerOnHostAccount = async (hostStripeAccount, { paymentMeth
  * See: Shared Customers: https://stripe.com/docs/connect/shared-customers
  */
 const createChargeAndTransactions = async (hostStripeAccount, { order, hostStripeCustomer }) => {
-  const platformFeePercent = get(order, 'data.platformFeePercent', constants.OC_FEE_PERCENT);
-  const platformFee = isNaN(order.platformFee)
-    ? parseInt((order.totalAmount * platformFeePercent) / 100, 10)
-    : order.platformFee;
+  // Read or compute Platform Fee
+  const platformFee = paymentsLib.getPlatformFee(order);
 
   // Make sure data is available (breaking in some old tests)
   order.data = order.data || {};
 
   let paymentIntent;
   if (!order.data || !order.data.paymentIntent) {
+    /* eslint-disable camelcase */
     const payload = {
       amount: order.totalAmount,
       currency: order.currency,
@@ -136,6 +135,8 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
       logger.info('paymentMethod is missing in hostStripeCustomer to pass to Payment Intent.');
       logger.info(JSON.stringify(hostStripeCustomer));
     }
+    /* eslint-enable camelcase */
+
     paymentIntent = await stripe.paymentIntents.create(payload, {
       stripeAccount: hostStripeAccount.username,
     });
@@ -235,7 +236,7 @@ export const setupCreditCard = async (paymentMethod, { user, collective } = {}) 
   if (!setupIntent) {
     setupIntent = await stripe.setupIntents.create({
       customer: platformStripeCustomer.id,
-      payment_method: paymentMethodId,
+      payment_method: paymentMethodId, // eslint-disable-line camelcase
       confirm: true,
     });
   }
@@ -279,13 +280,24 @@ export default {
         hostStripeCustomer,
       });
     } catch (error) {
-      if (error.message !== 'Payment Intent require action') {
-        logger.error(`Stripe Payment Error: ${error.message}`);
-        logger.error(error);
-        logger.error(error.stack);
-        throw new Error(UNKNOWN_ERROR_MSG);
+      const knownErrors = [
+        'Your card has insufficient funds.',
+        'Your card was declined.',
+        'Your card does not support this type of purchase.',
+        'Your card has expired.',
+        "Your card's security code is incorrect",
+        'Payment Intent require action',
+      ];
+
+      if (knownErrors.includes(error.message)) {
+        throw error;
       }
-      throw error;
+
+      logger.error(`Unknown Stripe Payment Error: ${error.message}`);
+      logger.error(error);
+      logger.error(error.stack);
+
+      throw new Error(UNKNOWN_ERROR_MSG);
     }
 
     await order.paymentMethod.update({ confirmedAt: new Date() });
@@ -305,8 +317,9 @@ export default {
     const hostStripeAccount = await collective.getHostStripeAccount();
 
     /* Refund both charge & application fee */
+    const shouldRefundApplicationFee = transaction.platformFeeInHostCurrency > 0;
     const refund = await stripe.refunds.create(
-      { charge: chargeId, refund_application_fee: true },
+      { charge: chargeId, refund_application_fee: shouldRefundApplicationFee }, // eslint-disable-line camelcase
       { stripeAccount: hostStripeAccount.username },
     );
     const charge = await stripe.charges.retrieve(chargeId, { stripeAccount: hostStripeAccount.username });

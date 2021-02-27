@@ -1,27 +1,22 @@
-import config from 'config';
-
-// Testing tools
-import sinon from 'sinon';
 import { expect } from 'chai';
-import * as utils from '../../utils';
+import config from 'config';
+import sinon from 'sinon';
 
-// Supporting libraries
-import models from '../../../server/models';
+import status from '../../../server/constants/order_status';
 import emailLib from '../../../server/lib/email';
 import * as paymentsLib from '../../../server/lib/payments';
-import status from '../../../server/constants/order_status';
-import { randEmail } from '../../stores';
-
-// What's being tested
 import {
-  MAX_RETRIES,
-  handleRetryStatus,
-  getNextChargeAndPeriodStartDates,
   getChargeRetryCount,
+  getNextChargeAndPeriodStartDates,
+  groupProcessedOrders,
+  handleRetryStatus,
+  MAX_RETRIES,
   ordersWithPendingCharges,
   processOrderWithSubscription,
-  groupProcessedOrders,
 } from '../../../server/lib/subscriptions';
+import models from '../../../server/models';
+import { randEmail } from '../../stores';
+import * as utils from '../../utils';
 
 async function createOrderWithSubscription(interval, date, quantity = 1) {
   const payment = { amount: 1000, currency: 'USD', interval };
@@ -228,17 +223,17 @@ describe('server/lib/subscriptions', () => {
       // template
       const order = {
         Subscription: { chargeRetryCount: 0 },
-        collective: { getRelatedCollectives: () => Promise.resolve(null) },
+        collective: {
+          getRelatedCollectives: () => Promise.resolve(null),
+          getHostCollective: () => Promise.resolve(null),
+        },
         fromCollective: { slug: 'cslug' },
         createdByUser: { email: 'test@oc.com' },
       };
 
       // And given that we expect the method send from the mock to be
       // called
-      emailMock
-        .expects('send')
-        .once()
-        .withArgs('thankyou', 'test@oc.com');
+      emailMock.expects('send').once().withArgs('thankyou', 'test@oc.com');
 
       // When the status of the order is handled
       await handleRetryStatus(order, {});
@@ -350,15 +345,12 @@ describe('server/lib/subscriptions', () => {
         paymentsStub.restore();
       });
 
-      it('should update dates after successfuly processing monthly ', async () => {
+      it('should update dates after successfully processing monthly ', async () => {
         // Given an order with a subscription
         const { order } = await createOrderWithSubscription('month', '2018-01-27');
 
         // And given that an email should be sent afterwards
-        emailMock
-          .expects('send')
-          .once()
-          .withArgs('thankyou');
+        emailMock.expects('send').once().withArgs('thankyou');
 
         // And that the payments library will return a transaction (to
         // be included in the email)
@@ -381,15 +373,12 @@ describe('server/lib/subscriptions', () => {
         expect(order.Subscription.nextPeriodStart.getTime()).to.equal(new Date('2018-02-27 0:0').getTime());
       });
 
-      it('should update dates after successfuly processing yearly ', async () => {
+      it('should update dates after successfully processing yearly ', async () => {
         // Given an order with a subscription
         const { order } = await createOrderWithSubscription('year', '2018-01-27');
 
         // And given that an email should be sent afterwards
-        emailMock
-          .expects('send')
-          .once()
-          .withArgs('thankyou');
+        emailMock.expects('send').once().withArgs('thankyou');
 
         // And that the payments library will return a transaction (to
         // be included in the email)
@@ -417,10 +406,7 @@ describe('server/lib/subscriptions', () => {
         const { order } = await createOrderWithSubscription('year', '2018-01-27');
 
         // And given that an email should be sent afterwards
-        emailMock
-          .expects('send')
-          .once()
-          .withArgs('payment.failed');
+        emailMock.expects('send').once().withArgs('payment.failed');
 
         // And that the payments library will throw an error
         paymentsStub.rejects('TypeError -- Whatever');
@@ -446,7 +432,7 @@ describe('server/lib/subscriptions', () => {
         expect(order.Subscription.nextPeriodStart.getTime()).to.equal(new Date('2018-01-27 0:0').getTime());
       });
 
-      it('should increment chargeNumber after successfuly processing the order', async () => {
+      it('should increment chargeNumber after successfully processing the order', async () => {
         // Given an order with a subscription
         const { order } = await createOrderWithSubscription('month', '2018-04-17');
 
@@ -603,7 +589,7 @@ describe('server/lib/subscriptions', () => {
       // Then we see 3 groups in the iterator output
       expect([...groupedOrders.keys()]).to.deep.equal(['charged', 'past_due', 'canceled']);
 
-      // And then we see that transaction OrderId=1 was successfuly charged
+      // And then we see that transaction OrderId=1 was successfully charged
       expect(groupedOrders.get('charged').total).to.equal(2000);
       expect(groupedOrders.get('charged').entries.length).to.equal(2);
       expect(groupedOrders.get('charged').entries[0].orderId).to.equal(1);

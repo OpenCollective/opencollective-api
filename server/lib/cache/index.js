@@ -2,13 +2,13 @@ import config from 'config';
 import debug from 'debug';
 import { get } from 'lodash';
 
+import models from '../../models';
+import logger from '../logger';
+import { md5 } from '../utils';
+
 import makeMemcacheProvider from './memcache';
 import makeMemoryProvider from './memory';
 import makeRedisProvider from './redis';
-
-import logger from '../logger';
-import models from '../../models';
-import { md5 } from '../utils';
 
 export const PROVIDER_TYPES = {
   MEMCACHE: 'MEMCACHE',
@@ -117,7 +117,7 @@ export function memoize(func, { key, maxAge = 0, serialize, unserialize }) {
     return args.length ? `${key}_${md5(JSON.stringify(args))}` : key;
   };
 
-  const memoizedFunction = async function() {
+  const memoizedFunction = async function () {
     let value = await cache.get(cacheKey(arguments), { unserialize });
     if (value === undefined) {
       value = await func(...arguments);
@@ -126,12 +126,12 @@ export function memoize(func, { key, maxAge = 0, serialize, unserialize }) {
     return value;
   };
 
-  memoizedFunction.refresh = async function() {
+  memoizedFunction.refresh = async function () {
     const value = await func(...arguments);
     cache.set(cacheKey(arguments), value, maxAge, { serialize });
   };
 
-  memoizedFunction.clear = async function() {
+  memoizedFunction.clear = async function () {
     cache.del(cacheKey(arguments));
   };
 

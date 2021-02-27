@@ -1,17 +1,17 @@
 import Promise from 'bluebird';
-import { get } from 'lodash';
 import config from 'config';
+import { get } from 'lodash';
 
-import models, { Op } from '../models';
-import errors from '../lib/errors';
-import paymentProviders from '../paymentProviders';
-import * as github from '../lib/github';
 import { mustBeLoggedInTo } from '../lib/auth';
+import errors from '../lib/errors';
+import * as github from '../lib/github';
+import models, { Op } from '../models';
+import paymentProviders from '../paymentProviders';
 
 const { ConnectedAccount, User } = models;
 
 export const createOrUpdate = (req, res, next, accessToken, data, emails) => {
-  const { utm_source, redirect } = req.query;
+  const { utm_source: utmSource, redirect } = req.query;
   const { service } = req.params;
   const attrs = { service };
 
@@ -75,7 +75,7 @@ export const createOrUpdate = (req, res, next, accessToken, data, emails) => {
           const token = user.generateConnectedAccountVerifiedToken(caId, data.profile.username);
           const newLocation = redirect
             ? `${redirect}?token=${token}`
-            : `${config.host.website}/github/apply/${token}?utm_source=${utm_source}`;
+            : `${config.host.website}/github/apply/${token}?utm_source=${utmSource}`;
 
           res.redirect(newLocation);
         })
@@ -140,9 +140,7 @@ export const disconnect = async (req, res) => {
     mustBeLoggedInTo(remoteUser, 'disconnect this connected account');
 
     if (!remoteUser.isAdmin(CollectiveId)) {
-      throw new errors.Unauthorized({
-        message: 'You are either logged out or not authorized to disconnect this account',
-      });
+      throw new errors.Unauthorized('You are either logged out or not authorized to disconnect this account');
     }
 
     const account = await ConnectedAccount.findOne({
@@ -202,6 +200,7 @@ const getGithubAccount = async req => {
 // Use a 1 minutes timeout as the default 25 seconds can leads to failing requests.
 const GITHUB_REPOS_FETCH_TIMEOUT = 1 * 60 * 1000;
 
+// used in Frontend by createCollective "GitHub flow"
 export const fetchAllRepositories = async (req, res, next) => {
   const githubAccount = await getGithubAccount(req);
   try {
@@ -218,6 +217,7 @@ export const fetchAllRepositories = async (req, res, next) => {
   }
 };
 
+// used in Frontend by claimCollective
 export const getRepo = async (req, res, next) => {
   const githubAccount = await getGithubAccount(req);
   try {
@@ -228,6 +228,7 @@ export const getRepo = async (req, res, next) => {
   }
 };
 
+// used in Frontend by claimCollective
 export const getOrgMemberships = async (req, res, next) => {
   const githubAccount = await getGithubAccount(req);
   try {
