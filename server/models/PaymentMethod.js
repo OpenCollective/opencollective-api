@@ -1,30 +1,23 @@
-/** @module models/PaymentMethod */
-
-import libdebug from 'debug';
 import Promise from 'bluebird';
+import debugLib from 'debug';
 import { get, intersection } from 'lodash';
 import { Op } from 'sequelize';
 
+import { maxInteger } from '../constants/math';
+import { PAYMENT_METHOD_SERVICES, PAYMENT_METHOD_TYPES } from '../constants/paymentMethods';
 import { TransactionTypes } from '../constants/transactions';
-
-import { sumTransactions } from '../lib/hostlib';
-import { formatCurrency, formatArrayToString, cleanTags } from '../lib/utils';
 import { getFxRate } from '../lib/currency';
-
-import CustomDataTypes from './DataTypes';
+import { sumTransactions } from '../lib/hostlib';
 import * as libpayments from '../lib/payments';
 import { isTestToken } from '../lib/stripe';
+import { cleanTags, formatArrayToString, formatCurrency } from '../lib/utils';
 
-import { maxInteger } from '../constants/math';
+import CustomDataTypes from './DataTypes';
 
-const debug = libdebug('PaymentMethod');
+const debug = debugLib('models:PaymentMethod');
 
-export default function(Sequelize, DataTypes) {
+export default function (Sequelize, DataTypes) {
   const { models } = Sequelize;
-
-  const payoutMethods = ['paypal', 'stripe', 'opencollective', 'prepaid'];
-
-  const payoutTypes = ['creditcard', 'prepaid', 'payment', 'collective', 'adaptive', 'virtualcard'];
 
   const PaymentMethod = Sequelize.define(
     'PaymentMethod',
@@ -87,8 +80,8 @@ export default function(Sequelize, DataTypes) {
         defaultValue: 'stripe',
         validate: {
           isIn: {
-            args: [payoutMethods],
-            msg: `Must be in ${payoutMethods}`,
+            args: [PAYMENT_METHOD_SERVICES],
+            msg: `Must be in ${PAYMENT_METHOD_SERVICES}`,
           },
         },
       },
@@ -97,13 +90,13 @@ export default function(Sequelize, DataTypes) {
         type: DataTypes.STRING,
         validate: {
           isIn: {
-            args: [payoutTypes],
-            msg: `Must be in ${payoutTypes}`,
+            args: [PAYMENT_METHOD_TYPES],
+            msg: `Must be in ${PAYMENT_METHOD_TYPES}`,
           },
         },
       },
 
-      data: DataTypes.JSON,
+      data: DataTypes.JSONB,
 
       createdAt: {
         type: DataTypes.DATE,
@@ -238,9 +231,7 @@ export default function(Sequelize, DataTypes) {
     },
   );
 
-  PaymentMethod.schema('public');
-
-  PaymentMethod.payoutMethods = payoutMethods;
+  PaymentMethod.payoutMethods = PAYMENT_METHOD_SERVICES;
 
   /**
    * Instance Methods
@@ -252,10 +243,12 @@ export default function(Sequelize, DataTypes) {
    * @param {Object} order { totalAmount, currency }
    * @param {Object} user instanceof models.User
    */
-  PaymentMethod.prototype.canBeUsedForOrder = async function(order, user) {
+  PaymentMethod.prototype.canBeUsedForOrder = async function (order, user) {
     // if the user is trying to reuse an existing payment method,
     // we make sure it belongs to the logged in user or to a collective that the user is an admin of
-    if (!user) throw new Error('You need to be logged in to be able to use a payment method on file');
+    if (!user) {
+      throw new Error('You need to be logged in to be able to use a payment method on file');
+    }
 
     const name = `payment method (${this.service}:${this.type})`;
 
@@ -364,7 +357,7 @@ export default function(Sequelize, DataTypes) {
   /**
    * Updates the paymentMethod.data with the balance on the preapproved paypal card
    */
-  PaymentMethod.prototype.updateBalance = async function() {
+  PaymentMethod.prototype.updateBalance = async function () {
     if (this.service !== 'paypal') {
       throw new Error('Can only update balance for paypal preapproved cards');
     }
@@ -379,7 +372,7 @@ export default function(Sequelize, DataTypes) {
    * - the monthlyLimitPerMember if any and if the user is a member
    * - the available balance on the paykey for PayPal (not implemented yet)
    */
-  PaymentMethod.prototype.getBalanceForUser = async function(user) {
+  PaymentMethod.prototype.getBalanceForUser = async function (user) {
     if (user && !(user instanceof models.User)) {
       throw new Error('Internal error at PaymentMethod.getBalanceForUser(user): user is not an instance of User');
     }
@@ -390,11 +383,6 @@ export default function(Sequelize, DataTypes) {
 
     // Paypal Preapproved Key
     if (this.service === 'paypal' && !this.type) {
-      return getBalance(this);
-    }
-
-    // needed because giftcard payment method can be accessed without logged in
-    if (libpayments.isProvider('opencollective.giftcard', this)) {
       return getBalance(this);
     }
 
@@ -458,7 +446,7 @@ export default function(Sequelize, DataTypes) {
    * Returns the sum of the children PaymenMethod values (aka the virtual cards which
    * have `sourcePaymentMethod` set to this PM).
    */
-  PaymentMethod.prototype.getChildrenPMTotalSum = async function() {
+  PaymentMethod.prototype.getChildrenPMTotalSum = async function () {
     return models.PaymentMethod.findAll({
       attributes: ['initialBalance', 'monthlyLimitPerMember'],
       where: { SourcePaymentMethodId: this.id },
@@ -473,7 +461,7 @@ export default function(Sequelize, DataTypes) {
    * Check if virtual card is claimed.
    * Always return true for other payment methods.
    */
-  PaymentMethod.prototype.isConfirmed = function() {
+  PaymentMethod.prototype.isConfirmed = function () {
     return this.type !== 'virtualcard' || this.confirmedAt !== null;
   };
 
@@ -507,20 +495,6 @@ export default function(Sequelize, DataTypes) {
       };
       debug('PaymentMethod.create', paymentMethodData);
       return models.PaymentMethod.create(paymentMethodData);
-    } else if (paymentMethod.uuid && libpayments.isProvider('opencollective.giftcard', paymentMethod)) {
-      return PaymentMethod.findOne({
-        where: {
-          uuid: paymentMethod.uuid,
-          token: paymentMethod.token.toUpperCase(),
-          archivedAt: null,
-        },
-      }).then(pm => {
-        if (!pm) {
-          throw new Error("Your gift card code doesn't exist");
-        } else {
-          return pm;
-        }
-      });
     } else {
       return PaymentMethod.findOne({
         where: { uuid: paymentMethod.uuid },

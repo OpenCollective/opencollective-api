@@ -1,17 +1,20 @@
-import config from 'config';
-import Promise from 'bluebird';
-import juice from 'juice';
-import nodemailer from 'nodemailer';
-import debugLib from 'debug';
 import fs from 'fs';
 import path from 'path';
+
+import Promise from 'bluebird';
+import config from 'config';
+import debugLib from 'debug';
 import he from 'he';
-import { isArray, pick, get, merge, includes } from 'lodash';
+import juice from 'juice';
+import { get, includes, isArray, merge, pick } from 'lodash';
+import nodemailer from 'nodemailer';
 
 import models from '../models';
-import logger from './logger';
+
 import templates from './emailTemplates';
-import { md5 } from './utils';
+import logger from './logger';
+import { md5, sha512 } from './utils';
+import whiteListDomains from './whiteListDomains';
 
 const debug = debugLib('email');
 
@@ -40,27 +43,29 @@ const render = (template, data) => {
   delete data.config;
   data.config = { host: config.host };
 
-  // sets paypalEmail for purpose of email templates
-  if (data.user) {
-    data.user.paypalEmail = data.user.paypalEmail || data.user.email;
-  }
-
   if (templates[`${template}.text`]) {
     text = templates[`${template}.text`](data);
   }
   const html = juice(he.decode(templates[template](data)));
 
-  // When in development mode, we log the data used to compile the template
-  // (useful to get login token without sending an email)
-  debugLib('data')(`Rendering ${template} with data`, data);
-
   return { text, html };
 };
 
-const generateUnsubscribeToken = (email, collectiveSlug, type) => {
+const generateUnsubscribeToken = (email, collectiveSlug, type, hashingFunction = sha512) => {
   const uid = `${email}.${collectiveSlug || 'any'}.${type}.${config.keys.opencollective.emailUnsubscribeSecret}`;
-  const token = md5(uid);
+  const token = hashingFunction(uid);
   return token;
+};
+
+const isValidUnsubscribeToken = (token, email, collectiveSlug, type) => {
+  // Check token using the latest procedure
+  const computedToken = emailLib.generateUnsubscribeToken(email, collectiveSlug, type, sha512);
+  if (computedToken === token) {
+    return true;
+  }
+
+  // Backward-compatibility: check legacy tokens
+  return emailLib.generateUnsubscribeToken(email, collectiveSlug, type, md5) === token;
 };
 
 /*
@@ -78,10 +83,7 @@ const getTemplateAttributes = str => {
     }
   } while (tokens);
 
-  attributes.body = lines
-    .slice(index)
-    .join('\n')
-    .trim();
+  attributes.body = lines.slice(index).join('\n').trim();
   return attributes;
 };
 
@@ -91,7 +93,9 @@ const getTemplateAttributes = str => {
 const sendMessage = (recipients, subject, html, options = {}) => {
   options.bcc = options.bcc || 'emailbcc@opencollective.com';
 
-  if (!isArray(recipients)) recipients = [recipients];
+  if (!isArray(recipients)) {
+    recipients = [recipients];
+  }
 
   recipients = recipients.filter(recipient => {
     if (!recipient || !recipient.match(/.+@.+\..+/)) {
@@ -145,7 +149,7 @@ const sendMessage = (recipients, subject, html, options = {}) => {
     }
     let sendToBcc = true;
     // Don't send to BCC if sendEvenIfNotProduction and NOT in testing env
-    if (options.sendEvenIfNotProduction === true && config.env !== 'test' && config.env !== 'circleci') {
+    if (options.sendEvenIfNotProduction === true && !['ci', 'test'].includes(config.env)) {
       sendToBcc = false;
     }
     if (sendToBcc) {
@@ -153,7 +157,6 @@ const sendMessage = (recipients, subject, html, options = {}) => {
     }
   }
 
-  debug(`sending email to ${to}`);
   if (recipients.length === 0) {
     debug('emailLib.sendMessage error: No recipient to send to, only sending to bcc', options.bcc);
   }
@@ -188,8 +191,6 @@ const sendMessage = (recipients, subject, html, options = {}) => {
     });
   } else {
     debug('>>> mailer not configured');
-    debugLib('text')(options.text);
-    debugLib('html')(html);
     return Promise.resolve();
   }
 };
@@ -199,7 +200,9 @@ const sendMessage = (recipients, subject, html, options = {}) => {
  * Shown in the footer of the email following "To unsubscribe from "
  */
 const getNotificationLabel = (template, recipients) => {
-  if (!isArray(recipients)) recipients = [recipients];
+  if (!isArray(recipients)) {
+    recipients = [recipients];
+  }
 
   template = template.replace('.text', '');
 
@@ -226,11 +229,18 @@ const getNotificationLabel = (template, recipients) => {
   return notificationTypeLabels[template];
 };
 
+const isWhitelistedDomain = email => {
+  const domain = email.split('@');
+  return whiteListDomains.includes(domain[1].toLowerCase());
+};
+
 /*
  * Given a template, recipient and data, generates email.
  */
 const generateEmailFromTemplate = (template, recipient, data = {}, options = {}) => {
   const slug = get(options, 'collective.slug') || get(data, 'collective.slug') || 'undefined';
+  const hostSlug = get(data, 'host.slug');
+  const eventSlug = get(data, 'event.slug');
 
   // If we are sending the same email to multiple recipients, it doesn't make sense to allow them to unsubscribe
   if (!isArray(recipient)) {
@@ -245,32 +255,45 @@ const generateEmailFromTemplate = (template, recipient, data = {}, options = {})
   }
 
   if (template === 'ticket.confirmed') {
-    // if (slug === 'sustainoss') template += '.sustainoss';
-    if (slug === 'fearlesscitiesbrussels') template += '.fearlesscitiesbrussels';
-
-    if (slug === 'drupalatx') {
-      const eventSlug = get(data, 'event.slug');
-
-      if (eventSlug === 'texas-camp-2019-19178ev') {
-        template += '.drupalatx.texas-camp-2019-19178ev';
-      }
+    if (slug === 'fearlesscitiesbrussels') {
+      template += '.fearlesscitiesbrussels';
+    }
+    if (eventSlug === 'open-2020-networked-commons-initiatives-9b91f4ca') {
+      template += '.open-2020';
     }
   }
+
+  if (template === 'collective.approved') {
+    if (hostSlug === 'the-social-change-agency') {
+      template += '.the-social-change-agency';
+    }
+  }
+
+  if (template === 'collective.created') {
+    if (hostSlug === 'opensource') {
+      template += '.opensource';
+    }
+    if (hostSlug === 'the-social-change-agency') {
+      template += '.the-social-change-agency';
+    }
+  }
+
   if (template.match(/^host\.(monthly|yearly)report$/)) {
     template = 'host.report';
   }
+
   if (template === 'thankyou') {
-    if (slug.match(/wwcode/)) template += '.wwcode';
-
-    if (includes(['chsf', 'kendraio', 'brusselstogether', 'sustainoss', 'ispcwa'], slug)) {
+    if (slug.match(/wwcode/)) {
+      template = 'thankyou.wwcode';
+    } else if (['foundation', 'opensource'].includes(hostSlug)) {
+      template = `thankyou.${hostSlug}`;
+    } else if (includes(['chsf', 'kendraio', 'brusselstogether', 'sustainoss', 'ispcwa'], slug)) {
       template = `thankyou.${slug}`;
-    }
-
-    if (includes(['laprimaire', 'lesbarbares', 'nuitdebout', 'enmarchebe', 'monnaie-libre'], slug)) {
-      template += '.fr';
-
+    } else if (includes(['laprimaire', 'lesbarbares', 'nuitdebout', 'enmarchebe', 'monnaie-libre'], slug)) {
       if (slug === 'laprimaire') {
         template = 'thankyou.laprimaire';
+      } else {
+        template = 'thankyou.fr';
       }
 
       // xdamman: hack
@@ -292,7 +315,10 @@ const generateEmailFromTemplate = (template, recipient, data = {}, options = {})
         : data.collective.name;
       const text = `Hi @${
         data.member.memberCollective.twitterHandle
-      } thanks for your donation to ${collectiveMention} ${config.host.website}${get(data, 'collective.urlPath')} 🎉😊`;
+      } thanks for your financial contribution to ${collectiveMention} ${config.host.website}${get(
+        data,
+        'collective.urlPath',
+      )} 🎉😊`;
       data.tweet = {
         text,
         encoded: encodeURIComponent(text),
@@ -339,6 +365,7 @@ const generateEmailFromTemplateAndSend = async (template, recipient, data, optio
     const attributes = getTemplateAttributes(renderedTemplate.html);
     options.text = renderedTemplate.text;
     options.tag = template;
+    debug(`Sending email to: ${recipient} subject: ${attributes.subject}`);
     return emailLib.sendMessage(recipient, attributes.subject, attributes.body, options);
   });
 };
@@ -348,8 +375,10 @@ const emailLib = {
   getTemplateAttributes,
   sendMessage,
   generateUnsubscribeToken,
+  isValidUnsubscribeToken,
   generateEmailFromTemplate,
   send: generateEmailFromTemplateAndSend,
+  isWhitelistedDomain,
 };
 
 export default emailLib;

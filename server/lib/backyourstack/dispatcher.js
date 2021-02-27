@@ -1,24 +1,16 @@
-import fetch from 'node-fetch';
-import uuidV4 from 'uuid/v4';
-import debugLib from 'debug';
-import moment from 'moment';
 import { map } from 'bluebird';
+import debugLib from 'debug';
 import { pick } from 'lodash';
+import moment from 'moment';
+import fetch from 'node-fetch';
+import { v4 as uuid } from 'uuid';
 
-import models from '../../models';
-import status from '../../constants/order_status';
 import activities from '../../constants/activities';
+import status from '../../constants/order_status';
+import models from '../../models';
 import * as paymentsLib from '../payments';
 
-export function getNextDispatchingDate(interval, currentDispatchDate) {
-  const nextDispatchDate = moment(currentDispatchDate);
-  if (interval === 'month') {
-    nextDispatchDate.add(1, 'months');
-  } else if (interval === 'year') {
-    nextDispatchDate.add(1, 'years');
-  }
-  return nextDispatchDate.toDate();
-}
+const debug = debugLib('backyourstack');
 
 export function needsDispatching(nextDispatchDate) {
   const needs = moment(nextDispatchDate).isSameOrBefore();
@@ -62,13 +54,15 @@ async function createPaymentMethod(originalCreditTransaction) {
     name: 'BackYourStack dispatch Payment Method',
     service: 'opencollective',
     type: 'prepaid',
-    uuid: uuidV4(),
-    data: { HostCollectiveId: originalCreditTransaction.HostCollectiveId },
+    uuid: uuid(),
+    data: {
+      HostCollectiveId: originalCreditTransaction.HostCollectiveId,
+      hidden: true,
+    },
   });
 }
 
 export async function dispatchFunds(order) {
-  const debug = debugLib('dispatch_prepaid_subscription');
   // Amount shareable amongst dependencies
   const transaction = await models.Transaction.findOne({
     where: { OrderId: order.id, type: 'CREDIT' },
@@ -128,7 +122,7 @@ export async function dispatchFunds(order) {
         FromCollectiveId: order.FromCollectiveId,
         CollectiveId: collective.id,
         quantity: order.quantity,
-        description: `Monthly donation to ${collective.name} through BackYourStack`,
+        description: `Monthly financial contribution to ${collective.name} through BackYourStack`,
         totalAmount,
         currency: order.currency,
         status: status.PENDING,
@@ -140,7 +134,7 @@ export async function dispatchFunds(order) {
       try {
         await paymentsLib.executeOrder(order.createdByUser, orderCreated);
       } catch (e) {
-        debug(`Error occured excuting order ${orderCreated.id}`, e);
+        debug(`Error occurred excuting order ${orderCreated.id}`, e);
         throw e;
       }
 
@@ -155,9 +149,8 @@ export async function dispatch(order, subscription) {
     const dispatchedOrders = await dispatchFunds(order);
     // update subscription next dispatch date
     if (dispatchedOrders) {
-      const currentDispatchDate = (subscription.data && subscription.data.nextDispatchDate) || new Date();
       subscription.data = {
-        nextDispatchDate: getNextDispatchingDate(subscription.interval, currentDispatchDate),
+        nextDispatchDate: subscription.nextChargeDate,
       };
       await subscription.save();
     }

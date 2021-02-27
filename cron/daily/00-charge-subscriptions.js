@@ -2,17 +2,18 @@
 import '../../server/env';
 
 import fs from 'fs';
-import { parse as json2csv } from 'json2csv';
+
 import { ArgumentParser } from 'argparse';
+import { parse as json2csv } from 'json2csv';
 
 import emailLib from '../../server/lib/email';
-import { promiseSeq } from '../../server/lib/utils';
-import { sequelize } from '../../server/models';
 import {
+  groupProcessedOrders,
   ordersWithPendingCharges,
   processOrderWithSubscription,
-  groupProcessedOrders,
 } from '../../server/lib/subscriptions';
+import { promiseSeq } from '../../server/lib/utils';
+import { sequelize } from '../../server/models';
 
 const REPORT_EMAIL = 'ops@opencollective.com';
 
@@ -80,7 +81,9 @@ async function run(options) {
     }
   } else {
     vprint(options, 'Not generating CSV file');
-    if (!options.dryRun) await emailReportNoCharges(start);
+    if (!options.dryRun) {
+      await emailReportNoCharges(start);
+    }
   }
 }
 
@@ -123,7 +126,9 @@ async function emailReport(start, orders, data, attachments) {
 
   // Iterate over grouped orders to populate the result list with
   // details of each group
-  for (const group of data) printGroup(group);
+  for (const group of data) {
+    printGroup(group);
+  }
 
   // Time we spent running the whole script
   const now = new Date(),

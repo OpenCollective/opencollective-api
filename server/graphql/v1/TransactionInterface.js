@@ -1,19 +1,29 @@
-import { get } from 'lodash';
-import models from '../../models';
 import {
-  GraphQLInt,
-  GraphQLFloat,
-  GraphQLString,
-  GraphQLInterfaceType,
-  GraphQLObjectType,
-  GraphQLList,
   GraphQLEnumType,
+  GraphQLFloat,
   GraphQLInputObjectType,
+  GraphQLInt,
+  GraphQLInterfaceType,
+  GraphQLList,
+  GraphQLObjectType,
+  GraphQLString,
 } from 'graphql';
+import { get } from 'lodash';
+
+import models from '../../models';
+import { canSeeExpenseAttachments, getExpenseItems } from '../common/expenses';
+import { idEncode } from '../v2/identifiers';
 
 import { CollectiveInterfaceType, UserCollectiveType } from './CollectiveInterface';
-
-import { SubscriptionType, OrderType, PaymentMethodType, UserType, DateString, ExpenseType } from './types';
+import {
+  DateString,
+  ExpenseType,
+  OrderDirectionType,
+  OrderType,
+  PaymentMethodType,
+  SubscriptionType,
+  UserType,
+} from './types';
 
 export const TransactionInterfaceType = new GraphQLInterfaceType({
   name: 'Transaction',
@@ -31,6 +41,7 @@ export const TransactionInterfaceType = new GraphQLInterfaceType({
   fields: () => {
     return {
       id: { type: GraphQLInt },
+      idV2: { type: GraphQLString },
       uuid: { type: GraphQLString },
       amount: { type: GraphQLInt },
       currency: { type: GraphQLString },
@@ -62,6 +73,12 @@ const TransactionFields = () => {
       type: GraphQLInt,
       resolve(transaction) {
         return transaction.id;
+      },
+    },
+    idV2: {
+      type: GraphQLString,
+      resolve(transaction) {
+        return idEncode(transaction.id, 'transaction');
       },
     },
     refundTransaction: {
@@ -183,11 +200,13 @@ const TransactionFields = () => {
         // This is very suboptimal. We should probably record the CreatedByCollectiveId (or better CreatedByProfileId) instead of the User.
         if (transaction && transaction.getCreatedByUser) {
           const fromCollective = await transaction.getFromCollective();
-          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.CollectiveId)))
+          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.CollectiveId))) {
             return {};
+          }
           const collective = await transaction.getCollective();
-          if (collective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.FromCollectiveId)))
+          if (collective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.FromCollectiveId))) {
             return {};
+          }
           return transaction.getCreatedByUser();
         }
         return null;
@@ -251,9 +270,11 @@ const TransactionFields = () => {
       type: PaymentMethodType,
       resolve(transaction, args, req) {
         const paymentMethodId = transaction.PaymentMethodId || get(transaction, 'paymentMethod.id');
-        if (!paymentMethodId) return null;
+        if (!paymentMethodId) {
+          return null;
+        }
         // TODO: put behind a login check
-        return req.loaders.paymentMethods.findById.load(paymentMethodId);
+        return req.loaders.PaymentMethod.byId.load(paymentMethodId);
       },
     },
   };
@@ -283,9 +304,7 @@ export const TransactionExpenseType = new GraphQLObjectType({
           // If it's a expense transaction it'll have an ExpenseId
           // otherwise we return null
           return transaction.ExpenseId
-            ? req.loaders.expense.findById
-                .load(transaction.ExpenseId)
-                .then(expense => expense && expense.privateMessage)
+            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.privateMessage)
             : null;
         },
       },
@@ -296,7 +315,7 @@ export const TransactionExpenseType = new GraphQLObjectType({
           // If it's a expense transaction it'll have an ExpenseId
           // otherwise we return null
           return transaction.ExpenseId
-            ? req.loaders.expense.findById.load(transaction.ExpenseId).then(expense => expense && expense.category)
+            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.tags?.[0])
             : null;
         },
       },
@@ -305,18 +324,25 @@ export const TransactionExpenseType = new GraphQLObjectType({
         resolve(transaction, args, req) {
           // If it's a expense transaction it'll have an ExpenseId
           // otherwise we return null
-          return transaction.ExpenseId ? req.loaders.expense.findById.load(transaction.ExpenseId) : null;
+          return transaction.ExpenseId ? req.loaders.Expense.byId.load(transaction.ExpenseId) : null;
         },
       },
       attachment: {
         type: GraphQLString,
         deprecationReason: 'Please use transaction.expense.attachment',
-        resolve(transaction, args, req) {
-          // If it's a expense transaction it'll have an ExpenseId
-          // otherwise we return null
-          return transaction.ExpenseId
-            ? req.loaders.expense.findById.load(transaction.ExpenseId).then(expense => expense && expense.attachment)
-            : null;
+        async resolve(transaction, args, req) {
+          // If it's a expense transaction it'll have an ExpenseId otherwise we return null
+          if (!transaction.ExpenseId) {
+            return null;
+          } else {
+            const expense = req.loaders.Expense.byId.load(transaction.ExpenseId);
+            if (!expense || !(await canSeeExpenseAttachments(req, expense))) {
+              return null;
+            } else {
+              const items = await getExpenseItems(transaction.ExpenseId, req);
+              return items[0] && items[0].url;
+            }
+          }
         },
       },
     };
@@ -383,15 +409,6 @@ export const TransactionType = new GraphQLEnumType({
   values: {
     CREDIT: {},
     DEBIT: {},
-  },
-});
-
-export const OrderDirectionType = new GraphQLEnumType({
-  name: 'OrderDirection',
-  description: 'Possible directions in which to order a list of items when provided an orderBy argument.',
-  values: {
-    ASC: {},
-    DESC: {},
   },
 });
 
