@@ -1,8 +1,8 @@
-# PostgreSQL Database
+ PostgreSQL Database
 
 You need to have PostgreSQL 9.x, 10.x or 11.x with the Postgis extension.
 
-In production, we're currently running 9.6.11.
+In production, we're currently running 9.6.17.
 
 ## Installation
 
@@ -40,6 +40,12 @@ You'll also need to have Postgres client tools like `psql`, `dropdb`, `createuse
 ```
 brew install libpq
 echo 'export PATH="/usr/local/opt/libpq/bin:$PATH"' >> ~/.bash_profile
+```
+
+For Ubuntu 16.04 and above you can execute the following to install Postgres client tools:
+
+```
+sudo apt-get install postgresql-client
 ```
 
 ## Setup

@@ -3,35 +3,29 @@
  * This tests all the GraphQL API methods that interact with
  * expenses. */
 
-/* Test libraries */
-import sinon from 'sinon';
 import { expect } from 'chai';
-
-/* Test utilities */
 import { pick } from 'lodash';
-import * as utils from '../../../utils';
-import * as store from '../../../stores';
+import sinon from 'sinon';
 
-/* Support code */
-import models from '../../../../server/models';
-import emailLib from '../../../../server/lib/email';
-import { getFxRate } from '../../../../server/lib/currency';
-
-import paypalAdaptive from '../../../../server/paymentProviders/paypal/adaptiveGateway';
-import paymentProviders from '../../../../server/paymentProviders';
-
-import {
-  fakeConnectedAccount,
-  fakeExpense,
-  fakeUser,
-  fakeExpenseAttachment,
-  fakeCollective,
-  randStr,
-  fakePayoutMethod,
-} from '../../../test-helpers/fake-data';
 import { roles } from '../../../../server/constants';
 import expenseStatus from '../../../../server/constants/expense_status';
+import { getFxRate } from '../../../../server/lib/currency';
+import emailLib from '../../../../server/lib/email';
+import models from '../../../../server/models';
 import { PayoutMethodTypes } from '../../../../server/models/PayoutMethod';
+import paymentProviders from '../../../../server/paymentProviders';
+import paypalAdaptive from '../../../../server/paymentProviders/paypal/adaptiveGateway';
+import * as store from '../../../stores';
+import {
+  fakeCollective,
+  fakeConnectedAccount,
+  fakeExpense,
+  fakeExpenseItem,
+  fakePayoutMethod,
+  fakeUser,
+  randStr,
+} from '../../../test-helpers/fake-data';
+import * as utils from '../../../utils';
 
 /* Queries used throughout these tests */
 const allExpensesQuery = `
@@ -72,7 +66,7 @@ const expenseQuery = `
       user { id email collective { id slug } }
       collective { id slug }
       attachment
-      attachments {
+      items {
         id
         amount
         description
@@ -89,8 +83,10 @@ const createExpenseQuery = `
       status
       user { id name collective { id name slug } }
       amount
+      tags
+      category
       attachment
-      attachments {
+      items {
         id
         url
         amount
@@ -107,8 +103,10 @@ const editExpenseMutation = `
       status
       user { id name collective { id name slug } }
       amount
+      tags
+      category
       attachment
-      attachments {
+      items {
         id
         url
         amount
@@ -202,31 +200,31 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 2000 }],
+        items: [{ url: store.randUrl(), amount: 2000 }],
         amount: 2000,
         description: 'Beer',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 3000 }],
+        items: [{ url: store.randUrl(), amount: 3000 }],
         amount: 3000,
         description: 'Banner',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 4000 }],
+        items: [{ url: store.randUrl(), amount: 4000 }],
         amount: 4000,
         description: 'Stickers',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 5000 }],
+        items: [{ url: store.randUrl(), amount: 5000 }],
         amount: 5000,
         description: 'T-shirts',
         ...data,
@@ -266,13 +264,13 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 2000 }],
+        items: [{ url: store.randUrl(), amount: 2000 }],
         amount: 2000,
         description: 'Beer',
         ...data,
@@ -281,13 +279,13 @@ describe('server/graphql/v1/expenses', () => {
       // two expenses
       data.collective = { id: anotherCollective.id };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 3000 }],
+        items: [{ url: store.randUrl(), amount: 3000 }],
         amount: 3000,
         description: 'Banner',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 4000 }],
+        items: [{ url: store.randUrl(), amount: 4000 }],
         amount: 4000,
         description: 'Stickers',
         ...data,
@@ -296,7 +294,7 @@ describe('server/graphql/v1/expenses', () => {
       // one expense
       data.collective = { id: inactiveCollective.id };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 3500 }],
+        items: [{ url: store.randUrl(), amount: 3500 }],
         amount: 3500,
         description: 'Banner inactive',
         ...data,
@@ -333,14 +331,14 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         category: 'legal',
         description: 'Pizza',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 2000 }],
+        items: [{ url: store.randUrl(), amount: 2000 }],
         amount: 2000,
         category: 'treat',
         description: 'Beer',
@@ -350,14 +348,14 @@ describe('server/graphql/v1/expenses', () => {
       // two expenses but just one categorized as `legal`.
       data.collective = { id: anotherCollective.id };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 3000 }],
+        items: [{ url: store.randUrl(), amount: 3000 }],
         amount: 3000,
         category: 'legal',
         description: 'Banner',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 4000 }],
+        items: [{ url: store.randUrl(), amount: 4000 }],
         amount: 4000,
         category: 'stuff',
         description: 'Stickers',
@@ -365,7 +363,7 @@ describe('server/graphql/v1/expenses', () => {
       });
       // When we retrieve all the expenses of the host
       const result = await utils.graphqlQuery(allExpensesQuery, {
-        category: 'legal',
+        category: 'LEGAL',
         CollectiveId: hostCollective.id,
         limit: 5,
         includeHostedCollectives: true,
@@ -394,14 +392,14 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       await store.createExpense(xdamman, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
-        category: 'legal',
+        category: 'LEGAL',
         description: 'Pizza',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 2000 }],
+        items: [{ url: store.randUrl(), amount: 2000 }],
         amount: 2000,
         category: 'treat',
         description: 'Beer',
@@ -411,14 +409,14 @@ describe('server/graphql/v1/expenses', () => {
       // two expenses but just one filed by our user
       data.collective = { id: anotherCollective.id };
       await store.createExpense(xdamman, {
-        attachments: [{ url: store.randUrl(), amount: 3000 }],
+        items: [{ url: store.randUrl(), amount: 3000 }],
         amount: 3000,
         category: 'legal',
         description: 'Banner',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 4000 }],
+        items: [{ url: store.randUrl(), amount: 4000 }],
         amount: 4000,
         category: 'stuff',
         description: 'Stickers',
@@ -472,31 +470,31 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 2000 }],
+        items: [{ url: store.randUrl(), amount: 2000 }],
         amount: 2000,
         description: 'Beer',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 3000 }],
+        items: [{ url: store.randUrl(), amount: 3000 }],
         amount: 3000,
         description: 'Banner',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 4000 }],
+        items: [{ url: store.randUrl(), amount: 4000 }],
         amount: 4000,
         description: 'Stickers',
         ...data,
       });
       await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 5000 }],
+        items: [{ url: store.randUrl(), amount: 5000 }],
         amount: 5000,
         description: 'T-shirts',
         ...data,
@@ -524,8 +522,8 @@ describe('server/graphql/v1/expenses', () => {
     it('hides attachment if not allowed to see', async () => {
       const host = await fakeCollective({ type: 'ORGANIZATION' });
       const collective = await fakeCollective({ HostCollectiveId: host.id });
-      const expense = await fakeExpense({ CollectiveId: collective.id, attachments: [] });
-      const attachment = await fakeExpenseAttachment({ ExpenseId: expense.id });
+      const expense = await fakeExpense({ CollectiveId: collective.id, items: [] });
+      const attachment = await fakeExpenseItem({ ExpenseId: expense.id });
       const collectiveAdmin = await fakeUser();
       await collective.addUserWithRole(collectiveAdmin, roles.ADMIN);
       const hostAdmin = await fakeUser();
@@ -534,7 +532,7 @@ describe('server/graphql/v1/expenses', () => {
       // Fetch as unauthenticated (should not have URL)
       let result = await utils.graphqlQuery(expenseQuery, { id: expense.id });
       expect(result.data.Expense.attachment).to.be.null;
-      result.data.Expense.attachments.forEach(attachmentFromAPI => {
+      result.data.Expense.items.forEach(attachmentFromAPI => {
         expect(attachmentFromAPI.url).to.be.null;
       });
 
@@ -542,28 +540,28 @@ describe('server/graphql/v1/expenses', () => {
       const randomUser = await fakeUser();
       result = await utils.graphqlQuery(expenseQuery, { id: expense.id }, randomUser);
       expect(result.data.Expense.attachment).to.be.null;
-      result.data.Expense.attachments.forEach(attachmentFromAPI => {
+      result.data.Expense.items.forEach(attachmentFromAPI => {
         expect(attachmentFromAPI.url).to.be.null;
       });
 
       // Fetch as expense's creator (should have URL)
       result = await utils.graphqlQuery(expenseQuery, { id: expense.id }, expense.User);
       expect(result.data.Expense.attachment).to.eq(attachment.url);
-      result.data.Expense.attachments.forEach(attachmentFromAPI => {
+      result.data.Expense.items.forEach(attachmentFromAPI => {
         expect(attachmentFromAPI.url).to.eq(attachment.url);
       });
 
       // Fetch as collective admin (should have URL)
       result = await utils.graphqlQuery(expenseQuery, { id: expense.id }, collectiveAdmin);
       expect(result.data.Expense.attachment).to.eq(attachment.url);
-      result.data.Expense.attachments.forEach(attachmentFromAPI => {
+      result.data.Expense.items.forEach(attachmentFromAPI => {
         expect(attachmentFromAPI.url).to.eq(attachment.url);
       });
 
       // Fetch as host admin (should have URL)
       result = await utils.graphqlQuery(expenseQuery, { id: expense.id }, hostAdmin);
       expect(result.data.Expense.attachment).to.eq(attachment.url);
-      result.data.Expense.attachments.forEach(attachmentFromAPI => {
+      result.data.Expense.items.forEach(attachmentFromAPI => {
         expect(attachmentFromAPI.url).to.eq(attachment.url);
       });
     });
@@ -640,7 +638,7 @@ describe('server/graphql/v1/expenses', () => {
       // And then the expense's creator should be our user
       expect(result.data.createExpense.user.id).to.equal(user.id);
       expect(result.data.createExpense.attachment).to.equal(data.attachment);
-      expect(result.data.createExpense.attachments[0].url).to.equal(data.attachment);
+      expect(result.data.createExpense.items[0].url).to.equal(data.attachment);
 
       // And then the user should become a member of the project
       const membership = await models.Member.findOne({
@@ -669,7 +667,7 @@ describe('server/graphql/v1/expenses', () => {
       expect(res.errors).to.not.exist;
     }); /* End of "creates a new expense logged in and send email to collective admin for approval" */
 
-    it('creates an expense using the new "attachments" field', async () => {
+    it('creates an expense using the new "items" field', async () => {
       const user = await fakeUser();
       const collective = await fakeCollective();
       const expenseData = {
@@ -678,7 +676,7 @@ describe('server/graphql/v1/expenses', () => {
         type: 'RECEIPT',
         category: 'food',
         collective: { id: collective.id },
-        attachments: [
+        items: [
           {
             amount: 250,
             description: 'Burger',
@@ -695,16 +693,16 @@ describe('server/graphql/v1/expenses', () => {
       };
 
       const result = await utils.graphqlQuery(createExpenseQuery, { expense: expenseData }, user);
-      const attachments = result.data.createExpense.attachments;
+      const items = result.data.createExpense.items;
       expect(result.data.createExpense.amount).to.equal(expenseData.amount);
-      attachments.forEach(attachment => {
-        const baseData = expenseData.attachments.find(a => a.description === attachment.description);
+      items.forEach(attachment => {
+        const baseData = expenseData.items.find(a => a.description === attachment.description);
         expect(baseData.url).to.equal(attachment.url);
         expect(baseData.amount).to.equal(attachment.amount);
       });
     });
 
-    it("fails if attachments amount don't match expense", async () => {
+    it("fails if items amount don't match expense", async () => {
       const user = await fakeUser();
       const collective = await fakeCollective();
       const expenseData = {
@@ -713,7 +711,7 @@ describe('server/graphql/v1/expenses', () => {
         type: 'RECEIPT',
         category: 'food',
         collective: { id: collective.id },
-        attachments: [
+        items: [
           {
             amount: 250,
             description: 'Burger',
@@ -730,8 +728,32 @@ describe('server/graphql/v1/expenses', () => {
       const result = await utils.graphqlQuery(createExpenseQuery, { expense: expenseData }, user);
       expect(result.errors).to.exist;
       expect(result.errors[0].message).to.equal(
-        "The sum of all attachments must be equal to the total expense's amount. Expense's total is 500, but the total of attachments was 650.",
+        "The sum of all items must be equal to the total expense's amount. Expense's total is 500, but the total of items was 650.",
       );
+    });
+
+    it('is backward compatible with category', async () => {
+      const user = await fakeUser();
+      const collective = await fakeCollective();
+      const expenseData = {
+        amount: 250,
+        description: 'Bought some potatoes',
+        type: 'RECEIPT',
+        category: 'food',
+        collective: { id: collective.id },
+        items: [
+          {
+            amount: 250,
+            description: 'Burger',
+            url: store.randUrl(),
+            incurredAt: new Date('2000-01-01T00:00:00'),
+          },
+        ],
+      };
+
+      const result = await utils.graphqlQuery(createExpenseQuery, { expense: expenseData }, user);
+      expect(result.data.createExpense.category).to.equal(expenseData.category.toLowerCase());
+      expect(result.data.createExpense.tags[0]).to.equal(expenseData.category.toLowerCase());
     });
   }); /* End of "#createExpense" */
 
@@ -755,7 +777,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -789,7 +811,7 @@ describe('server/graphql/v1/expenses', () => {
       };
 
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -840,7 +862,7 @@ describe('server/graphql/v1/expenses', () => {
         PayoutMethod: { type: PayoutMethodTypes.PAYPAL, data: { email: 'testuser@paypal.com' } },
       };
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -896,7 +918,7 @@ describe('server/graphql/v1/expenses', () => {
       // And given the above collective has one expense (in PENDING
       // state)
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         currency: 'USD',
@@ -925,7 +947,7 @@ describe('server/graphql/v1/expenses', () => {
       // And given the above collective has one expense (in PENDING
       // state)
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         currency: 'USD',
@@ -983,7 +1005,7 @@ describe('server/graphql/v1/expenses', () => {
       // And given the above collective has one expense (in PENDING
       // state)
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         currency: 'USD',
@@ -1023,7 +1045,7 @@ describe('server/graphql/v1/expenses', () => {
       // And given the above collective has one expense (in PENDING
       // state)
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         currency: 'USD',
@@ -1086,7 +1108,7 @@ describe('server/graphql/v1/expenses', () => {
         // And given the above collective has one expense (in PENDING
         // state)
         expense = await store.createExpense(user, {
-          attachments: [{ url: store.randUrl(), amount: 1000 }],
+          items: [{ url: store.randUrl(), amount: 1000 }],
           amount: 1000,
           description: 'Pizza',
           currency: 'EUR',
@@ -1142,6 +1164,7 @@ describe('server/graphql/v1/expenses', () => {
           'USD',
           10,
         ));
+        await hostCollective.update({ plan: 'network-host-plan' });
         // And given a user to file expenses
         ({ user } = await store.newUser('someone cool'));
         await addFunds(user, hostCollective, collective, 15000000);
@@ -1168,6 +1191,7 @@ describe('server/graphql/v1/expenses', () => {
           status: expenseStatus.APPROVED,
           amount: 1000000,
           CollectiveId: collective.id,
+          UserId: user.id,
           currency: 'USD',
           PayoutMethodId: payoutMethod.id,
           category: 'Engineering',
@@ -1193,6 +1217,18 @@ describe('server/graphql/v1/expenses', () => {
         await expense.reload();
         expect(expense.status).to.equal(expenseStatus.PROCESSING);
       });
+
+      it('should send a notification email to the payee', async () => {
+        emailSendMessageSpy.resetHistory();
+
+        await utils.graphqlQuery(payExpenseQuery, { id: expense.id }, hostAdmin);
+
+        await utils.waitForCondition(() => emailSendMessageSpy.callCount === 1);
+        expect(emailSendMessageSpy.args[0][0]).to.equal(user.email);
+        expect(emailSendMessageSpy.args[0][1]).to.contain(
+          'Expense from WWCode Berlin for January Invoice is being Processed',
+        );
+      });
     });
 
     describe('success', () => {
@@ -1215,7 +1251,7 @@ describe('server/graphql/v1/expenses', () => {
         // And given the above collective has one expense (in PENDING
         // state)
         expense = await store.createExpense(user, {
-          attachments: [{ url: store.randUrl(), amount: 1000 }],
+          items: [{ url: store.randUrl(), amount: 1000 }],
           amount: 1000,
           description: 'Pizza',
           currency: 'EUR',
@@ -1260,7 +1296,7 @@ describe('server/graphql/v1/expenses', () => {
           hostFeeInCollectiveCurrency +
           platformFeeInCollectiveCurrency;
         expect(balance).to.equal(initialBalance - expensePlusFees);
-        await utils.waitForCondition(() => emailSendMessageSpy.callCount === 4);
+        await utils.waitForCondition(() => emailSendMessageSpy.callCount === 2);
         const debitTransaction = await models.Transaction.findOne({
           where: {
             type: 'DEBIT',
@@ -1281,16 +1317,11 @@ describe('server/graphql/v1/expenses', () => {
         });
         expect(creditTransaction.netAmountInCollectiveCurrency).to.equal(expense.amount);
         expect(creditTransaction.amount).to.equal(expensePlusFees);
-        expect(emailSendMessageSpy.callCount).to.equal(4);
+        expect(emailSendMessageSpy.callCount).to.equal(2);
         expect(emailSendMessageSpy.args[0][0]).to.equal(user.email);
-        expect(emailSendMessageSpy.args[0][1]).to.contain('Your expense to WWCode Berlin');
-        expect(emailSendMessageSpy.args[0][1]).to.contain('has been approved');
+        expect(emailSendMessageSpy.args[0][1]).to.contain('from WWCode Berlin for Pizza');
         expect(emailSendMessageSpy.args[1][0]).to.equal(hostAdmin.email);
-        expect(emailSendMessageSpy.args[1][1]).to.contain('New expense approved on WWCode Berlin');
-        expect(emailSendMessageSpy.args[2][0]).to.equal(user.email);
-        expect(emailSendMessageSpy.args[2][1]).to.contain('from WWCode Berlin for Pizza');
-        expect(emailSendMessageSpy.args[3][0]).to.equal(hostAdmin.email);
-        expect(emailSendMessageSpy.args[3][1]).to.contain('Expense paid on WWCode Berlin');
+        expect(emailSendMessageSpy.args[1][1]).to.contain('Expense paid on WWCode Berlin');
       }); /* End of "pays the expense manually and reduces the balance of the collective" */
 
       it('Mark expense as paid if expense paypal is the same as host paypal', async () => {
@@ -1334,12 +1365,14 @@ describe('server/graphql/v1/expenses', () => {
         await utils.waitForCondition(() => emailSendMessageSpy.callCount > 0, {
           delay: 500,
         });
-        expect(emailSendMessageSpy.callCount).to.equal(4);
+        expect(emailSendMessageSpy.callCount).to.equal(2);
       });
     });
   }); /* End of #payExpense */
 
   describe('#editExpense', () => {
+    // New expense flow covered in test/server/graphql/v2/mutation/ExpenseMutations.test.js
+    // Should be removed once we remove the old expense flow
     describe('goes back to pending if editing critical fields', () => {
       it('Amount', async () => {
         const expense = await fakeExpense({ status: 'APPROVED', amount: 1000 });
@@ -1384,11 +1417,11 @@ describe('server/graphql/v1/expenses', () => {
       });
     });
 
-    it('updates an expense using the new "attachments" field', async () => {
+    it('updates an expense using the new "items" field', async () => {
       const expense = await fakeExpense({ amount: 1000 });
       const expenseUpdateData = {
         id: expense.id,
-        attachments: [
+        items: [
           {
             amount: 800,
             description: 'Burger',
@@ -1403,22 +1436,22 @@ describe('server/graphql/v1/expenses', () => {
       };
 
       const result = await utils.graphqlQuery(editExpenseMutation, { expense: expenseUpdateData }, expense.User);
-      const attachmentsFromAPI = result.data.editExpense.attachments;
+      const itemsFromAPI = result.data.editExpense.items;
       expect(result.data.editExpense.amount).to.equal(1000);
-      expect(attachmentsFromAPI.length).to.equal(2);
-      expenseUpdateData.attachments.forEach(attachment => {
-        const attachmentFromApi = attachmentsFromAPI.find(a => a.description === attachment.description);
+      expect(itemsFromAPI.length).to.equal(2);
+      expenseUpdateData.items.forEach(attachment => {
+        const attachmentFromApi = itemsFromAPI.find(a => a.description === attachment.description);
         expect(attachmentFromApi).to.exist;
         expect(attachmentFromApi.url).to.equal(attachment.url);
         expect(attachmentFromApi.amount).to.equal(attachment.amount);
       });
     });
 
-    it("fails if attachments amount doesn't match expense", async () => {
+    it("fails if items amount doesn't match expense", async () => {
       const expense = await fakeExpense({ amount: 1000 });
       const expenseUpdateData = {
         id: expense.id,
-        attachments: [
+        items: [
           { amount: 800, url: store.randUrl() },
           { amount: 300, url: store.randUrl() },
         ],
@@ -1427,63 +1460,75 @@ describe('server/graphql/v1/expenses', () => {
       const result = await utils.graphqlQuery(editExpenseMutation, { expense: expenseUpdateData }, expense.User);
       expect(result.errors).to.exist;
       expect(result.errors[0].message).to.equal(
-        "The sum of all attachments must be equal to the total expense's amount. Expense's total is 1000, but the total of attachments was 1100.",
+        "The sum of all items must be equal to the total expense's amount. Expense's total is 1000, but the total of items was 1100.",
       );
     });
 
-    it('updates the attachments', async () => {
-      const expense = await fakeExpense({ amount: 10000, attachments: [] });
-      const attachments = await Promise.all([
-        fakeExpenseAttachment({ ExpenseId: expense.id, amount: 2000 }),
-        fakeExpenseAttachment({ ExpenseId: expense.id, amount: 3000 }),
-        fakeExpenseAttachment({ ExpenseId: expense.id, amount: 5000 }),
+    it('updates the items', async () => {
+      const expense = await fakeExpense({ amount: 10000, items: [] });
+      const items = await Promise.all([
+        fakeExpenseItem({ ExpenseId: expense.id, amount: 2000 }),
+        fakeExpenseItem({ ExpenseId: expense.id, amount: 3000 }),
+        fakeExpenseItem({ ExpenseId: expense.id, amount: 5000 }),
       ]);
 
       const updatedExpenseData = {
         id: expense.id,
-        attachments: [
-          pick(attachments[0], ['id', 'url', 'amount']), // Don't change the first one (value=2000)
-          { ...pick(attachments[1], ['id', 'url']), amount: 7000 }, // Update amount for the second one
+        items: [
+          pick(items[0], ['id', 'url', 'amount']), // Don't change the first one (value=2000)
+          { ...pick(items[1], ['id', 'url']), amount: 7000 }, // Update amount for the second one
           { amount: 1000, url: store.randUrl() }, // Remove the third one and create another instead
         ],
       };
 
       const result = await utils.graphqlQuery(editExpenseMutation, { expense: updatedExpenseData }, expense.User);
-      const returnedAttachments = result.data.editExpense.attachments;
-      const sumAttachments = returnedAttachments.reduce((total, attachment) => total + attachment.amount, 0);
-      expect(sumAttachments).to.equal(10000);
-      expect(returnedAttachments.find(a => a.id === attachments[0].id)).to.exist;
-      expect(returnedAttachments.find(a => a.id === attachments[1].id)).to.exist;
-      expect(returnedAttachments.find(a => a.id === attachments[2].id)).to.not.exist;
-      expect(returnedAttachments.find(a => a.id === attachments[1].id).amount).to.equal(7000);
+      const returnedItems = result.data.editExpense.items;
+      const sumItems = returnedItems.reduce((total, attachment) => total + attachment.amount, 0);
+      expect(sumItems).to.equal(10000);
+      expect(returnedItems.find(a => a.id === items[0].id)).to.exist;
+      expect(returnedItems.find(a => a.id === items[1].id)).to.exist;
+      expect(returnedItems.find(a => a.id === items[2].id)).to.not.exist;
+      expect(returnedItems.find(a => a.id === items[1].id).amount).to.equal(7000);
     });
 
-    it('Updates the attachments and the expense amount at the same time', async () => {
-      const expense = await fakeExpense({ amount: 10000, attachments: [] });
-      const attachments = await Promise.all([
-        fakeExpenseAttachment({ ExpenseId: expense.id, amount: 2000 }),
-        fakeExpenseAttachment({ ExpenseId: expense.id, amount: 3000 }),
-        fakeExpenseAttachment({ ExpenseId: expense.id, amount: 5000 }),
+    it('Updates the items and the expense amount at the same time', async () => {
+      const expense = await fakeExpense({ amount: 10000, items: [] });
+      const items = await Promise.all([
+        fakeExpenseItem({ ExpenseId: expense.id, amount: 2000 }),
+        fakeExpenseItem({ ExpenseId: expense.id, amount: 3000 }),
+        fakeExpenseItem({ ExpenseId: expense.id, amount: 5000 }),
       ]);
 
       const updatedExpenseData = {
         id: expense.id,
         amount: 15000,
-        attachments: [
-          pick(attachments[0], ['id', 'url', 'amount']), // Don't change the first one (value=2000)
-          { ...pick(attachments[1], ['id', 'url']), amount: 7000 }, // Update amount for the second one
+        items: [
+          pick(items[0], ['id', 'url', 'amount']), // Don't change the first one (value=2000)
+          { ...pick(items[1], ['id', 'url']), amount: 7000 }, // Update amount for the second one
           { amount: 6000, url: store.randUrl() }, // Remove the third one and create another instead
         ],
       };
 
       const result = await utils.graphqlQuery(editExpenseMutation, { expense: updatedExpenseData }, expense.User);
-      const returnedAttachments = result.data.editExpense.attachments;
-      const sumAttachments = returnedAttachments.reduce((total, attachment) => total + attachment.amount, 0);
-      expect(sumAttachments).to.equal(15000);
-      expect(returnedAttachments.find(a => a.id === attachments[0].id)).to.exist;
-      expect(returnedAttachments.find(a => a.id === attachments[1].id)).to.exist;
-      expect(returnedAttachments.find(a => a.id === attachments[2].id)).to.not.exist;
-      expect(returnedAttachments.find(a => a.id === attachments[1].id).amount).to.equal(7000);
+      const returnedItems = result.data.editExpense.items;
+      const sumItems = returnedItems.reduce((total, attachment) => total + attachment.amount, 0);
+      expect(sumItems).to.equal(15000);
+      expect(returnedItems.find(a => a.id === items[0].id)).to.exist;
+      expect(returnedItems.find(a => a.id === items[1].id)).to.exist;
+      expect(returnedItems.find(a => a.id === items[2].id)).to.not.exist;
+      expect(returnedItems.find(a => a.id === items[1].id).amount).to.equal(7000);
+    });
+
+    it('is backward compatible with category', async () => {
+      const expense = await fakeExpense({ amount: 10000, category: 'BOAT' });
+      const updatedExpenseData = {
+        id: expense.id,
+        category: 'kunf-fu',
+      };
+
+      const result = await utils.graphqlQuery(editExpenseMutation, { expense: updatedExpenseData }, expense.User);
+      expect(result.data.editExpense.category).to.equal(updatedExpenseData.category);
+      expect(result.data.editExpense.tags[0]).to.equal(updatedExpenseData.category);
     });
   }); /* End of "#editExpense" */
 
@@ -1498,7 +1543,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1523,7 +1568,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(hostAdmin, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1536,7 +1581,9 @@ describe('server/graphql/v1/expenses', () => {
       // Then there should be an error
       expect(result.errors).to.exist;
       // And then the error message should be set accordingly.
-      expect(result.errors[0].message).to.equal("You don't have permission to delete this expense");
+      expect(result.errors[0].message).to.equal(
+        "You don't have permission to delete this expense or it needs to be rejected before being deleted",
+      );
     }); /* End of "fails if not logged in as author, admin or host" */
 
     it('fails if logged in as backer of collective', async () => {
@@ -1551,7 +1598,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1568,7 +1615,9 @@ describe('server/graphql/v1/expenses', () => {
       // Then there should be an error
       expect(result.errors).to.exist;
       // And then the error message should be set accordingly.
-      expect(result.errors[0].message).to.equal("You don't have permission to delete this expense");
+      expect(result.errors[0].message).to.equal(
+        "You don't have permission to delete this expense or it needs to be rejected before being deleted",
+      );
     }); /* End of "fails if logged in as backer of collective" */
 
     it('works if logged in as author', async () => {
@@ -1583,7 +1632,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1615,7 +1664,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1625,7 +1674,9 @@ describe('server/graphql/v1/expenses', () => {
       const result = await utils.graphqlQuery(deleteExpenseQuery, { id: expense.id }, admin);
       expect(result.errors).to.exist;
       // And then the error message should be set accordingly.
-      expect(result.errors[0].message).to.equal('Only rejected expense can be deleted');
+      expect(result.errors[0].message).to.equal(
+        "You don't have permission to delete this expense or it needs to be rejected before being deleted",
+      );
     }); /* End of "fails if expense is not rejected" */
 
     it('works if logged in as admin of collective', async () => {
@@ -1644,7 +1695,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1673,7 +1724,7 @@ describe('server/graphql/v1/expenses', () => {
         collective: { id: collective.id },
       };
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         amount: 1000,
         description: 'Pizza',
         ...data,
@@ -1707,7 +1758,7 @@ describe('server/graphql/v1/expenses', () => {
       // state)
       const expenseAmount = 1500;
       const expense = await store.createExpense(user, {
-        attachments: [{ url: store.randUrl(), amount: expenseAmount }],
+        items: [{ url: store.randUrl(), amount: expenseAmount }],
         amount: expenseAmount,
         description: 'Pizza',
         currency: 'USD',
@@ -1776,7 +1827,7 @@ describe('server/graphql/v1/expenses', () => {
       const expense = await store.createExpense(user, {
         amount: 1000,
         description: 'Pizza',
-        attachments: [{ url: store.randUrl(), amount: 1000 }],
+        items: [{ url: store.randUrl(), amount: 1000 }],
         ...data,
       });
       // approve the expense

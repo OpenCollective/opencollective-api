@@ -1,11 +1,12 @@
-import fetch from 'isomorphic-fetch';
+import Promise from 'bluebird';
 import config from 'config';
 import debugLib from 'debug';
+import fetch from 'isomorphic-fetch';
 import { get } from 'lodash';
-import Promise from 'bluebird';
+
+import { currencyFormats } from '../constants/currency_format';
 
 import logger from './logger';
-import { currencyFormats } from '../constants/currency_format';
 
 const debug = debugLib('currency');
 const cache = {};
@@ -62,7 +63,7 @@ export function getFxRate(fromCurrency, toCurrency, date = 'latest') {
 
   return new Promise((resolve, reject) => {
     const params = {
-      access_key: config.fixer.accessKey,
+      access_key: config.fixer.accessKey, // eslint-disable-line camelcase
       base: fromCurrency,
       symbols: toCurrency,
     };

@@ -22,14 +22,16 @@ jobs:
   lint:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -57,14 +59,16 @@ jobs:
   prettier:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -92,14 +96,16 @@ jobs:
   typescript:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -127,14 +133,16 @@ jobs:
   depcheck:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -162,14 +170,16 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 15
+
     steps:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -204,6 +214,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     services:
       redis:
         image: redis
@@ -223,10 +235,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1
@@ -258,6 +270,8 @@ jobs:
   test-graphql:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30
+
     services:
       redis:
         image: redis
@@ -277,10 +291,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2-beta
 
-      - name: Setup node
-        uses: actions/setup-node@v1
-        with:
-          node-version: '12.x'
+      # - name: Setup node
+      #   uses: actions/setup-node@v1
+      #   with:
+      #     node-version: '12.x'
 
       - name: Restore node_modules
         uses: actions/cache@v1

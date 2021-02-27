@@ -1,9 +1,10 @@
+import Promise from 'bluebird';
 import config from 'config';
 import jwt from 'jsonwebtoken';
 import moment from 'moment';
-import models, { Op } from '../models';
-import Promise from 'bluebird';
+
 import * as errors from '../graphql/errors';
+import models, { Op } from '../models';
 
 // Helper
 const daysToSeconds = days => moment.duration({ days }).asSeconds();
@@ -62,17 +63,13 @@ export function getListOfAccessibleMembers(remoteUser, CollectiveIds) {
 
 export function mustBeLoggedInTo(remoteUser, action = 'do this') {
   if (!remoteUser) {
-    throw new errors.Unauthorized({
-      message: `You must be logged in to ${action}`,
-    });
+    throw new errors.Unauthorized(`You must be logged in to ${action}`);
   }
 }
 
 export function mustHaveRole(remoteUser, roles, CollectiveId, action = 'perform this action') {
   mustBeLoggedInTo(remoteUser, action);
   if (!CollectiveId || !remoteUser.hasRole(roles, CollectiveId)) {
-    throw new errors.Unauthorized({
-      message: `You don't have sufficient permissions to ${action}`,
-    });
+    throw new errors.Unauthorized(`You don't have sufficient permissions to ${action}`);
   }
 }

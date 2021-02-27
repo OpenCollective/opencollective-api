@@ -3,12 +3,13 @@
  */
 
 import config from 'config';
-import { sortBy, get } from 'lodash';
 import slugify from 'limax';
+import { get, sortBy } from 'lodash';
 
 import { CollectiveTypesList } from '../constants/collectives';
 import { RateLimitExceeded } from '../graphql/errors';
 import models, { Op, sequelize } from '../models';
+
 import algolia from './algolia';
 import RateLimit, { ONE_HOUR_IN_SECONDS } from './rate-limit';
 
@@ -77,6 +78,8 @@ export const searchCollectivesInDB = async (term, offset = 0, limit = 100, types
     to_tsvector('simple', c.name)
     || to_tsvector('simple', c.slug)
     || to_tsvector('simple', COALESCE(c.description, ''))
+    || to_tsvector('simple', COALESCE(c."longDescription", ''))
+    || COALESCE(array_to_tsvector(tags), '')
   `;
 
   // Build dynamic conditions based on arguments
@@ -88,7 +91,7 @@ export const searchCollectivesInDB = async (term, offset = 0, limit = 100, types
 
   if (term && term.length > 0) {
     term = term.replace(/(_|%|\\)/g, ' ').trim();
-    dynamicConditions += `AND (${tsVector} @@ to_tsquery('simple', :vectorizedTerm) OR name ILIKE '%' || :term || '%' OR slug ILIKE '%' || :term || '%') `;
+    dynamicConditions += `AND (${tsVector} @@ plainto_tsquery('simple', :vectorizedTerm) OR name ILIKE '%' || :term || '%' OR slug ILIKE '%' || :term || '%') `;
   } else {
     term = '';
   }
@@ -103,7 +106,7 @@ export const searchCollectivesInDB = async (term, offset = 0, limit = 100, types
         CASE WHEN (slug = :slugifiedTerm OR name ILIKE :term) THEN
           1
         ELSE
-          ts_rank(${tsVector}, to_tsquery('simple', :vectorizedTerm))
+          ts_rank(${tsVector}, plainto_tsquery('simple', :vectorizedTerm))
         END
       ) AS __rank__
     FROM "Collectives" c
