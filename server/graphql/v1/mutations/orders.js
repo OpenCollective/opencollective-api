@@ -195,6 +195,9 @@ export async function createOrder(order, loaders, remoteUser, reqIp) {
     if (!collective) {
       throw new Error(`No collective found: ${order.collective.id || order.collective.website}`);
     }
+    if (collective.settings?.disableCustomContributions && !order.tier) {
+      throw new Error(`Custom contributions are disabled for the selected collective`);
+    }
 
     if (order.fromCollective && order.fromCollective.id === collective.id) {
       throw new Error('Orders cannot be created for a collective by that same collective.');
@@ -872,7 +875,7 @@ export async function addFundsToOrg(args, remoteUser) {
     currency: hostCollective.currency,
     CollectiveId: args.CollectiveId,
     customerId: fromCollective.slug,
-    expiryDate: moment().add(1, 'year').format(),
+    expiryDate: moment().add(3, 'year').format(),
     uuid: uuid(),
     data: { HostCollectiveId: args.HostCollectiveId },
     service: 'opencollective',

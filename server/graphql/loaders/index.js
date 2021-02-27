@@ -6,6 +6,7 @@ import { types as CollectiveType } from '../../constants/collectives';
 import { maxInteger } from '../../constants/math';
 import { TransactionTypes } from '../../constants/transactions';
 import { getListOfAccessibleMembers } from '../../lib/auth';
+import queries from '../../lib/queries';
 import models, { Op, sequelize } from '../../models';
 
 import collectiveLoaders from './collective';
@@ -23,6 +24,10 @@ export const loaders = req => {
   // Comment
   context.loaders.Comment.findAllByAttribute = commentsLoader.findAllByAttribute(req, cache);
   context.loaders.Comment.countByExpenseId = commentsLoader.countByExpenseId(req, cache);
+
+  // Comment Reactions
+  context.loaders.Comment.reactionsByCommentId = commentsLoader.reactionsByCommentId(req, cache);
+  context.loaders.Comment.remoteUserReactionsByCommentId = commentsLoader.remoteUserReactionsByCommentId(req, cache);
 
   // Conversation
   context.loaders.Conversation.followers = conversationLoaders.followers(req, cache);
@@ -54,16 +59,10 @@ export const loaders = req => {
 
   // Collective - Balance
   context.loaders.Collective.balance = new DataLoader(ids =>
-    models.Transaction.findAll({
-      attributes: [
-        'CollectiveId',
-        [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('netAmountInCollectiveCurrency')), 0), 'balance'],
-      ],
-      where: { CollectiveId: { [Op.in]: ids } },
-      group: ['CollectiveId'],
-    })
+    queries
+      .getBalances(ids)
       .then(results => sortResults(ids, results, 'CollectiveId'))
-      .map(result => get(result, 'dataValues.balance') || 0),
+      .map(result => get(result, 'balance') || 0),
   );
 
   // Collective - ConnectedAccounts

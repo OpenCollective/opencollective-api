@@ -1,10 +1,8 @@
 import { ApolloServer } from 'apollo-server-express';
 import config from 'config';
-import expressBasicAuth from 'express-basic-auth';
 import GraphHTTP from 'express-graphql';
 import expressLimiter from 'express-limiter';
 import serverStatus from 'express-server-status';
-import expressWs from 'express-ws';
 import { get } from 'lodash';
 import multer from 'multer';
 import redis from 'redis';
@@ -14,12 +12,10 @@ import helloworks from './controllers/helloworks';
 import uploadImage from './controllers/images';
 import * as email from './controllers/services/email';
 import * as users from './controllers/users';
-import { stripeWebhook, transferwiseWebhook } from './controllers/webhooks';
+import { paypalWebhook, stripeWebhook, transferwiseWebhook } from './controllers/webhooks';
 import graphqlSchemaV1 from './graphql/v1/schema';
 import graphqlSchemaV2 from './graphql/v2/schema';
-import hyperwatch from './lib/hyperwatch';
 import logger from './lib/logger';
-import { parseToBoolean } from './lib/utils';
 import * as authentication from './middleware/authentication';
 import errorHandler from './middleware/error_handler';
 import * as params from './middleware/params';
@@ -154,6 +150,7 @@ export default app => {
    */
   app.post('/webhooks/stripe', stripeWebhook); // when it gets a new subscription invoice
   app.post('/webhooks/transferwise', transferwiseWebhook); // when it gets a new subscription invoice
+  app.post('/webhooks/paypal', paypalWebhook);
   app.post('/webhooks/mailgun', email.webhook); // when receiving an email
   app.get('/connected-accounts/:service/callback', authentication.authenticateServiceCallback); // oauth callback
   app.delete('/connected-accounts/:service/disconnect/:collectiveId', authentication.authenticateServiceDisconnect);
@@ -200,19 +197,6 @@ export default app => {
    * Hello Works API - Helloworks hits this endpoint when a document has been completed.
    */
   app.post('/helloworks/callback', helloworks.callback);
-
-  // Mount Hyperwatch API and Websocket
-  if (config.hyperwatch && config.hyperwatch.secret && parseToBoolean(config.hyperwatch.enabled) === true) {
-    // We need to setup express-ws here to make Hyperwatch's websocket works
-    expressWs(app);
-    const hyperwatchBasicAuth = expressBasicAuth({
-      users: { [config.hyperwatch.username]: config.hyperwatch.secret },
-      challenge: true,
-      realm: config.hyperwatch.realm,
-    });
-    app.use(config.hyperwatch.path, hyperwatchBasicAuth, hyperwatch.app.api);
-    app.use(config.hyperwatch.path, hyperwatchBasicAuth, hyperwatch.app.websocket);
-  }
 
   /**
    * Override default 404 handler to make sure to obfuscate api_key visible in URL

@@ -13,7 +13,7 @@ import models from '../models';
 
 import templates from './emailTemplates';
 import logger from './logger';
-import { md5 } from './utils';
+import { md5, sha512 } from './utils';
 import whiteListDomains from './whiteListDomains';
 
 const debug = debugLib('email');
@@ -51,10 +51,21 @@ const render = (template, data) => {
   return { text, html };
 };
 
-const generateUnsubscribeToken = (email, collectiveSlug, type) => {
+const generateUnsubscribeToken = (email, collectiveSlug, type, hashingFunction = sha512) => {
   const uid = `${email}.${collectiveSlug || 'any'}.${type}.${config.keys.opencollective.emailUnsubscribeSecret}`;
-  const token = md5(uid);
+  const token = hashingFunction(uid);
   return token;
+};
+
+const isValidUnsubscribeToken = (token, email, collectiveSlug, type) => {
+  // Check token using the latest procedure
+  const computedToken = emailLib.generateUnsubscribeToken(email, collectiveSlug, type, sha512);
+  if (computedToken === token) {
+    return true;
+  }
+
+  // Backward-compatibility: check legacy tokens
+  return emailLib.generateUnsubscribeToken(email, collectiveSlug, type, md5) === token;
 };
 
 /*
@@ -229,6 +240,7 @@ const isWhitelistedDomain = email => {
 const generateEmailFromTemplate = (template, recipient, data = {}, options = {}) => {
   const slug = get(options, 'collective.slug') || get(data, 'collective.slug') || 'undefined';
   const hostSlug = get(data, 'host.slug');
+  const eventSlug = get(data, 'event.slug');
 
   // If we are sending the same email to multiple recipients, it doesn't make sense to allow them to unsubscribe
   if (!isArray(recipient)) {
@@ -245,6 +257,9 @@ const generateEmailFromTemplate = (template, recipient, data = {}, options = {})
   if (template === 'ticket.confirmed') {
     if (slug === 'fearlesscitiesbrussels') {
       template += '.fearlesscitiesbrussels';
+    }
+    if (eventSlug === 'open-2020-networked-commons-initiatives-9b91f4ca') {
+      template += '.open-2020';
     }
   }
 
@@ -360,6 +375,7 @@ const emailLib = {
   getTemplateAttributes,
   sendMessage,
   generateUnsubscribeToken,
+  isValidUnsubscribeToken,
   generateEmailFromTemplate,
   send: generateEmailFromTemplateAndSend,
   isWhitelistedDomain,

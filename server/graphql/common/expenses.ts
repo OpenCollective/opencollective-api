@@ -1,10 +1,10 @@
 import { activities, expenseStatus, roles } from '../../constants';
 import FEATURE from '../../constants/feature';
 import { canUseFeature } from '../../lib/user-permissions';
+import { formatCurrency } from '../../lib/utils';
 import models from '../../models';
 import { ExpenseItem } from '../../models/ExpenseItem';
-import { PayoutMethodTypes } from '../../models/PayoutMethod';
-import { BadRequest, Forbidden } from '../errors';
+import { BadRequest, Forbidden, Unauthorized } from '../errors';
 
 const isOwner = async (req, expense): Promise<boolean> => {
   if (!req.remoteUser) {
@@ -180,7 +180,7 @@ export const canUnapprove = async (req, expense): Promise<boolean> => {
   } else if (!canUseFeature(req.remoteUser, FEATURE.EXPENSES)) {
     return false;
   } else {
-    return remoteUserMeetsOneCondition(req, expense, [isCollectiveAdmin, isHostAdmin, isCollectiveAdmin]);
+    return remoteUserMeetsOneCondition(req, expense, [isCollectiveAdmin, isHostAdmin]);
   }
 };
 
@@ -192,14 +192,19 @@ export const canMarkAsUnpaid = async (req, expense): Promise<boolean> => {
     return false;
   } else if (!canUseFeature(req.remoteUser, FEATURE.EXPENSES)) {
     return false;
-  } else if (!(await isHostAdmin(req, expense))) {
+  } else {
+    return isHostAdmin(req, expense);
+  }
+};
+
+/**
+ * Returns true if user can comment and see others comments for this expense
+ */
+export const canComment = async (req, expense): Promise<boolean> => {
+  if (!canUseFeature(req.remoteUser, FEATURE.EXPENSES)) {
     return false;
   } else {
-    if (!expense.payoutMethod && expense.PayoutMethodId) {
-      expense.payoutMethod = await req.loaders.PayoutMethod.byId.load(expense.PayoutMethodId);
-    }
-
-    return !expense.payoutMethod || expense.payoutMethod.type === PayoutMethodTypes.OTHER;
+    return remoteUserMeetsOneCondition(req, expense, [isCollectiveAdmin, isHostAdmin, isOwner]);
   }
 };
 
@@ -246,6 +251,16 @@ export const scheduleExpenseForPayment = async (req, expense): Promise<typeof mo
     throw new BadRequest('Expense is already scheduled for payment');
   } else if (!(await canPayExpense(req, expense))) {
     throw new Forbidden("You're authenticated but you can't schedule this expense for payment");
+  }
+
+  const balance = await expense.collective.getBalance();
+  if (expense.amount > balance) {
+    throw new Unauthorized(
+      `You don't have enough funds to pay this expense. Current balance: ${formatCurrency(
+        balance,
+        expense.collective.currency,
+      )}, Expense amount: ${formatCurrency(expense.amount, expense.collective.currency)}`,
+    );
   }
 
   const updatedExpense = await expense.update({

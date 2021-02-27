@@ -2,6 +2,7 @@ import { expect } from 'chai';
 
 import {
   canApprove,
+  canComment,
   canDeleteExpense,
   canEditExpense,
   canMarkAsUnpaid,
@@ -282,16 +283,17 @@ describe('server/graphql/common/expenses', () => {
       expect(await canMarkAsUnpaid(expenseOwnerReq, expense)).to.be.false;
       expect(await canMarkAsUnpaid(limitedHostAdminReq, expense)).to.be.false;
     });
+  });
 
-    it('only if payout method type is OTHER', async () => {
-      const paypalPM = await fakePayoutMethod({ type: PayoutMethodTypes.PAYPAL });
-      const testExpense = await fakeExpense({
-        status: 'PAID',
-        CollectiveId: collective.id,
-        PayoutMethodId: paypalPM.id,
-      });
-      const result = await canMarkAsUnpaid(hostAdminReq, testExpense);
-      expect(result).to.be.false;
+  describe('canComment', () => {
+    it('only if owner, collective admin or host admin', async () => {
+      await expense.update({ status: 'PAID' });
+      expect(await canComment(publicReq, expense)).to.be.false;
+      expect(await canComment(randomUserReq, expense)).to.be.false;
+      expect(await canComment(collectiveAdminReq, expense)).to.be.true;
+      expect(await canComment(hostAdminReq, expense)).to.be.true;
+      expect(await canComment(expenseOwnerReq, expense)).to.be.true;
+      expect(await canComment(limitedHostAdminReq, expense)).to.be.false;
     });
   });
 });
