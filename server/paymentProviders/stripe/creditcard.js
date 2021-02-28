@@ -50,7 +50,7 @@ const getOrCreateCustomerOnHostAccount = async (hostStripeAccount, { paymentMeth
   data.customerIdForHost = data.customerIdForHost || {};
   if (data.customerIdForHost[hostStripeAccount.username]) {
     return stripe.customers.retrieve(data.customerIdForHost[hostStripeAccount.username], {
-      stripe_account: hostStripeAccount.username,
+      stripeAccount: hostStripeAccount.username,
     });
   } else {
     const platformStripeCustomer = await getOrCreateCustomerOnPlatformAccount({
@@ -58,18 +58,28 @@ const getOrCreateCustomerOnHostAccount = async (hostStripeAccount, { paymentMeth
       user,
     });
 
-    // More info about that
-    // - Documentation: https://stripe.com/docs/connect/shared-customers
-    // - API: https://stripe.com/docs/api/tokens/create_card
-    const token = await stripe.tokens.create(
-      { customer: platformStripeCustomer.id },
-      { stripe_account: hostStripeAccount.username },
-    );
+    let customer;
 
-    const customer = await stripe.customers.create(
-      { source: token.id, email: user.email },
-      { stripe_account: hostStripeAccount.username },
-    );
+    // This is a special case where the account is the root account
+    if (hostStripeAccount.username === config.stripe.accountId) {
+      customer = platformStripeCustomer;
+    }
+
+    // This is the normal case where we create a customer on the host connected account
+    if (!customer) {
+      // More info about that
+      // - Documentation: https://stripe.com/docs/connect/shared-customers
+      // - API: https://stripe.com/docs/api/tokens/create_card
+      const token = await stripe.tokens.create(
+        { customer: platformStripeCustomer.id },
+        { stripeAccount: hostStripeAccount.username },
+      );
+
+      customer = await stripe.customers.create(
+        { source: token.id, email: user.email },
+        { stripeAccount: hostStripeAccount.username },
+      );
+    }
 
     data.customerIdForHost[hostStripeAccount.username] = customer.id;
     paymentMethod.data = data;
@@ -107,7 +117,8 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
         to: `${config.host.website}/${order.collective.slug}`,
       },
     };
-    if (platformFee) {
+    // We don't add a platform fee if the host is the root account
+    if (platformFee && hostStripeAccount.username !== config.stripe.accountId) {
       payload.application_fee_amount = platformFee;
     }
     if (order.interval) {
@@ -116,11 +127,11 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
       payload.setup_future_usage = 'on_session';
     }
     paymentIntent = await stripe.paymentIntents.create(payload, {
-      stripe_account: hostStripeAccount.username,
+      stripeAccount: hostStripeAccount.username,
     });
   } else {
     paymentIntent = await stripe.paymentIntents.confirm(order.data.paymentIntent.id, {
-      stripe_account: hostStripeAccount.username,
+      stripeAccount: hostStripeAccount.username,
     });
   }
 
@@ -148,7 +159,7 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
   const charge = paymentIntent.charges.data[0];
 
   const balanceTransaction = await stripe.balanceTransactions.retrieve(charge.balance_transaction, {
-    stripe_account: hostStripeAccount.username,
+    stripeAccount: hostStripeAccount.username,
   });
 
   // Create a Transaction
@@ -185,14 +196,14 @@ const createChargeAndTransactions = async (hostStripeAccount, { order, hostStrip
  */
 export const retrieveChargeWithRefund = async (chargeId, stripeAccount) => {
   const charge = await stripe.charges.retrieve(chargeId, {
-    stripe_account: stripeAccount.username,
+    stripeAccount: stripeAccount.username,
   });
   if (!charge) {
     throw Error(`charge id ${chargeId} not found`);
   }
   const refundId = get(charge, 'refunds.data[0].id');
   const refund = await stripe.refunds.retrieve(refundId, {
-    stripe_account: stripeAccount.username,
+    stripeAccount: stripeAccount.username,
   });
   return { charge, refund };
 };
@@ -258,8 +269,10 @@ export default {
         hostStripeCustomer,
       });
     } catch (error) {
-      logger.error(`Stripe Payment Error: ${error.message}`);
-      logger.error(error);
+      if (error.message !== 'Payment Intent require action') {
+        logger.error(`Stripe Payment Error: ${error.message}`);
+        logger.error(error);
+      }
       throw error;
     }
 
@@ -282,11 +295,11 @@ export default {
     /* Refund both charge & application fee */
     const refund = await stripe.refunds.create(
       { charge: chargeId, refund_application_fee: true },
-      { stripe_account: hostStripeAccount.username },
+      { stripeAccount: hostStripeAccount.username },
     );
-    const charge = await stripe.charges.retrieve(chargeId, { stripe_account: hostStripeAccount.username });
+    const charge = await stripe.charges.retrieve(chargeId, { stripeAccount: hostStripeAccount.username });
     const refundBalance = await stripe.balanceTransactions.retrieve(refund.balance_transaction, {
-      stripe_account: hostStripeAccount.username,
+      stripeAccount: hostStripeAccount.username,
     });
     const fees = extractFees(refundBalance);
 
@@ -327,7 +340,7 @@ export default {
       throw new Error('No refunds found in stripe.');
     }
     const refundBalance = await stripe.balanceTransactions.retrieve(refund.balance_transaction, {
-      stripe_account: hostStripeAccount.username,
+      stripeAccount: hostStripeAccount.username,
     });
     const fees = extractFees(refundBalance);
 

@@ -24,6 +24,10 @@ const debugClaim = debug('claim');
 const debugGithub = debug('github');
 const debugDelete = debug('delete');
 
+const DEFAULT_COLLECTIVE_SETTINGS = {
+  features: { conversations: true },
+};
+
 export async function createCollective(_, args, req) {
   if (!req.remoteUser) {
     throw new errors.Unauthorized({
@@ -40,6 +44,7 @@ export async function createCollective(_, args, req) {
   const collectiveData = {
     ...args.collective,
     CreatedByUserId: req.remoteUser.id,
+    settings: { ...DEFAULT_COLLECTIVE_SETTINGS, ...args.collective.settings },
   };
 
   const location = args.collective.location;
@@ -115,11 +120,7 @@ export async function createCollective(_, args, req) {
     throw new Error(msg);
   }
 
-  const promises = [
-    collective.addUserWithRole(req.remoteUser, roles.ADMIN, {
-      CreatedByUserId: req.remoteUser.id,
-    }),
-  ];
+  const promises = [];
 
   if (collectiveData.tiers) {
     promises.push(collective.editTiers(collectiveData.tiers));
@@ -131,6 +132,7 @@ export async function createCollective(_, args, req) {
 
   // We add the admins of the parent collective as admins
   if (collectiveData.type === types.EVENT) {
+    promises.push(collective.addUserWithRole(req.remoteUser, roles.ADMIN, { CreatedByUserId: req.remoteUser.id }));
     const admins = await models.Member.findAll({ where: { CollectiveId: parentCollective.id, role: roles.ADMIN } });
     admins.forEach(member => {
       if (member.MemberCollectiveId !== req.remoteUser.CollectiveId) {
@@ -144,6 +146,10 @@ export async function createCollective(_, args, req) {
         );
       }
     });
+  } else if (collectiveData.members) {
+    collective.editMembers(collectiveData.members, { CreatedByUserId: req.remoteUser.id });
+  } else {
+    promises.push(collective.addUserWithRole(req.remoteUser, roles.ADMIN, { CreatedByUserId: req.remoteUser.id }));
   }
 
   await Promise.all(promises);
@@ -190,9 +196,12 @@ export async function createCollectiveFromGithub(_, args, req) {
   }
 
   let collective;
-  const collectiveData = { ...args.collective };
   const user = req.remoteUser;
-  const githubHandle = collectiveData.githubHandle;
+  const githubHandle = args.collective.githubHandle;
+  const collectiveData = {
+    ...args.collective,
+    settings: { ...DEFAULT_COLLECTIVE_SETTINGS, ...args.collective.settings },
+  };
 
   // For e2e testing, we enable testuser+(admin|member)@opencollective.com to create collective without github validation
   if (process.env.NODE_ENV !== 'production' && user.email.match(/.*test.*@opencollective.com$/)) {
@@ -258,7 +267,7 @@ export async function createCollectiveFromGithub(_, args, req) {
     collectiveData.tags.push('open source');
     collectiveData.description = truncate(repo.description, { length: 255 });
     collectiveData.longDescription = repo.description;
-    collectiveData.settings = { githubRepo: githubHandle };
+    collectiveData.settings.githubRepo = githubHandle;
   } else {
     // An organization GitHub Handle
     const memberships = await github.getOrgMemberships(githubAccount.token);
@@ -277,7 +286,7 @@ export async function createCollectiveFromGithub(_, args, req) {
         message: `The organization need at least one repository with ${config.githubFlow.minNbStars} GitHub stars to be pledged.`,
       });
     }
-    collectiveData.settings = { githubOrg: githubHandle };
+    collectiveData.settings.githubOrg = githubHandle;
     // TODO: we sometime still wants to store the main repository
   }
 
@@ -451,27 +460,36 @@ export async function approveCollective(remoteUser, CollectiveId) {
     });
   }
 
-  const hostCollective = await collective.getHostCollective();
-  if (!hostCollective) {
+  const host = await collective.getHostCollective();
+  if (!host) {
     throw new errors.ValidationFailed({
-      message: 'We could not get the Host data for the Collective. Maybe they cancel their application.',
+      message: 'We could not get the Host data for the Collective. Maybe they cancelled their application.',
     });
   }
 
-  if (!remoteUser.isAdmin(hostCollective.id)) {
+  if (!remoteUser.isAdmin(host.id)) {
     throw new errors.Unauthorized({
       message: 'You need to be logged in as an admin of the host of this collective to approve it',
-      data: { HostCollectiveId: hostCollective.id },
+      data: { HostCollectiveId: host.id },
+    });
+  }
+
+  // Check limits
+  const hostPlan = await host.getPlan();
+  if (hostPlan.hostedCollectivesLimit && hostPlan.hostedCollectivesLimit <= hostPlan.hostedCollectives) {
+    throw new errors.PlanLimit({
+      message:
+        'The limit of collectives for the host has been reached. Please contact support@opencollective.com if you think this is an error.',
     });
   }
 
   models.Activity.create({
     type: activities.COLLECTIVE_APPROVED,
     UserId: remoteUser.id,
-    CollectiveId: hostCollective.id,
+    CollectiveId: host.id,
     data: {
       collective: collective.info,
-      host: hostCollective.info,
+      host: host.info,
       user: {
         email: remoteUser.email,
       },
@@ -482,9 +500,8 @@ export async function approveCollective(remoteUser, CollectiveId) {
   models.Collective.findAll({
     where: {
       type: types.EVENT,
-      HostCollectiveId: hostCollective.id,
+      HostCollectiveId: host.id,
       ParentCollectiveId: collective.id,
-      isActive: false,
     },
   }).then(events => {
     events.map(event => {
@@ -504,10 +521,11 @@ export function deleteEventCollective(_, args, req) {
   }
 
   return models.Collective.findByPk(args.id).then(collective => {
-    if (!collective)
+    if (!collective) {
       throw new errors.NotFound({
         message: `Collective with id ${args.id} not found`,
       });
+    }
     if (!req.remoteUser.isAdmin(collective.id) && !req.remoteUser.isAdmin(collective.ParentCollectiveId)) {
       throw new errors.Unauthorized({
         message: 'You need to be logged in as a core contributor or as a host to delete this collective',
@@ -644,6 +662,12 @@ export async function archiveCollective(_, args, req) {
     });
   }
 
+  if (await collective.isHost()) {
+    throw new Error(
+      `You can't archive your collective while being a host. Please, Desactivate your collective as Host and try again.`,
+    );
+  }
+
   const balance = await collective.getBalance();
 
   if (balance > 0) {
@@ -700,6 +724,12 @@ export async function deleteCollective(_, args, req) {
     throw new errors.NotFound({
       message: `Collective with id ${args.id} not found`,
     });
+  }
+
+  if (await collective.isHost()) {
+    throw new Error(
+      `You can't delete your collective while being a host. Please, Desactivate your collective as Host and try again.`,
+    );
   }
 
   if (!req.remoteUser.isAdmin(collective.id)) {
@@ -1046,4 +1076,50 @@ export async function rejectCollective(_, args, req) {
   });
 
   return collective.update({ HostCollectiveId: null });
+}
+
+export async function activateCollectiveAsHost(_, args, req) {
+  if (!req.remoteUser) {
+    throw new errors.Unauthorized({
+      message: 'You need to be logged in to activate a collective as Host.',
+    });
+  }
+
+  const collective = await models.Collective.findByPk(args.id);
+  if (!collective) {
+    throw new errors.NotFound({
+      message: `Collective with id ${args.id} not found`,
+    });
+  }
+
+  if (!req.remoteUser.isAdmin(collective.id)) {
+    throw new errors.Unauthorized({
+      message: 'You need to be logged in as an Admin.',
+    });
+  }
+
+  return collective.becomeHost();
+}
+
+export async function deactivateCollectiveAsHost(_, args, req) {
+  if (!req.remoteUser) {
+    throw new errors.Unauthorized({
+      message: 'You need to be logged in to deactivate a collective as Host.',
+    });
+  }
+
+  const collective = await models.Collective.findByPk(args.id);
+  if (!collective) {
+    throw new errors.NotFound({
+      message: `Collective with id ${args.id} not found`,
+    });
+  }
+
+  if (!req.remoteUser.isAdmin(collective.id)) {
+    throw new errors.Unauthorized({
+      message: 'You need to be logged in as an Admin.',
+    });
+  }
+
+  return collective.deactivateAsHost();
 }

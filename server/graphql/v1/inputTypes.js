@@ -13,7 +13,7 @@ import {
 
 import GraphQLJSON from 'graphql-type-json';
 import { Kind } from 'graphql/language';
-import { IsoDateString, DateString } from './types';
+import { IsoDateString, DateString, PayoutMethodTypeEnum } from './types';
 
 const EmailType = new GraphQLScalarType({
   name: 'Email',
@@ -122,7 +122,7 @@ export const UserInputType = new GraphQLInputObjectType({
     twitterHandle: { type: GraphQLString },
     githubHandle: { type: GraphQLString },
     website: { type: GraphQLString },
-    paypalEmail: { type: GraphQLString },
+    paypalEmail: { type: GraphQLString, deprecationReason: '2020-01-21: Replaced by PayoutMethods' },
     newsletterOptIn: { type: GraphQLBoolean },
   }),
 });
@@ -437,6 +437,29 @@ export const UpdateAttributesInputType = new GraphQLInputObjectType({
   }),
 });
 
+export const ExpenseAttachmentInputType = new GraphQLInputObjectType({
+  name: 'ExpenseAttachmentInputType',
+  description: 'Fields for creating or editing an expense attachment',
+  fields: {
+    id: { type: GraphQLInt },
+    url: { type: new GraphQLNonNull(DateString) },
+    amount: { type: new GraphQLNonNull(GraphQLInt) },
+    incurredAt: { type: DateString },
+    description: { type: GraphQLString },
+  },
+});
+
+export const PayoutMethodInputType = new GraphQLInputObjectType({
+  name: 'PayoutMethodInput',
+  fields: {
+    id: { type: GraphQLInt },
+    data: { type: GraphQLJSON },
+    name: { type: GraphQLString },
+    isSaved: { type: GraphQLBoolean },
+    type: { type: PayoutMethodTypeEnum },
+  },
+});
+
 export const ExpenseInputType = new GraphQLInputObjectType({
   name: 'ExpenseInputType',
   description: 'Input type for ExpenseType',
@@ -444,7 +467,10 @@ export const ExpenseInputType = new GraphQLInputObjectType({
     return {
       id: { type: GraphQLInt },
       amount: { type: GraphQLInt },
-      currency: { type: GraphQLString },
+      currency: {
+        type: GraphQLString,
+        deprecationReason: '2020-01-16: Expense currency is based on collective currency',
+      },
       createdAt: { type: DateString },
       incurredAt: { type: DateString },
       description: { type: GraphQLString },
@@ -454,10 +480,21 @@ export const ExpenseInputType = new GraphQLInputObjectType({
       payoutMethod: {
         type: GraphQLString,
         description: 'Can be: paypal, other. Also deprecated: donation, manual',
+        deprecationReason: '2020-21-01: Please use PayoutMethod',
+      },
+      PayoutMethod: {
+        type: PayoutMethodInputType,
       },
       privateMessage: { type: GraphQLString },
-      attachment: { type: GraphQLString },
-      user: { type: UserInputType },
+      attachment: {
+        type: GraphQLString,
+        deprecationReason: '2020-01-13 - Expenses now support multiple attachments. Please use attachments instead.',
+      },
+      attachments: { type: new GraphQLList(ExpenseAttachmentInputType) },
+      user: {
+        type: UserInputType,
+        deprecationReason: '2020-21-01: Please use PayoutMethod to pass the paypal email',
+      },
       collective: { type: CollectiveAttributesInputType },
     };
   },
