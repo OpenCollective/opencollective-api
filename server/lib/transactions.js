@@ -1,9 +1,10 @@
-import models, { Op, sequelize } from '../models';
-import errors from '../lib/errors';
 import { TransactionTypes } from '../constants/transactions';
 import { getFxRate } from '../lib/currency';
-import { exportToCSV } from '../lib/utils';
+import errors from '../lib/errors';
 import { toNegative } from '../lib/math';
+import { exportToCSV } from '../lib/utils';
+import models, { Op, sequelize } from '../models';
+import { PayoutMethodTypes } from '../models/PayoutMethod';
 
 /**
  * Export transactions as CSV
@@ -45,8 +46,12 @@ export function getTransactions(collectiveids, startDate = new Date('2015-01-01'
     },
     order: [['createdAt', 'DESC']],
   };
-  if (options.limit) query.limit = options.limit;
-  if (options.include) query.include = options.include;
+  if (options.limit) {
+    query.limit = options.limit;
+  }
+  if (options.include) {
+    query.include = options.include;
+  }
   return models.Transaction.findAll(query);
 }
 
@@ -59,6 +64,7 @@ export async function createFromPaidExpense(
   paymentProcessorFeeInHostCurrency = 0,
   hostFeeInHostCurrency = 0,
   platformFeeInHostCurrency = 0,
+  transactionData,
 ) {
   const hostCurrency = host.currency;
   let createPaymentResponse, executePaymentResponse;
@@ -66,6 +72,8 @@ export async function createFromPaidExpense(
     hostFeeInCollectiveCurrency = 0,
     platformFeeInCollectiveCurrency = 0;
   let hostCurrencyFxRate = 1;
+  const payoutMethod = await expense.getPayoutMethod();
+  const payoutMethodType = payoutMethod ? payoutMethod.type : expense.getPayoutMethodTypeFromLegacy();
 
   // If PayPal
   if (paymentResponses) {
@@ -87,13 +95,18 @@ export async function createFromPaidExpense(
         );
 
       case 'ERROR':
+        // Backward compatible error message parsing
+        // eslint-disable-next-line no-case-declarations
+        const errorMessage =
+          executePaymentResponse.payErrorList?.payError?.[0].error?.message ||
+          executePaymentResponse.payErrorList?.[0].error?.message;
         throw new errors.ServerError(
-          `Error while paying the expense with PayPal: "${executePaymentResponse.payErrorList[0].error.message}". Please contact support@opencollective.com`,
+          `Error while paying the expense with PayPal: "${errorMessage}". Please contact support@opencollective.com or pay it manually through PayPal.`,
         );
 
       default:
         throw new errors.ServerError(
-          `Error while paying the expense with PayPal. Please contact support@opencollective.com`,
+          `Error while paying the expense with PayPal. Please contact support@opencollective.com or pay it manually through PayPal.`,
         );
     }
 
@@ -103,6 +116,13 @@ export async function createFromPaidExpense(
     const currencyConversion = createPaymentResponse.defaultFundingPlan.currencyConversion || { exchangeRate: 1 };
     hostCurrencyFxRate = 1 / parseFloat(currencyConversion.exchangeRate); // paypal returns a float from host.currency to expense.currency
     paymentProcessorFeeInHostCurrency = Math.round(hostCurrencyFxRate * paymentProcessorFeeInCollectiveCurrency);
+  } else if (payoutMethodType === PayoutMethodTypes.BANK_ACCOUNT) {
+    // Notice this is the FX rate between Host and Collective, the user is not involved here and that's why TransferWise quote rate is irrelevant here.
+    hostCurrencyFxRate = await getFxRate(expense.currency, host.currency);
+    paymentProcessorFeeInHostCurrency = transactionData ? Math.round(transactionData.quote.fee * 100) : 0;
+    paymentProcessorFeeInCollectiveCurrency = Math.round((1 / hostCurrencyFxRate) * paymentProcessorFeeInHostCurrency);
+    hostFeeInCollectiveCurrency = Math.round((1 / hostCurrencyFxRate) * hostFeeInHostCurrency);
+    platformFeeInCollectiveCurrency = Math.round((1 / hostCurrencyFxRate) * platformFeeInHostCurrency);
   } else {
     // If manual (add funds or manual reimbursement of an expense)
     hostCurrencyFxRate = await getFxRate(expense.currency, host.currency, expense.incurredAt || expense.createdAt);
@@ -131,14 +151,14 @@ export async function createFromPaidExpense(
     description: expense.description,
     CreatedByUserId: UserId,
     CollectiveId: expense.CollectiveId,
+    FromCollectiveId: expense.FromCollectiveId,
     HostCollectiveId: host.id,
     PaymentMethodId: paymentMethod ? paymentMethod.id : null,
+    data: transactionData,
   };
 
   transaction.hostCurrencyFxRate = hostCurrencyFxRate;
   transaction.amountInHostCurrency = -Math.round(hostCurrencyFxRate * expense.amount); // amountInHostCurrency is an INTEGER (in cents)
-  const user = await models.User.findByPk(UserId);
-  transaction.FromCollectiveId = user.CollectiveId;
   return models.Transaction.createDoubleEntry(transaction);
 }
 
@@ -158,10 +178,18 @@ export function netAmount(tr) {
  * Verify net amount of a transaction
  */
 export function verify(tr) {
-  if (tr.type === 'CREDIT' && tr.amount <= 0) return 'amount <= 0';
-  if (tr.type === 'DEBIT' && tr.amount >= 0) return 'amount >= 0';
-  if (tr.type === 'CREDIT' && tr.netAmountInCollectiveCurrency <= 0) return 'netAmount <= 0';
-  if (tr.type === 'DEBIT' && tr.netAmountInCollectiveCurrency >= 0) return 'netAmount >= 0';
+  if (tr.type === 'CREDIT' && tr.amount <= 0) {
+    return 'amount <= 0';
+  }
+  if (tr.type === 'DEBIT' && tr.amount >= 0) {
+    return 'amount >= 0';
+  }
+  if (tr.type === 'CREDIT' && tr.netAmountInCollectiveCurrency <= 0) {
+    return 'netAmount <= 0';
+  }
+  if (tr.type === 'DEBIT' && tr.netAmountInCollectiveCurrency >= 0) {
+    return 'netAmount >= 0';
+  }
   const diff = Math.abs(netAmount(tr) - tr.netAmountInCollectiveCurrency);
   // if the difference is within one cent, it's most likely a rounding error (because of the number of decimals in the hostCurrencyFxRate)
   if (diff > 0 && diff < 10) {
