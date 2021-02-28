@@ -18,7 +18,7 @@ const application = utils.data('application');
 /**
  * Tests.
  */
-describe('routes/users.test.js', () => {
+describe('server/routes/users', () => {
   let nm;
 
   beforeEach(() => utils.resetTestDB());
@@ -88,9 +88,7 @@ describe('routes/users.test.js', () => {
       const expiredToken = user.jwt({}, -1);
 
       // When the endpoint is hit with an expired token
-      const response = await request(app)
-        .post(updateTokenUrl)
-        .set('Authorization', `Bearer ${expiredToken}`);
+      const response = await request(app).post(updateTokenUrl).set('Authorization', `Bearer ${expiredToken}`);
 
       // Then the API rejects the request
       expect(response.statusCode).to.equal(401);
@@ -101,9 +99,7 @@ describe('routes/users.test.js', () => {
       const currentToken = user.jwt();
 
       // When the endpoint is hit with a valid token
-      const response = await request(app)
-        .post(updateTokenUrl)
-        .set('Authorization', `Bearer ${currentToken}`);
+      const response = await request(app).post(updateTokenUrl).set('Authorization', `Bearer ${currentToken}`);
 
       // Then it responds with success
       expect(response.statusCode).to.equal(200);

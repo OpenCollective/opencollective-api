@@ -55,7 +55,7 @@ async function createOrderWithSubscription(interval, date, quantity = 1) {
   return { order, subscription, user, collective };
 }
 
-describe('LibSubscription', () => {
+describe('server/lib/subscriptions', () => {
   describe('#getNextChargeAndPeriodStartDates', () => {
     it("should use the next month's first day for monthly subscriptions", () => {
       // Given the following order with subscription
@@ -235,10 +235,7 @@ describe('LibSubscription', () => {
 
       // And given that we expect the method send from the mock to be
       // called
-      emailMock
-        .expects('send')
-        .once()
-        .withArgs('thankyou', 'test@oc.com');
+      emailMock.expects('send').once().withArgs('thankyou', 'test@oc.com');
 
       // When the status of the order is handled
       await handleRetryStatus(order, {});
@@ -355,10 +352,7 @@ describe('LibSubscription', () => {
         const { order } = await createOrderWithSubscription('month', '2018-01-27');
 
         // And given that an email should be sent afterwards
-        emailMock
-          .expects('send')
-          .once()
-          .withArgs('thankyou');
+        emailMock.expects('send').once().withArgs('thankyou');
 
         // And that the payments library will return a transaction (to
         // be included in the email)
@@ -386,10 +380,7 @@ describe('LibSubscription', () => {
         const { order } = await createOrderWithSubscription('year', '2018-01-27');
 
         // And given that an email should be sent afterwards
-        emailMock
-          .expects('send')
-          .once()
-          .withArgs('thankyou');
+        emailMock.expects('send').once().withArgs('thankyou');
 
         // And that the payments library will return a transaction (to
         // be included in the email)
@@ -417,10 +408,7 @@ describe('LibSubscription', () => {
         const { order } = await createOrderWithSubscription('year', '2018-01-27');
 
         // And given that an email should be sent afterwards
-        emailMock
-          .expects('send')
-          .once()
-          .withArgs('payment.failed');
+        emailMock.expects('send').once().withArgs('payment.failed');
 
         // And that the payments library will throw an error
         paymentsStub.rejects('TypeError -- Whatever');

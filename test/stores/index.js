@@ -5,7 +5,7 @@
 
 /* Test libraries */
 import sinon from 'sinon';
-import uuidv4 from 'uuid/v4';
+import { v4 as uuid } from 'uuid';
 
 /* Libraries that create the objects */
 import models from '../../server/models';
@@ -27,15 +27,13 @@ import * as utils from '../utils';
  */
 export function randEmail(email = 'test-user@emailprovider.com') {
   const [user, domain] = email.replace(/\s/g, '-').split('@');
-  const rand = Math.random()
-    .toString(36)
-    .substring(2, 15);
+  const rand = Math.random().toString(36).substring(2, 15);
   return `${user}-${rand}@${domain}`;
 }
 
 /** Returns a random URL. */
 export function randUrl() {
-  return `https://example.com/${uuidv4()}`;
+  return `https://example.com/${uuid()}`;
 }
 
 /** Convert string to lower case and swap spaces with dashes */
@@ -53,7 +51,7 @@ function slugify(value) {
  * @return {Object} with references for `user` and `userCollective`.
  */
 export async function newUser(name, data = {}) {
-  name = name || uuidv4().split('-')[0];
+  name = name || uuid().split('-')[0];
   const slug = slugify(name);
   const email = randEmail(`${slug}@oc.com`);
   const user = await models.User.createUserWithCollective({
@@ -102,7 +100,7 @@ export async function newIncognitoProfile(user) {
  * @returns {Object} with references for `hostCollective`,
  *  `hostAdmin`.
  */
-export async function newHost(name, currency, hostFee, userData = {}) {
+export async function newHost(name, currency, hostFee, userData = {}, hostData = {}) {
   // Host Admin
   const slug = slugify(name);
   const hostAdmin = (await newUser(`${name} Admin`, { firstName: 'host', lastName: 'admin', ...userData })).user;
@@ -115,6 +113,7 @@ export async function newHost(name, currency, hostFee, userData = {}) {
     CreatedByUserId: hostAdmin.id,
     isActive: true,
     settings: { apply: true },
+    ...hostData,
   });
   await hostCollective.addUserWithRole(hostAdmin, 'ADMIN');
   return { hostAdmin, hostCollective, [slug]: hostCollective };
@@ -153,12 +152,14 @@ export async function newOrganization(orgData, adminUser) {
  *  `hostAdmin`, and `collective`.
  */
 export async function newCollectiveWithHost(name, currency, hostCurrency, hostFee, user = null, data = {}) {
-  name = name || uuidv4();
+  name = name || uuid();
   const { hostAdmin, hostCollective } = await newHost(`${name} Host`, hostCurrency, hostFee, { currency });
   const slug = slugify(name);
   const { hostFeePercent } = hostCollective;
   const args = { ...data, name, slug, currency, hostFeePercent };
-  if (user) args['CreatedByUserId'] = user.id;
+  if (user) {
+    args['CreatedByUserId'] = user.id;
+  }
   const collective = await models.Collective.create(args);
   await collective.addHost(hostCollective, hostAdmin);
   // We activate the collective
@@ -169,7 +170,9 @@ export async function newCollectiveWithHost(name, currency, hostCurrency, hostFe
     collective.currency = currency;
   }
   await collective.save();
-  if (user) await collective.addUserWithRole(user, 'ADMIN');
+  if (user) {
+    await collective.addUserWithRole(user, 'ADMIN');
+  }
   return { hostCollective, hostAdmin, collective, [slug]: collective };
 }
 
@@ -189,7 +192,9 @@ export async function newCollectiveInHost(name, currency, hostCollective, user =
   const slug = slugify(name);
   const { hostFeePercent } = hostCollective;
   const args = { ...data, name, slug, currency, hostFeePercent };
-  if (user) args['CreatedByUserId'] = user.id;
+  if (user) {
+    args['CreatedByUserId'] = user.id;
+  }
   const collective = await models.Collective.create(args);
   user = user || (await models.User.createUserWithCollective({ email: randEmail(), name: 'Test' }));
   await collective.addUserWithRole(user, 'ADMIN');
@@ -333,7 +338,9 @@ export async function stripeOneTimeDonation(opt) {
   // Freeze the time to guarantee that all the objects have the
   // requested creation date. It will be reset right after the
   // execution of the order.
-  if (createdAt) sandbox.useFakeTimers(new Date(createdAt).getTime());
+  if (createdAt) {
+    sandbox.useFakeTimers(new Date(createdAt).getTime());
+  }
 
   // Stub the stripe calls before executing the order.
   try {

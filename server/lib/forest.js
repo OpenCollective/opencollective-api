@@ -58,19 +58,25 @@ export default app => {
             [Op.or]: [{ CollectiveId: collective.id }, { FromCollectiveId: collective.id }],
           },
         }).then(count => {
-          if (count > 0) throw Error('Can not delete user with existing orders.');
+          if (count > 0) {
+            throw Error('Can not delete user with existing orders.');
+          }
         });
         await models.Order.count({
           where: {
             [Op.or]: [{ CollectiveId: collective.id }, { FromCollectiveId: collective.id }],
           },
         }).then(count => {
-          if (count > 0) throw Error('Can not delete collective with existing orders.');
+          if (count > 0) {
+            throw Error('Can not delete collective with existing orders.');
+          }
         });
         await models.Expense.count({
           where: { CollectiveId: collective.id, status: 'PAID' },
         }).then(count => {
-          if (count > 0) throw Error('Can not delete collective with paid expenses.');
+          if (count > 0) {
+            throw Error('Can not delete collective with paid expenses.');
+          }
         });
         // Delete Members
         await models.Member.findAll({
@@ -137,17 +143,23 @@ export default app => {
       await models.Transaction.count({
         where: { FromCollectiveId: userCollective.id },
       }).then(count => {
-        if (count > 0) throw Error('Can not delete user with existing orders.');
+        if (count > 0) {
+          throw Error('Can not delete user with existing orders.');
+        }
       });
       await models.Order.count({
         where: { FromCollectiveId: userCollective.id },
       }).then(count => {
-        if (count > 0) throw Error('Can not delete user with existing orders.');
+        if (count > 0) {
+          throw Error('Can not delete user with existing orders.');
+        }
       });
       await models.Expense.count({
         where: { UserId: user.id, status: 'PAID' },
       }).then(count => {
-        if (count > 0) throw Error('Can not delete user with paid expenses.');
+        if (count > 0) {
+          throw Error('Can not delete user with paid expenses.');
+        }
       });
       // Delete Memberships
       await models.Member.findAll({
@@ -193,7 +205,6 @@ export default app => {
 
   app.post('/forest/actions/delete-user-and-merge', Liana.ensureAuthenticated, async (req, res) => {
     const data = req.body.data;
-    console.log(data);
     const id = data.attributes.ids[0];
     const mergeIntoUserId = data.attributes.values['User ID'];
     try {
@@ -217,17 +228,23 @@ export default app => {
       await models.Transaction.count({
         where: { FromCollectiveId: userCollective.id },
       }).then(count => {
-        if (count > 0) throw Error('Can not delete user with existing orders.');
+        if (count > 0) {
+          throw Error('Can not delete user with existing orders.');
+        }
       });
       await models.Order.count({
         where: { FromCollectiveId: userCollective.id },
       }).then(count => {
-        if (count > 0) throw Error('Can not delete user with existing orders.');
+        if (count > 0) {
+          throw Error('Can not delete user with existing orders.');
+        }
       });
       await models.Expense.count({
         where: { UserId: user.id, status: 'PAID' },
       }).then(count => {
-        if (count > 0) throw Error('Can not delete user with paid expenses.');
+        if (count > 0) {
+          throw Error('Can not delete user with paid expenses.');
+        }
       });
       // Merge Memberships
       await models.Member.findAll({

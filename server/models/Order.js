@@ -1,15 +1,15 @@
-import { TransactionTypes } from '../constants/transactions';
 import Promise from 'bluebird';
-import CustomDataTypes from './DataTypes';
 import Temporal from 'sequelize-temporal';
+import debugLib from 'debug';
 import { get } from 'lodash';
 
-import debugLib from 'debug';
-const debug = debugLib('order');
-
+import CustomDataTypes from './DataTypes';
 import status from '../constants/order_status';
+import { TransactionTypes } from '../constants/transactions';
 
-export default function(Sequelize, DataTypes) {
+const debug = debugLib('models:Order');
+
+export default function (Sequelize, DataTypes) {
   const { models } = Sequelize;
 
   const Order = Sequelize.define(
@@ -135,7 +135,7 @@ export default function(Sequelize, DataTypes) {
       },
 
       data: {
-        type: DataTypes.JSON,
+        type: DataTypes.JSONB,
         allowNull: true,
       },
 
@@ -189,21 +189,22 @@ export default function(Sequelize, DataTypes) {
             currency: this.currency,
             description: this.description,
             publicMessage: this.publicMessage,
+            interval: this.interval,
           };
         },
       },
     },
   );
 
-  Order.schema('public');
-
   /**
    * Instance Methods
    */
 
   // total Transactions over time for this order
-  Order.prototype.getTotalTransactions = function() {
-    if (!this.SubscriptionId) return this.totalAmount;
+  Order.prototype.getTotalTransactions = function () {
+    if (!this.SubscriptionId) {
+      return this.totalAmount;
+    }
     return models.Transaction.sum('amount', {
       where: {
         OrderId: this.id,
@@ -217,7 +218,7 @@ export default function(Sequelize, DataTypes) {
    * in which case, this will also make sure that the user can actually use it
    * (need to be a member of admin of the collective if there is a monthlyLimitPerUser or an admin if no limit)
    */
-  Order.prototype.setPaymentMethod = function(paymentMethodData) {
+  Order.prototype.setPaymentMethod = function (paymentMethodData) {
     debug('setPaymentMethod', paymentMethodData);
     return this.getUser() // remote user (logged in user) that created the order
       .then(user => models.PaymentMethod.getOrCreate(user, paymentMethodData))
@@ -234,16 +235,21 @@ export default function(Sequelize, DataTypes) {
    * Validates the payment method for the current order
    * Makes sure that the user can use this payment method for such order
    */
-  Order.prototype.validatePaymentMethod = function(paymentMethod) {
+  Order.prototype.validatePaymentMethod = function (paymentMethod) {
     debug('validatePaymentMethod', paymentMethod.dataValues, 'this.user', this.CreatedByUserId);
     return paymentMethod.canBeUsedForOrder(this, this.createdByUser).then(canBeUsedForOrder => {
-      if (canBeUsedForOrder) return paymentMethod;
-      else return null;
+      if (canBeUsedForOrder) {
+        return paymentMethod;
+      } else {
+        return null;
+      }
     });
   };
 
-  Order.prototype.getUser = function() {
-    if (this.createdByUser) return Promise.resolve(this.createdByUser);
+  Order.prototype.getUser = function () {
+    if (this.createdByUser) {
+      return Promise.resolve(this.createdByUser);
+    }
     return models.User.findByPk(this.CreatedByUserId).then(user => {
       this.createdByUser = user;
       debug('getUser', user.dataValues);
@@ -256,15 +262,19 @@ export default function(Sequelize, DataTypes) {
    * (order.fromCollective, order.collective, order.createdByUser, order.tier)
    * @param {*} order
    */
-  Order.prototype.populate = function(
+  Order.prototype.populate = function (
     foreignKeys = ['FromCollectiveId', 'CollectiveId', 'CreatedByUserId', 'TierId', 'PaymentMethodId'],
   ) {
     return Promise.map(foreignKeys, fk => {
       const attribute = (fk.substr(0, 1).toLowerCase() + fk.substr(1)).replace(/Id$/, '');
       const model = fk.replace(/(from|to|createdby)/i, '').replace(/Id$/, '');
       const promise = () => {
-        if (this[attribute]) return Promise.resolve(this[attribute]);
-        if (!this[fk]) return Promise.resolve(null);
+        if (this[attribute]) {
+          return Promise.resolve(this[attribute]);
+        }
+        if (!this[fk]) {
+          return Promise.resolve(null);
+        }
         return models[model].findByPk(this[fk]);
       };
       return promise().then(obj => {
@@ -273,7 +283,7 @@ export default function(Sequelize, DataTypes) {
     }).then(() => this);
   };
 
-  Order.prototype.getPaymentMethodForUser = function(user) {
+  Order.prototype.getPaymentMethodForUser = function (user) {
     return user.populateRoles().then(() => {
       // this check is necessary to cover organizations as well as user collective
       if (user.isAdmin(this.FromCollectiveId)) {
@@ -284,7 +294,7 @@ export default function(Sequelize, DataTypes) {
     });
   };
 
-  Order.prototype.getSubscriptionForUser = function(user) {
+  Order.prototype.getSubscriptionForUser = function (user) {
     if (!this.SubscriptionId) {
       return null;
     }

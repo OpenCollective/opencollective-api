@@ -3,7 +3,7 @@ import * as currencylib from '../../../server/lib/currency';
 import nock from 'nock';
 import config from 'config';
 
-describe('currencylib', () => {
+describe('server/lib/currency', () => {
   const startDate = '2017-02-01';
   const endDate = '2017-03-01';
 
@@ -11,7 +11,7 @@ describe('currencylib', () => {
     nock('https://data.fixer.io')
       .get(`/${startDate}`)
       .query({
-        access_key: config.fixer.accessKey,
+        access_key: config.fixer.accessKey, // eslint-disable-line camelcase
         base: 'EUR',
         symbols: 'USD',
       })
@@ -20,7 +20,7 @@ describe('currencylib', () => {
     nock('https://data.fixer.io')
       .get(`/${endDate}`)
       .query({
-        access_key: config.fixer.accessKey,
+        access_key: config.fixer.accessKey, // eslint-disable-line camelcase
         base: 'EUR',
         symbols: 'USD',
       })
@@ -29,7 +29,7 @@ describe('currencylib', () => {
     nock('https://data.fixer.io')
       .get(`/${endDate}`)
       .query({
-        access_key: config.fixer.accessKey,
+        access_key: config.fixer.accessKey, // eslint-disable-line camelcase
         base: 'INR',
         symbols: 'USD',
       })

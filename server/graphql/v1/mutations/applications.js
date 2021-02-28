@@ -6,7 +6,9 @@ import config from 'config';
 const { Application } = models;
 
 function requireArgs(args, path) {
-  if (!get(args, path)) throw new errors.ValidationFailed({ message: `${path} required` });
+  if (!get(args, path)) {
+    throw new errors.ValidationFailed({ message: `${path} required` });
+  }
 }
 
 export async function createApplication(_, args, req) {
@@ -22,7 +24,7 @@ export async function createApplication(_, args, req) {
 
   const numberOfAppsForThisUser = await Application.count({
     where: {
-      CreatedByUserId: req.remoteUser.id,
+      CollectiveId: req.remoteUser.CollectiveId,
     },
   });
 
@@ -51,7 +53,7 @@ export async function deleteApplication(_, args, req) {
     throw new errors.NotFound({
       message: `Application with id ${args.id} not found`,
     });
-  } else if (req.remoteUser.id !== app.CreatedByUserId) {
+  } else if (req.remoteUser.CollectiveId !== app.CollectiveId) {
     throw new errors.Forbidden('Authenticated user is not the application owner.');
   }
 
