@@ -3,19 +3,20 @@ import '../../server/env';
 
 // Only run on the first of the year
 const today = new Date();
-if (process.env.NODE_ENV === 'production' && today.getDate() !== 1 && today.getMonth() !== 0) {
+if (process.env.NODE_ENV === 'production' && today.getDate() !== 1 && today.getMonth() !== 0 && !process.env.OFFCYCLE) {
   console.log('NODE_ENV is production and today is not the first of year, script aborted!');
   process.exit();
 }
 
 process.env.PORT = 3066;
 
-import models, { sequelize, Op } from '../../server/models';
-import _ from 'lodash';
 import Promise from 'bluebird';
-import { formatCurrency, formatArrayToString, formatCurrencyObject } from '../../server/lib/utils';
+import _ from 'lodash';
+
 import emailLib from '../../server/lib/email';
 import queries from '../../server/lib/queries';
+import { formatArrayToString, formatCurrency, formatCurrencyObject } from '../../server/lib/utils';
+import models, { Op, sequelize } from '../../server/models';
 
 const d = process.env.START_DATE ? new Date(process.env.START_DATE) : new Date();
 const startDate = new Date(`${d.getFullYear() - 1}`);
@@ -74,7 +75,9 @@ const buildTweet = (fromCollective, collectives, totalDonations) => {
       totalDonations,
     )} across ${totalCollectives} collectives`;
     const listCollectives = formatArrayToString(collectivesNames);
-    if (`${tweet}: ${listCollectives}`.length < 120) tweet = `${tweet}: ${listCollectives}`;
+    if (`${tweet}: ${listCollectives}`.length < 120) {
+      tweet = `${tweet}: ${listCollectives}`;
+    }
   } else if (totalCollectives === 1) {
     tweet = `🎁 In ${year}, ${pronoun} have contributed ${collectivesDonationsNames[0].replace(
       ' to ',
@@ -146,7 +149,9 @@ const processCollective = collective => {
 
         hosts[row.hostSlug].collectivesBySlug[row.slug] = collectivesBySlug[row.slug];
 
-        if (typeof totalDonations[row.hostCurrency] === 'undefined') totalDonations[row.hostCurrency] = 0;
+        if (typeof totalDonations[row.hostCurrency] === 'undefined') {
+          totalDonations[row.hostCurrency] = 0;
+        }
 
         _.set(hosts, [row.hostSlug, 'totalFees', row.hostCurrency], 0);
         _.set(hosts, ['stripe', 'totalFees', row.hostCurrency], 0);
@@ -159,14 +164,19 @@ const processCollective = collective => {
       });
 
       for (const hostSlug in hosts) {
-        if (!hosts[hostSlug].collectivesBySlug) continue;
+        if (!hosts[hostSlug].collectivesBySlug) {
+          continue;
+        }
         for (const collectiveSlug in hosts[hostSlug].collectivesBySlug) {
           hosts[hostSlug].collectives = hosts[hostSlug].collectives || [];
           hosts[hostSlug].collectives.push(hosts[hostSlug].collectivesBySlug[collectiveSlug]);
         }
         hosts[hostSlug].collectives.sort((a, b) => {
-          if (a.totalDonations > b.totalDonations) return -1;
-          else return 1;
+          if (a.totalDonations > b.totalDonations) {
+            return -1;
+          } else {
+            return 1;
+          }
         });
       }
 
@@ -198,7 +208,7 @@ const processCollective = collective => {
     })
     .then(data => {
       return getUsers(collective).then(users => {
-        data.collective = collective;
+        data.collective = collective.info;
         data.platformStats = platformStats;
         data.recipients = users.map(u => u.email);
         if (data.recipients.length > 1) {

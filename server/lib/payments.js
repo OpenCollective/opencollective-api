@@ -1,21 +1,25 @@
 /** @module lib/payments */
-import config from 'config';
 import Promise from 'bluebird';
-import { includes, pick, get, find } from 'lodash';
+import config from 'config';
+import debugLib from 'debug';
+import { find, get, includes, pick } from 'lodash';
 import { Op } from 'sequelize';
 
-import models from '../models';
-import emailLib from './email';
-import { types } from '../constants/collectives';
+import activities from '../constants/activities';
 import status from '../constants/order_status';
 import roles from '../constants/roles';
-import activities from '../constants/activities';
+import tiers from '../constants/tiers';
+import { OC_FEE_PERCENT } from '../constants/transactions';
+import { createGiftCardPrepaidPaymentMethod, isGiftCardPrepaidBudgetOrder } from '../lib/gift-cards';
+import { formatAccountDetails } from '../lib/transferwise';
+import { formatCurrency } from '../lib/utils';
+import models from '../models';
 import paymentProviders from '../paymentProviders';
+
+import emailLib from './email';
+import { subscribeOrUpgradePlan, validatePlanRequest } from './plans';
 import * as libsubscription from './subscriptions';
 import * as libtransactions from './transactions';
-import { getRecommendedCollectives } from './data';
-import { formatCurrency } from '../lib/utils';
-import debugLib from 'debug';
 
 const debug = debugLib('payments');
 
@@ -247,7 +251,7 @@ export const createSubscription = async order => {
   order.Subscription.nextPeriodStart = updatedDates.nextPeriodStart || order.Subscription.nextPeriodStart;
 
   // Both subscriptions and one time donations are charged
-  // immediatelly and there won't be a better time to update
+  // immediately and there won't be a better time to update
   // this field after this. Please notice that it will change
   // when the issue #729 is tackled.
   // https://github.com/opencollective/opencollective/issues/729
@@ -293,6 +297,7 @@ export const executeOrder = async (user, order, options) => {
   }
 
   await order.populate();
+  await validatePlanRequest(order);
 
   const transaction = await processOrder(order, options);
   if (transaction) {
@@ -305,6 +310,14 @@ export const executeOrder = async (user, order, options) => {
       { TierId: get(order, 'tier.id') },
       { order },
     );
+
+    // Update collective plan if subscribing to opencollective's tier plans
+    await subscribeOrUpgradePlan(order);
+
+    // Create a Pre-Paid Payment Method for the Gift Card budget
+    if (isGiftCardPrepaidBudgetOrder(order)) {
+      await createGiftCardPrepaidPaymentMethod(transaction);
+    }
   }
 
   // If the user asked for it, mark the payment method as saved for future financial contributions
@@ -347,7 +360,7 @@ const sendOrderConfirmedEmail = async order => {
   const { collective, tier, interval, fromCollective } = order;
   const user = order.createdByUser;
 
-  if (collective.type === types.EVENT) {
+  if (tier && tier.type === tiers.TICKET) {
     return models.Activity.create({
       type: activities.TICKET_CONFIRMED,
       data: {
@@ -361,7 +374,6 @@ const sendOrderConfirmedEmail = async order => {
   } else {
     // normal order
     const relatedCollectives = await order.collective.getRelatedCollectives(3, 0);
-    const recommendedCollectives = await getRecommendedCollectives(order.collective, 3);
     const emailOptions = {
       from: `${collective.name} <hello@${collective.slug}.opencollective.com>`,
     };
@@ -373,7 +385,6 @@ const sendOrderConfirmedEmail = async order => {
       fromCollective: fromCollective.minimal,
       interval,
       relatedCollectives,
-      recommendedCollectives,
       monthlyInterval: interval === 'month',
       firstPayment: true,
       subscriptionsLink: interval && `${config.host.website}/${fromCollective.slug}/subscriptions`,
@@ -384,12 +395,18 @@ const sendOrderConfirmedEmail = async order => {
 };
 
 // Assumes one-time payments,
-const sendOrderProcessingEmail = async order => {
+export const sendOrderProcessingEmail = async order => {
   const { collective, fromCollective } = order;
   const user = order.createdByUser;
   const host = await collective.getHostCollective();
   const parentCollective = await collective.getParentCollective();
+  const manualPayoutMethod = await models.PayoutMethod.findOne({
+    where: { CollectiveId: host.id, data: { isManualBankTransfer: true } },
+  });
+  const account = manualPayoutMethod && formatAccountDetails(manualPayoutMethod.data);
+
   const data = {
+    account,
     order: order.info,
     user: user.info,
     collective: collective.info,
@@ -400,7 +417,9 @@ const sendOrderProcessingEmail = async order => {
   const instructions = get(host, 'settings.paymentMethods.manual.instructions');
   if (instructions) {
     const formatValues = {
+      account,
       orderid: order.id,
+      reference: order.id,
       amount: formatCurrency(order.totalAmount, order.currency),
       collective: parentCollective ? `${parentCollective.slug} event` : order.collective.slug,
       tier: get(order, 'tier.slug') || get(order, 'tier.name'),
@@ -408,7 +427,9 @@ const sendOrderProcessingEmail = async order => {
     data.instructions = instructions.replace(/{([\s\S]+?)}/g, (match, p1) => {
       if (p1) {
         const key = p1.toLowerCase();
-        if (formatValues[key]) return formatValues[key];
+        if (formatValues[key]) {
+          return formatValues[key];
+        }
       }
       return match;
     });
@@ -438,18 +459,48 @@ const sendManualPendingOrderEmail = async order => {
 
 export const sendReminderPendingOrderEmail = async order => {
   const { collective, fromCollective } = order;
-  const user = order.createdByUser;
   const host = await collective.getHostCollective();
+
+  // It could be that pending orders are from pledged collective and don't have an host
+  // In this case, we should skip it
+  // TODO: we should be able to more precisely query orders and exclude these
+  if (!host) {
+    return;
+  }
+
   const data = {
     order: order.info,
-    user: user.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
     viewDetailsLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
   };
 
-  return emailLib.send('order.reminder.pendingFinancialContribution', user.email, data, {
-    from: `${collective.name} <hello@${collective.slug}.opencollective.com>`,
-  });
+  const adminUsers = await host.getAdminUsers();
+  for (const adminUser of adminUsers) {
+    await emailLib.send('order.reminder.pendingFinancialContribution', adminUser.email, data);
+  }
+};
+
+export const sendExpiringCreditCardUpdateEmail = async data => {
+  data = {
+    ...data,
+    updateDetailsLink: `${config.host.website}/${data.slug}/paymentmethod/${data.id}/update`,
+  };
+
+  return emailLib.send('payment.creditcard.expiring', data.email, data);
+};
+
+export const getPlatformFee = order => {
+  const orderPlatformFee = get(order, 'data.platformFee');
+  if (!isNaN(orderPlatformFee)) {
+    return orderPlatformFee;
+  }
+
+  const defaultPlatformFeePercent =
+    order.collective.platformFeePercent === null ? OC_FEE_PERCENT : order.collective.platformFeePercent;
+
+  const platformFeePercent = get(order, 'data.platformFeePercent', defaultPlatformFeePercent);
+
+  return parseInt((order.totalAmount * platformFeePercent) / 100, 10);
 };
