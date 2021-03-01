@@ -10,13 +10,11 @@
       "bucket": "opencollective-test"
     }
   },
-  "cache": {
-    "homepage": {
-      "disabled": true
-    }
-  },
   "mailgun": {
     "user": "",
     "password": ""
+  },
+  "fixer": {
+    "accessKey": "UNDEFINED_FIXER_ACCESS_KEY"
   }
 }

@@ -1,14 +1,15 @@
-import { GraphQLString, GraphQLObjectType, GraphQLNonNull, GraphQLBoolean } from 'graphql';
+import { GraphQLBoolean, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
 
-import { Account, AccountFields } from '../interface/Account';
+import { types as collectiveTypes } from '../../../constants/collectives';
 import models from '../../../models';
 import { idDecode, IDENTIFIER_TYPES } from '../identifiers';
+import { Account, AccountFields } from '../interface/Account';
 
 export const Individual = new GraphQLObjectType({
   name: 'Individual',
   description: 'This represents an Individual account',
   interfaces: () => [Account],
-  isTypeOf: collective => collective.type === 'USER',
+  isTypeOf: collective => collective.type === collectiveTypes.USER,
   fields: () => {
     return {
       ...AccountFields,
@@ -31,7 +32,9 @@ export const Individual = new GraphQLObjectType({
       email: {
         type: GraphQLString,
         resolve(userCollective, args, req) {
-          if (!req.remoteUser) return null;
+          if (!req.remoteUser) {
+            return null;
+          }
           return (
             userCollective && req.loaders.getUserDetailsByCollectiveId.load(userCollective.id).then(user => user.email)
           );
@@ -55,6 +58,20 @@ export const Individual = new GraphQLObjectType({
             return false;
           } else {
             return models.ConversationFollower.isFollowing(userDetails.id, conversationId);
+          }
+        },
+      },
+      location: {
+        ...AccountFields.location,
+        description: `
+          Address. This field is public for hosts, otherwise:
+            - Users can see their own address
+            - Hosts can see the address of users submitting expenses to their collectives
+        `,
+        async resolve(individual, _, req) {
+          const canSeeLocation = req.remoteUser?.isAdmin(individual.id) || (await individual.isHost());
+          if (canSeeLocation) {
+            return individual.location;
           }
         },
       },

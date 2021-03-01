@@ -1,5 +1,8 @@
 import { pick } from 'lodash';
+
 import { activities } from '../constants';
+
+import { formatCurrency } from './utils';
 
 /**
  * Filter collective public information, returning a minimal subset for incognito users
@@ -66,9 +69,31 @@ export const sanitizeActivity = activity => {
       'order.totalAmount',
       'order.currency',
       'order.description',
+      'order.interval',
     ]);
     cleanActivity.data.member.memberCollective = getCollectiveInfo(activity.data.member.memberCollective);
   }
 
   return cleanActivity;
+};
+
+/**
+ * Adds user-friendly fields to an activity. Mutates activity.
+ */
+export const enrichActivity = activity => {
+  Object.entries(activity).forEach(([key, value]) => {
+    if (value && typeof value === 'object') {
+      enrichActivity(value);
+    } else if (key === 'amount' || key === 'totalAmount') {
+      const amount = activity['amount'] || activity['totalAmount'];
+      const currency = activity['currency'];
+      const interval = activity['interval'];
+      activity.formattedAmount = currency ? formatCurrency(amount, currency, 2) : (amount / 100).toFixed(2);
+      activity.formattedAmountWithInterval = interval
+        ? `${activity.formattedAmount} / ${interval}`
+        : activity.formattedAmount;
+    }
+  });
+
+  return activity;
 };

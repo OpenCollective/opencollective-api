@@ -1,18 +1,19 @@
-import Temporal from 'sequelize-temporal';
 import Promise from 'bluebird';
-import _ from 'lodash';
 import debugLib from 'debug';
 import slugify from 'limax';
+import { defaults } from 'lodash';
 import { Op } from 'sequelize';
+import Temporal from 'sequelize-temporal';
 
-import CustomDataTypes from './DataTypes';
 import { maxInteger } from '../constants/math';
-import { capitalize, days, formatCurrency, strip_tags } from '../lib/utils';
+import { capitalize, days, formatCurrency, stripTags } from '../lib/utils';
 import { isSupportedVideoProvider, supportedVideoProviders } from '../lib/validators';
 
-const debug = debugLib('tier');
+import CustomDataTypes from './DataTypes';
 
-export default function(Sequelize, DataTypes) {
+const debug = debugLib('models:Tier');
+
+export default function (Sequelize, DataTypes) {
   const { models } = Sequelize;
 
   const Tier = Sequelize.define(
@@ -80,14 +81,14 @@ export default function(Sequelize, DataTypes) {
       longDescription: {
         type: DataTypes.TEXT,
         validate: {
-          // Max length for arround 1_000_000 characters ~4MB of text
+          // Max length for around 1_000_000 characters ~4MB of text
           len: [0, 1000000],
         },
         set(content) {
           if (!content) {
             this.setDataValue('longDescription', null);
           } else {
-            this.setDataValue('longDescription', strip_tags(content));
+            this.setDataValue('longDescription', stripTags(content));
           }
         },
       },
@@ -197,11 +198,11 @@ export default function(Sequelize, DataTypes) {
       },
 
       customFields: {
-        type: DataTypes.JSON,
+        type: DataTypes.JSONB,
       },
 
       data: {
-        type: DataTypes.JSON,
+        type: DataTypes.JSONB,
       },
 
       startsAt: {
@@ -276,8 +277,6 @@ export default function(Sequelize, DataTypes) {
     },
   );
 
-  Tier.schema('public');
-
   /**
    * Instance Methods
    */
@@ -288,7 +287,7 @@ export default function(Sequelize, DataTypes) {
    * If this tier has an interval, returns true if the membership started within the month/year
    * or if the last transaction happened wihtin the month/year
    */
-  Tier.prototype.isBackerActive = function(backerCollective, until = new Date()) {
+  Tier.prototype.isBackerActive = function (backerCollective, until = new Date()) {
     return models.Member.findOne({
       where: {
         CollectiveId: this.CollectiveId,
@@ -297,10 +296,18 @@ export default function(Sequelize, DataTypes) {
         createdAt: { [Op.lte]: until },
       },
     }).then(membership => {
-      if (!membership) return false;
-      if (!this.interval) return true;
-      if (this.interval === 'month' && days(membership.createdAt, until) <= 31) return true;
-      if (this.interval === 'year' && days(membership.createdAt, until) <= 365) return true;
+      if (!membership) {
+        return false;
+      }
+      if (!this.interval) {
+        return true;
+      }
+      if (this.interval === 'month' && days(membership.createdAt, until) <= 31) {
+        return true;
+      }
+      if (this.interval === 'year' && days(membership.createdAt, until) <= 365) {
+        return true;
+      }
       return models.Order.findOne({
         where: {
           CollectiveId: this.CollectiveId,
@@ -308,7 +315,9 @@ export default function(Sequelize, DataTypes) {
           TierId: this.id,
         },
       }).then(order => {
-        if (!order) return false;
+        if (!order) {
+          return false;
+        }
         return models.Transaction.findOne({
           where: { OrderId: order.id, CollectiveId: this.CollectiveId },
           order: [['createdAt', 'DESC']],
@@ -317,8 +326,12 @@ export default function(Sequelize, DataTypes) {
             debug('No transaction found for order', order.dataValues);
             return false;
           }
-          if (this.interval === 'month' && days(transaction.createdAt, until) <= 31) return true;
-          if (this.interval === 'year' && days(transaction.createdAt, until) <= 365) return true;
+          if (this.interval === 'month' && days(transaction.createdAt, until) <= 31) {
+            return true;
+          }
+          if (this.interval === 'year' && days(transaction.createdAt, until) <= 365) {
+            return true;
+          }
           return false;
         });
       });
@@ -326,7 +339,7 @@ export default function(Sequelize, DataTypes) {
   };
 
   // TODO: Check for maxQuantityPerUser
-  Tier.prototype.availableQuantity = function() {
+  Tier.prototype.availableQuantity = function () {
     if (!this.maxQuantity) {
       return Promise.resolve(maxInteger);
     }
@@ -348,7 +361,7 @@ export default function(Sequelize, DataTypes) {
     });
   };
 
-  Tier.prototype.checkAvailableQuantity = function(quantityNeeded = 1) {
+  Tier.prototype.checkAvailableQuantity = function (quantityNeeded = 1) {
     return this.availableQuantity().then(available => available - quantityNeeded >= 0);
   };
 
@@ -356,7 +369,7 @@ export default function(Sequelize, DataTypes) {
    * Class Methods
    */
   Tier.createMany = (tiers, defaultValues = {}) => {
-    return Promise.map(tiers, t => Tier.create(_.defaults({}, t, defaultValues)), { concurrency: 1 });
+    return Promise.map(tiers, t => Tier.create(defaults({}, t, defaultValues)), { concurrency: 1 });
   };
 
   /**

@@ -3,36 +3,37 @@ import {
   GraphQLEnumType,
   GraphQLError,
   GraphQLFloat,
-  GraphQLInt,
   GraphQLInputObjectType,
+  GraphQLInt,
   GraphQLList,
-  GraphQLObjectType,
-  GraphQLString,
-  GraphQLScalarType,
   GraphQLNonNull,
+  GraphQLObjectType,
+  GraphQLScalarType,
+  GraphQLString,
 } from 'graphql';
-
-import { Kind } from 'graphql/language';
 import GraphQLJSON from 'graphql-type-json';
-import he from 'he';
-import { pick } from 'lodash';
+import { Kind } from 'graphql/language';
+import { get, omit, pick } from 'lodash';
 import moment from 'moment';
 
-import { CollectiveInterfaceType, CollectiveSearchResultsType } from './CollectiveInterface';
-
-import { TransactionInterfaceType, OrderDirectionType } from './TransactionInterface';
-
-import models, { Op, sequelize } from '../../models';
-import { getContributorsForTier } from '../../lib/contributors';
-import { strip_tags } from '../../lib/utils';
 import status from '../../constants/expense_status';
-import orderStatus from '../../constants/order_status';
-import { maxInteger } from '../../constants/math';
 import intervals from '../../constants/intervals';
+import { maxInteger } from '../../constants/math';
+import orderStatus from '../../constants/order_status';
 import roles from '../../constants/roles';
-import { isUserTaxFormRequiredBeforePayment } from '../../lib/tax-forms';
 import { getCollectiveAvatarUrl } from '../../lib/collectivelib';
+import { getContributorsForTier } from '../../lib/contributors';
+import { isUserTaxFormRequiredBeforePayment } from '../../lib/tax-forms';
+import { stripTags } from '../../lib/utils';
+import models, { Op, sequelize } from '../../models';
+import { PayoutMethodTypes } from '../../models/PayoutMethod';
 import * as commonComment from '../common/comment';
+import { allowContextPermission, PERMISSION_TYPE } from '../common/context-permissions';
+import { canSeeExpenseAttachments, canSeeExpensePayoutMethod, getExpenseItems } from '../common/expenses';
+import { idEncode, IDENTIFIER_TYPES } from '../v2/identifiers';
+
+import { CollectiveInterfaceType, CollectiveSearchResultsType } from './CollectiveInterface';
+import { TransactionInterfaceType } from './TransactionInterface';
 
 /**
  * Take a graphql type and return a wrapper type that adds pagination. The pagination
@@ -80,6 +81,35 @@ export const IsoDateString = new GraphQLScalarType({
       throw new GraphQLError('Query error: unable to pass date string. Expected a valid ISO-8601 date string.');
     }
     return date;
+  },
+});
+
+export const PayoutMethodTypeEnum = new GraphQLEnumType({
+  name: 'PayoutMethodTypeEnum',
+  values: Object.keys(PayoutMethodTypes).reduce((values, key) => {
+    return { ...values, [key]: { value: PayoutMethodTypes[key] } };
+  }, {}),
+});
+
+export const PayoutMethodType = new GraphQLObjectType({
+  name: 'PayoutMethod',
+  description: 'A payout method for expenses',
+  fields: {
+    id: {
+      type: GraphQLInt,
+    },
+    type: {
+      type: PayoutMethodTypeEnum,
+    },
+    name: {
+      type: GraphQLString,
+    },
+    isSaved: {
+      type: GraphQLBoolean,
+    },
+    data: {
+      type: GraphQLJSON,
+    },
   },
 });
 
@@ -156,17 +186,49 @@ export const UserType = new GraphQLObjectType({
       },
       memberOf: {
         type: new GraphQLList(MemberType),
-        resolve(user) {
+        args: {
+          roles: { type: new GraphQLList(GraphQLString) },
+          includeIncognito: {
+            type: GraphQLBoolean,
+            defaultValue: true,
+            description:
+              'Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.',
+          },
+        },
+        resolve(user, args, req) {
+          const where = { MemberCollectiveId: user.CollectiveId };
+          if (args.roles && args.roles.length > 0) {
+            where.role = { [Op.in]: args.roles };
+          }
+
+          const collectiveConditions = {};
+          if (!args.includeIncognito || !req.remoteUser?.isAdmin(user.CollectiveId)) {
+            collectiveConditions.isIncognito = false;
+          }
+
           return models.Member.findAll({
-            where: { MemberCollectiveId: user.CollectiveId },
-            include: [{ model: models.Collective, as: 'collective', required: true }],
+            where,
+            include: [
+              {
+                model: models.Collective,
+                as: 'collective',
+                required: true,
+                where: collectiveConditions,
+              },
+            ],
           });
         },
       },
       paypalEmail: {
         type: GraphQLString,
-        resolve(user, args, req) {
-          return user.getPersonalDetails && user.getPersonalDetails(req.remoteUser).then(user => user.paypalEmail);
+        deprecationReason: '2020-01-20 - Payout methods are now attached to collectives',
+        async resolve(user, args, req) {
+          if (!req.remoteUser || !(await req.loaders.User.canSeeUserPrivateInfo.load(user))) {
+            return null;
+          } else {
+            const payoutMethods = await req.loaders.PayoutMethod.paypalByCollectiveId.load(user.CollectiveId);
+            return get(payoutMethods[0], 'data.email');
+          }
         },
       },
       isLimited: {
@@ -231,14 +293,6 @@ export const StatsMemberType = new GraphQLObjectType({
           );
         },
       },
-      totalRaised: {
-        type: GraphQLInt,
-        description: 'total amount raised by this member',
-        deprecationReason: '2019-08-22: Referals are not supported anymore',
-        resolve() {
-          return 0;
-        },
-      },
     };
   },
 });
@@ -250,8 +304,8 @@ export const MemberType = new GraphQLObjectType({
     return {
       id: {
         type: GraphQLInt,
-        resolve(order) {
-          return order.id;
+        resolve(member) {
+          return member.id;
         },
       },
       createdAt: {
@@ -316,8 +370,8 @@ export const MemberType = new GraphQLObjectType({
         resolve(member, args, req) {
           const memberCollective =
             member.memberCollective || req.loaders.Collective.byId.load(member.MemberCollectiveId);
-          if (memberCollective) {
-            memberCollective.inTheContextOfCollectiveId = member.CollectiveId;
+          if (memberCollective && req.remoteUser && req.remoteUser.isAdmin(member.CollectiveId)) {
+            allowContextPermission(req, PERMISSION_TYPE.SEE_INCOGNITO_ACCOUNT_DETAILS, memberCollective.id);
           }
           return memberCollective;
         },
@@ -351,6 +405,51 @@ export const MemberType = new GraphQLObjectType({
         type: StatsMemberType,
         resolve(member) {
           return member;
+        },
+      },
+      since: {
+        type: DateString,
+        resolve(member) {
+          return member.since;
+        },
+      },
+    };
+  },
+});
+
+export const MemberInvitationType = new GraphQLObjectType({
+  name: 'MemberInvitation',
+  description: 'An invitation to join the members of a collective',
+  fields: () => {
+    return {
+      id: {
+        type: GraphQLInt,
+      },
+      createdAt: {
+        type: DateString,
+      },
+      collective: {
+        type: CollectiveInterfaceType,
+        resolve(member, args, req) {
+          return req.loaders.Collective.byId.load(member.CollectiveId);
+        },
+      },
+      member: {
+        type: CollectiveInterfaceType,
+        resolve(member, args, req) {
+          return req.loaders.Collective.byId.load(member.MemberCollectiveId);
+        },
+      },
+      role: {
+        type: GraphQLString,
+      },
+      description: {
+        type: GraphQLString,
+      },
+      tier: {
+        type: TierType,
+        resolve(member, args, req) {
+          return member.TierId && req.loaders.Tier.byId.load(member.TierId);
         },
       },
       since: {
@@ -528,6 +627,14 @@ export const InvoiceType = new GraphQLObjectType({
           return invoice.title;
         },
       },
+      extraInfo: {
+        type: GraphQLString,
+        description:
+          'more info about the invoice, which is then printed on receipts that go to financial contributors.',
+        resolve(invoice) {
+          return invoice.extraInfo;
+        },
+      },
       dateFrom: {
         type: IsoDateString,
         description:
@@ -581,8 +688,12 @@ export const InvoiceType = new GraphQLObjectType({
       },
       fromCollective: {
         type: CollectiveInterfaceType,
-        resolve(invoice, args, req) {
-          return req.loaders.Collective.byId.load(invoice.FromCollectiveId);
+        async resolve(invoice, args, req) {
+          const fromCollective = await req.loaders.Collective.byId.load(invoice.FromCollectiveId);
+          if (fromCollective && req.remoteUser.isAdmin(fromCollective.id)) {
+            allowContextPermission(req, PERMISSION_TYPE.SEE_INCOGNITO_ACCOUNT_DETAILS, fromCollective.id);
+          }
+          return fromCollective;
         },
       },
       transactions: {
@@ -612,6 +723,35 @@ export const InvoiceType = new GraphQLObjectType({
   },
 });
 
+export const ExpenseItemType = new GraphQLObjectType({
+  name: 'ExpenseItem',
+  description: 'Public fields for an expense item',
+  fields: {
+    id: { type: new GraphQLNonNull(GraphQLInt) },
+    amount: { type: new GraphQLNonNull(GraphQLInt) },
+    createdAt: { type: new GraphQLNonNull(IsoDateString) },
+    updatedAt: { type: new GraphQLNonNull(IsoDateString) },
+    incurredAt: { type: new GraphQLNonNull(IsoDateString) },
+    deletedAt: { type: IsoDateString },
+    description: { type: GraphQLString },
+    url: { type: GraphQLString },
+  },
+});
+
+const ExpenseAttachedFile = new GraphQLObjectType({
+  name: 'ExpenseAttachedFile',
+  description: "Fields for an expense's attached file",
+  fields: {
+    id: {
+      type: new GraphQLNonNull(GraphQLInt),
+      description: 'Unique identifier for this file',
+    },
+    url: {
+      type: GraphQLString,
+    },
+  },
+});
+
 export const ExpenseType = new GraphQLObjectType({
   name: 'ExpenseType',
   description: 'This represents an Expense',
@@ -621,6 +761,12 @@ export const ExpenseType = new GraphQLObjectType({
         type: GraphQLInt,
         resolve(expense) {
           return expense.id;
+        },
+      },
+      idV2: {
+        type: GraphQLString,
+        resolve(expense) {
+          return idEncode(expense.id, IDENTIFIER_TYPES.EXPENSE);
         },
       },
       amount: {
@@ -661,8 +807,15 @@ export const ExpenseType = new GraphQLObjectType({
       },
       category: {
         type: GraphQLString,
+        deprecationReason: '2020-04-01 - Please use tags',
         resolve(expense) {
-          return expense.category;
+          return expense.tags?.[0] || null;
+        },
+      },
+      tags: {
+        type: new GraphQLList(GraphQLString),
+        resolve(expense) {
+          return expense.tags;
         },
       },
       status: {
@@ -679,14 +832,27 @@ export const ExpenseType = new GraphQLObjectType({
       },
       payoutMethod: {
         type: GraphQLString,
+        deprecationReason: '2020-01-23 - Please use the private field instead.',
         resolve(expense) {
-          return expense.payoutMethod;
+          return expense.legacyPayoutMethod;
+        },
+      },
+      PayoutMethod: {
+        type: PayoutMethodType,
+        async resolve(expense, _, req) {
+          if (!expense.PayoutMethodId || !(await canSeeExpensePayoutMethod(req, expense))) {
+            return null;
+          } else {
+            return expense.payoutMethod || req.loaders.PayoutMethod.byId.load(expense.PayoutMethodId);
+          }
         },
       },
       privateMessage: {
         type: GraphQLString,
         resolve(expense, args, req) {
-          if (!req.remoteUser) return null;
+          if (!req.remoteUser) {
+            return null;
+          }
           if (req.remoteUser.isAdmin(expense.CollectiveId) || req.remoteUser.id === expense.UserId) {
             return expense.privateMessage;
           }
@@ -701,21 +867,49 @@ export const ExpenseType = new GraphQLObjectType({
       },
       attachment: {
         type: GraphQLString,
-        resolve(expense, args, req) {
-          if (!req.remoteUser) return null;
-          if (req.remoteUser.isAdmin(expense.CollectiveId) || req.remoteUser.id === expense.UserId) {
-            return expense.attachment;
+        deprecationReason: '2020-01-13 - Expenses now support multiple attachments. Please use attachments instead.',
+        async resolve(expense, args, req) {
+          if (!(await canSeeExpenseAttachments(req, expense))) {
+            return null;
+          } else {
+            const attachments = await getExpenseItems(expense.id, req);
+            return attachments[0] && attachments[0].url;
           }
-          return req.loaders.Collective.byId.load(expense.CollectiveId).then(collective => {
-            if (
-              req.remoteUser.isAdmin(collective.HostCollectiveId) ||
-              req.remoteUser.isAdmin(collective.ParentCollectiveId)
-            ) {
-              return expense.attachment;
+        },
+      },
+      attachments: {
+        type: new GraphQLList(ExpenseItemType),
+        deprecationReason: '2020-04-09 - Please use items',
+        async resolve(expense, _, req) {
+          const canSeeAttachments = await canSeeExpenseAttachments(req, expense);
+          return (await getExpenseItems(expense.id, req)).map(async item => {
+            if (canSeeAttachments) {
+              return item;
             } else {
-              return null;
+              return omit(item, ['url']);
             }
           });
+        },
+      },
+      items: {
+        type: new GraphQLList(ExpenseItemType),
+        async resolve(expense, _, req) {
+          const canSeeAttachments = await canSeeExpenseAttachments(req, expense);
+          return (await getExpenseItems(expense.id, req)).map(async item => {
+            if (canSeeAttachments) {
+              return item;
+            } else {
+              return omit(item, ['url']);
+            }
+          });
+        },
+      },
+      attachedFiles: {
+        type: new GraphQLList(new GraphQLNonNull(ExpenseAttachedFile)),
+        async resolve(expense, _, req) {
+          if (await canSeeExpenseAttachments(req, expense)) {
+            return req.loaders.Expense.attachedFiles.load(expense.id);
+          }
         },
       },
       userTaxFormRequiredBeforePayment: {
@@ -739,15 +933,8 @@ export const ExpenseType = new GraphQLObjectType({
       },
       fromCollective: {
         type: CollectiveInterfaceType,
-        resolve(expense) {
-          return expense.getUser().then(u => {
-            if (!u) {
-              return console.error(
-                `Cannot fetch the UserId ${expense.UserId} referenced in ExpenseId ${expense.id} -- has the user been deleted?`,
-              );
-            }
-            return models.Collective.findByPk(u.CollectiveId);
-          });
+        resolve(expense, _, req) {
+          return req.loaders.Collective.byId.load(expense.FromCollectiveId);
         },
       },
       comments: {
@@ -869,21 +1056,7 @@ export const UpdateType = new GraphQLObjectType({
             return null;
           }
 
-          if (update.html.substr(0, 3) === '<p>') {
-            // we only keep the first paragraph
-            return he
-              .decode(update.html)
-              .replace('<p><br /></p>', '')
-              .replace(/<\/p>.*/g, '')
-              .replace('<p>', '');
-          }
-
-          if (update.markdown) {
-            // we only keep the first paragraph (up to 255 chars)
-            return update.markdown.replace(/\n.*/g, '').trunc(255, true);
-          }
-
-          return '';
+          return update.summary || '';
         },
       },
       html: {
@@ -893,7 +1066,7 @@ export const UpdateType = new GraphQLObjectType({
             return null;
           }
 
-          return strip_tags(update.html || '');
+          return stripTags(update.html || '');
         },
       },
       markdown: {
@@ -903,7 +1076,7 @@ export const UpdateType = new GraphQLObjectType({
             return null;
           }
 
-          return strip_tags(update.markdown || '');
+          return stripTags(update.markdown || '');
         },
       },
       tags: {
@@ -938,6 +1111,7 @@ export const UpdateType = new GraphQLObjectType({
       },
       comments: {
         type: CommentListType,
+        deprecationReason: 'Deprecated since 2020-03-18: This field has never been active and will be removed soon.',
         args: {
           limit: { type: GraphQLInt },
           offset: { type: GraphQLInt },
@@ -1429,6 +1603,12 @@ export const TierType = new GraphQLObjectType({
           return tier;
         },
       },
+      data: {
+        type: GraphQLJSON,
+        resolve(tier) {
+          return tier.data;
+        },
+      },
     };
   },
 });
@@ -1480,6 +1660,12 @@ export const OrderType = new GraphQLObjectType({
           return order.id;
         },
       },
+      idV2: {
+        type: GraphQLString,
+        resolve(order) {
+          return idEncode(order.id, 'order');
+        },
+      },
       quantity: {
         description: 'quantity of items (defined by Tier)',
         type: GraphQLInt,
@@ -1521,7 +1707,9 @@ export const OrderType = new GraphQLObjectType({
         type: UserType,
         async resolve(order, args, req) {
           const fromCollective = await order.getFromCollective();
-          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(order.CollectiveId))) return {};
+          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(order.CollectiveId))) {
+            return {};
+          }
 
           return order.getCreatedByUser();
         },
@@ -1557,8 +1745,8 @@ export const OrderType = new GraphQLObjectType({
             return null;
           }
           const fromCollective = await req.loaders.Collective.byId.load(order.FromCollectiveId);
-          if (fromCollective) {
-            fromCollective.inTheContextOfCollectiveId = order.CollectiveId;
+          if (req.remoteUser && req.remoteUser.isAdmin(order.CollectiveId)) {
+            allowContextPermission(req, PERMISSION_TYPE.SEE_INCOGNITO_ACCOUNT_DETAILS, fromCollective.id);
           }
           return fromCollective;
         },
@@ -1604,7 +1792,9 @@ export const OrderType = new GraphQLObjectType({
             limit: args.limit || 10,
             offset: args.offset || 0,
           };
-          if (args.type) query.where.type = args.type;
+          if (args.type) {
+            query.where.type = args.type;
+          }
           return req.loaders.Transaction.findByOrderId(query).load(order.id);
         },
       },
@@ -2020,6 +2210,15 @@ export const UserInputType = new GraphQLInputObjectType({
       type: GraphQLString,
       description: 'User last name',
     },
+  },
+});
+
+export const OrderDirectionType = new GraphQLEnumType({
+  name: 'OrderDirection',
+  description: 'Possible directions in which to order a list of items when provided an orderBy argument.',
+  values: {
+    ASC: {},
+    DESC: {},
   },
 });
 

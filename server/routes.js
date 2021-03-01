@@ -1,40 +1,31 @@
-import serverStatus from 'express-server-status';
-import GraphHTTP from 'express-graphql';
-import curlify from 'request-as-curl';
-import multer from 'multer';
-import debug from 'debug';
-import config from 'config';
-
-import redis from 'redis';
-import expressLimiter from 'express-limiter';
 import { ApolloServer } from 'apollo-server-express';
-import { formatError } from 'apollo-errors';
+import config from 'config';
+import expressBasicAuth from 'express-basic-auth';
+import GraphHTTP from 'express-graphql';
+import expressLimiter from 'express-limiter';
+import serverStatus from 'express-server-status';
+import expressWs from 'express-ws';
 import { get } from 'lodash';
+import multer from 'multer';
+import redis from 'redis';
 
 import * as connectedAccounts from './controllers/connectedAccounts';
-import getHomePage from './controllers/homepage';
+import helloworks from './controllers/helloworks';
 import uploadImage from './controllers/images';
-import { createPaymentMethod } from './controllers/paymentMethods';
-import * as users from './controllers/users';
-import stripeWebhook from './controllers/webhooks';
 import * as email from './controllers/services/email';
-
-import required from './middleware/required_param';
-import * as aN from './middleware/security/authentication';
-import * as auth from './middleware/security/auth';
-import errorHandler from './middleware/error_handler';
-import * as params from './middleware/params';
-import sanitizer from './middleware/sanitizer';
-
-import * as paypal from './paymentProviders/paypal/payment';
-
-import logger from './lib/logger';
-import { sanitizeForLogs } from './lib/utils';
-
+import * as users from './controllers/users';
+import { stripeWebhook, transferwiseWebhook } from './controllers/webhooks';
 import graphqlSchemaV1 from './graphql/v1/schema';
 import graphqlSchemaV2 from './graphql/v2/schema';
-
-import helloworks from './controllers/helloworks';
+import hyperwatch from './lib/hyperwatch';
+import logger from './lib/logger';
+import { parseToBoolean } from './lib/utils';
+import * as authentication from './middleware/authentication';
+import errorHandler from './middleware/error_handler';
+import * as params from './middleware/params';
+import required from './middleware/required_param';
+import sanitizer from './middleware/sanitizer';
+import * as paypal from './paymentProviders/paypal/payment';
 
 const upload = multer();
 
@@ -52,9 +43,9 @@ export default app => {
     next();
   });
 
-  app.use('*', auth.checkClientApp);
+  app.use('*', authentication.checkClientApp);
 
-  app.use('*', auth.authorizeClientApp);
+  app.use('*', authentication.authorizeClientApp);
 
   // Setup rate limiter
   if (get(config, 'redis.serverUrl')) {
@@ -63,7 +54,7 @@ export default app => {
       app,
       client,
     )({
-      lookup: function(req, res, opts, next) {
+      lookup: function (req, res, opts, next) {
         if (req.clientApp) {
           opts.lookup = 'clientApp.id';
           // 100 requests / minute for registered API Key
@@ -77,12 +68,12 @@ export default app => {
         }
         return next();
       },
-      whitelist: function(req) {
+      whitelist: function (req) {
         const apiKey = req.query.api_key || req.body.api_key;
         // No limit with internal API Key
         return apiKey === config.keys.opencollective.apiKey;
       },
-      onRateLimited: function(req, res) {
+      onRateLimited: function (req, res) {
         let message;
         if (req.clientApp) {
           message = 'Rate limit exceeded. Contact-us to get higher limits.';
@@ -95,35 +86,17 @@ export default app => {
     app.use('/graphql', rateLimiter);
   }
 
-  if (process.env.DEBUG) {
-    app.use('*', (req, res, next) => {
-      const body = sanitizeForLogs(req.body || {});
-      debug('operation')(body.operationName, JSON.stringify(body.variables, null));
-      if (body.query) {
-        const query = body.query;
-        debug('params')(query);
-        delete body.query;
-      }
-      debug('params')('req.query', req.query);
-      debug('params')('req.body', JSON.stringify(body, null, '  '));
-      debug('params')('req.params', req.params);
-      debug('headers')('req.headers', req.headers);
-      debug('curl')('curl', curlify(req, req.body));
-      next();
-    });
-  }
-
   /**
    * User reset password or new token flow (no jwt verification)
    */
   app.post('/users/signin', required('user'), users.signin);
-  app.post('/users/update-token', auth.mustBeLoggedIn, users.updateToken);
+  app.post('/users/update-token', authentication.mustBeLoggedIn, users.updateToken);
 
   /**
    * Moving forward, all requests will try to authenticate the user if there is a JWT token provided
    * (an error will be returned if the JWT token is invalid, if not present it will simply continue)
    */
-  app.use('*', aN.authenticateUser); // populate req.remoteUser if JWT token provided in the request
+  app.use('*', authentication.authenticateUser); // populate req.remoteUser if JWT token provided in the request
 
   /**
    * Parameters.
@@ -144,7 +117,7 @@ export default app => {
     customFormatErrorFn: error => {
       logger.error(`GraphQL v1 error: ${error.message}`);
       logger.debug(error);
-      return formatError(error);
+      return error;
     },
     schema: graphqlSchemaV1,
     pretty: isDevelopment,
@@ -160,6 +133,9 @@ export default app => {
     schema: graphqlSchemaV2,
     introspection: true,
     playground: isDevelopment,
+    engine: {
+      apiKey: get(config, 'graphql.apolloEngineAPIKey'),
+    },
     // Align with behavior from express-graphql
     context: ({ req }) => {
       return req;
@@ -177,28 +153,17 @@ export default app => {
    * Webhooks that should bypass api key check
    */
   app.post('/webhooks/stripe', stripeWebhook); // when it gets a new subscription invoice
+  app.post('/webhooks/transferwise', transferwiseWebhook); // when it gets a new subscription invoice
   app.post('/webhooks/mailgun', email.webhook); // when receiving an email
-  app.get('/connected-accounts/:service/callback', aN.authenticateServiceCallback); // oauth callback
-  app.delete('/connected-accounts/:service/disconnect/:collectiveId', aN.authenticateServiceDisconnect);
+  app.get('/connected-accounts/:service/callback', authentication.authenticateServiceCallback); // oauth callback
+  app.delete('/connected-accounts/:service/disconnect/:collectiveId', authentication.authenticateServiceDisconnect);
 
   app.use(sanitizer()); // note: this break /webhooks/mailgun /graphiql
-
-  /**
-   * Homepage
-   */
-  app.get('/homepage', getHomePage); // This query takes 5s to execute!!!
 
   /**
    * Users.
    */
   app.get('/users/exists', required('email'), users.exists); // Checks the existence of a user based on email.
-
-  /**
-   * Create a payment method.
-   *
-   *  Let's assume for now a paymentMethod is linked to a user.
-   */
-  app.post('/v1/payment-methods', createPaymentMethod);
 
   /**
    * Separate route for uploading images to S3
@@ -208,9 +173,12 @@ export default app => {
   /**
    * Generic OAuth (ConnectedAccounts)
    */
-  app.get('/connected-accounts/:service(github)', aN.authenticateService); // backward compatibility
-  app.get('/connected-accounts/:service(github|twitter|meetup|stripe|paypal)/oauthUrl', aN.authenticateService);
-  app.get('/connected-accounts/:service/verify', aN.parseJwtNoExpiryCheck, connectedAccounts.verify);
+  app.get('/connected-accounts/:service(github)', authentication.authenticateService); // backward compatibility
+  app.get(
+    '/connected-accounts/:service(github|twitter|meetup|stripe|paypal)/oauthUrl',
+    authentication.authenticateService,
+  );
+  app.get('/connected-accounts/:service/verify', authentication.parseJwtNoExpiryCheck, connectedAccounts.verify);
 
   /* PayPal Payment Method Helpers */
   app.post('/services/paypal/create-payment', paypal.createPayment);
@@ -224,14 +192,27 @@ export default app => {
   /**
    * Github API - fetch all repositories using the user's access_token
    */
-  app.get('/github-repositories', connectedAccounts.fetchAllRepositories);
-  app.get('/github/repo', connectedAccounts.getRepo);
-  app.get('/github/orgMemberships', connectedAccounts.getOrgMemberships);
+  app.get('/github-repositories', connectedAccounts.fetchAllRepositories); // used in Frontend by createCollective "GitHub flow"
+  app.get('/github/repo', connectedAccounts.getRepo); // used in Frontend claimCollective
+  app.get('/github/orgMemberships', connectedAccounts.getOrgMemberships); // used in Frontend claimCollective
 
   /**
    * Hello Works API - Helloworks hits this endpoint when a document has been completed.
    */
   app.post('/helloworks/callback', helloworks.callback);
+
+  // Mount Hyperwatch API and Websocket
+  if (config.hyperwatch && config.hyperwatch.secret && parseToBoolean(config.hyperwatch.enabled) === true) {
+    // We need to setup express-ws here to make Hyperwatch's websocket works
+    expressWs(app);
+    const hyperwatchBasicAuth = expressBasicAuth({
+      users: { [config.hyperwatch.username]: config.hyperwatch.secret },
+      challenge: true,
+      realm: config.hyperwatch.realm,
+    });
+    app.use(config.hyperwatch.path, hyperwatchBasicAuth, hyperwatch.app.api);
+    app.use(config.hyperwatch.path, hyperwatchBasicAuth, hyperwatch.app.websocket);
+  }
 
   /**
    * Override default 404 handler to make sure to obfuscate api_key visible in URL
