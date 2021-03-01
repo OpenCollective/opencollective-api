@@ -1,8 +1,6 @@
 import serverStatus from 'express-server-status';
 import GraphHTTP from 'express-graphql';
-import curlify from 'request-as-curl';
 import multer from 'multer';
-import debug from 'debug';
 import config from 'config';
 
 import redis from 'redis';
@@ -12,11 +10,10 @@ import { formatError } from 'apollo-errors';
 import { get } from 'lodash';
 
 import * as connectedAccounts from './controllers/connectedAccounts';
-import getHomePage from './controllers/homepage';
 import uploadImage from './controllers/images';
 import { createPaymentMethod } from './controllers/paymentMethods';
 import * as users from './controllers/users';
-import stripeWebhook from './controllers/webhooks';
+import { stripeWebhook, transferwiseWebhook } from './controllers/webhooks';
 import * as email from './controllers/services/email';
 
 import required from './middleware/required_param';
@@ -29,7 +26,6 @@ import sanitizer from './middleware/sanitizer';
 import * as paypal from './paymentProviders/paypal/payment';
 
 import logger from './lib/logger';
-import { sanitizeForLogs } from './lib/utils';
 
 import graphqlSchemaV1 from './graphql/v1/schema';
 import graphqlSchemaV2 from './graphql/v2/schema';
@@ -93,24 +89,6 @@ export default app => {
       },
     });
     app.use('/graphql', rateLimiter);
-  }
-
-  if (process.env.DEBUG) {
-    app.use('*', (req, res, next) => {
-      const body = sanitizeForLogs(req.body || {});
-      debug('operation')(body.operationName, JSON.stringify(body.variables, null));
-      if (body.query) {
-        const query = body.query;
-        debug('params')(query);
-        delete body.query;
-      }
-      debug('params')('req.query', req.query);
-      debug('params')('req.body', JSON.stringify(body, null, '  '));
-      debug('params')('req.params', req.params);
-      debug('headers')('req.headers', req.headers);
-      debug('curl')('curl', curlify(req, req.body));
-      next();
-    });
   }
 
   /**
@@ -177,16 +155,12 @@ export default app => {
    * Webhooks that should bypass api key check
    */
   app.post('/webhooks/stripe', stripeWebhook); // when it gets a new subscription invoice
+  app.post('/webhooks/transferwise', transferwiseWebhook); // when it gets a new subscription invoice
   app.post('/webhooks/mailgun', email.webhook); // when receiving an email
   app.get('/connected-accounts/:service/callback', aN.authenticateServiceCallback); // oauth callback
   app.delete('/connected-accounts/:service/disconnect/:collectiveId', aN.authenticateServiceDisconnect);
 
   app.use(sanitizer()); // note: this break /webhooks/mailgun /graphiql
-
-  /**
-   * Homepage
-   */
-  app.get('/homepage', getHomePage); // This query takes 5s to execute!!!
 
   /**
    * Users.
@@ -224,9 +198,9 @@ export default app => {
   /**
    * Github API - fetch all repositories using the user's access_token
    */
-  app.get('/github-repositories', connectedAccounts.fetchAllRepositories);
-  app.get('/github/repo', connectedAccounts.getRepo);
-  app.get('/github/orgMemberships', connectedAccounts.getOrgMemberships);
+  app.get('/github-repositories', connectedAccounts.fetchAllRepositories); // used in Frontend by createCollective "GitHub flow"
+  app.get('/github/repo', connectedAccounts.getRepo); // used in Frontend claimCollective
+  app.get('/github/orgMemberships', connectedAccounts.getOrgMemberships); // used in Frontend claimCollective
 
   /**
    * Hello Works API - Helloworks hits this endpoint when a document has been completed.

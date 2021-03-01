@@ -33,6 +33,7 @@ import {
   UpdateType,
   ContributorRoleEnum,
   PaymentMethodBatchInfo,
+  PayoutMethodType,
 } from './types';
 
 import { OrderDirectionType, TransactionInterfaceType } from './TransactionInterface';
@@ -228,6 +229,40 @@ export const CollectivesStatsType = new GraphQLObjectType({
         },
       },
     };
+  },
+});
+
+export const PlanType = new GraphQLObjectType({
+  name: 'PlanType',
+  description: 'The name of the current plan and its characteristics.',
+  fields: {
+    name: {
+      type: GraphQLString,
+    },
+    hostedCollectives: {
+      type: GraphQLInt,
+    },
+    hostedCollectivesLimit: {
+      type: GraphQLInt,
+    },
+    addedFunds: {
+      type: GraphQLInt,
+    },
+    addedFundsLimit: {
+      type: GraphQLInt,
+    },
+    hostDashboard: {
+      type: GraphQLBoolean,
+    },
+    manualPayments: {
+      type: GraphQLBoolean,
+    },
+    bankTransfers: {
+      type: GraphQLInt,
+    },
+    bankTransfersLimit: {
+      type: GraphQLInt,
+    },
   },
 });
 
@@ -714,6 +749,7 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
       childCollectives: {
         type: new GraphQLList(CollectiveType),
         description: "Get all child collectives (with type=COLLECTIVE, doesn't return events)",
+        deprecationReason: '2020/01/08 - Sub-collectives are now handled through members',
       },
       paymentMethods: {
         type: new GraphQLList(PaymentMethodType),
@@ -746,6 +782,10 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
           },
         },
       },
+      payoutMethods: {
+        type: new GraphQLList(PayoutMethodType),
+        description: 'The list of payout methods that this collective can use to get paid',
+      },
       virtualCardsBatches: {
         type: new GraphQLList(PaymentMethodBatchInfo),
         description:
@@ -764,6 +804,7 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
         },
       },
       connectedAccounts: { type: new GraphQLList(ConnectedAccountType) },
+      plan: { type: PlanType },
     };
   },
 });
@@ -782,8 +823,9 @@ const CollectiveFields = () => {
         if (
           collective.isIncognito &&
           (!req.remoteUser || !req.remoteUser.isAdmin(collective.inTheContextOfCollectiveId))
-        )
+        ) {
           return {};
+        }
         return models.User.findByPk(collective.CreatedByUserId);
       },
     },
@@ -857,8 +899,17 @@ const CollectiveFields = () => {
     location: {
       type: LocationType,
       description: 'Name, address, lat, long of the location.',
-      resolve(collective) {
-        return collective.location;
+      resolve(collective, _, req) {
+        const publicAddressesCollectiveTypes = [types.COLLECTIVE, types.EVENT, types.ORGANIZATION];
+        if (publicAddressesCollectiveTypes.includes(collective.type)) {
+          return collective.location;
+        } else if (!req.remoteUser) {
+          return null;
+        } else if (req.remoteUser.isAdmin(collective.id)) {
+          return collective.location;
+        } else {
+          return req.loaders.Collective.privateInfos.load(collective).then(c => c.location);
+        }
       },
     },
     createdAt: {
@@ -1020,8 +1071,16 @@ const CollectiveFields = () => {
     isApproved: {
       description: 'Returns whether this collective is approved',
       type: GraphQLBoolean,
-      resolve(collective) {
-        return Boolean(collective.isActive && collective.approvedAt);
+      async resolve(collective, _, req) {
+        if (!collective.HostCollectiveId) {
+          return false;
+        } else if (collective.type === types.EVENT) {
+          const ParentCollectiveId = collective.ParentCollectiveId;
+          const parentCollective = ParentCollectiveId && (await req.loaders.Collective.byId.load(ParentCollectiveId));
+          return parentCollective && parentCollective.isApproved();
+        } else {
+          return collective.isApproved();
+        }
       },
     },
     isDeletable: {
@@ -1082,10 +1141,13 @@ const CollectiveFields = () => {
         const query = {
           limit: args.limit,
           offset: args.offset,
+          order: [['id', 'ASC']],
         };
 
         query.where = { CollectiveId: collective.id };
-        if (args.TierId) query.where.TierId = args.TierId;
+        if (args.TierId) {
+          query.where.TierId = args.TierId;
+        }
         const roles = args.roles || (args.role && [args.role]);
 
         if (roles && roles.length > 0) {
@@ -1382,9 +1444,15 @@ const CollectiveFields = () => {
       },
       resolve(collective, args) {
         const query = { where: {} };
-        if (args.status) query.where.status = args.status;
-        if (args.limit) query.limit = args.limit;
-        if (args.offset) query.offset = args.offset;
+        if (args.status) {
+          query.where.status = args.status;
+        }
+        if (args.limit) {
+          query.limit = args.limit;
+        }
+        if (args.offset) {
+          query.offset = args.offset;
+        }
         query.order = [['createdAt', 'DESC']];
         const getCollectiveIds = () => {
           // if is host, we get all the expenses across all the hosted collectives
@@ -1436,9 +1504,15 @@ const CollectiveFields = () => {
       },
       resolve(collective, args) {
         const query = { where: { CollectiveId: collective.id }, order: [['createdAt', 'DESC']] };
-        if (args.limit) query.limit = args.limit;
-        if (args.offset) query.offset = args.offset;
-        if (args.onlyPublishedUpdates) query.where.publishedAt = { [Op.ne]: null };
+        if (args.limit) {
+          query.limit = args.limit;
+        }
+        if (args.offset) {
+          query.offset = args.offset;
+        }
+        if (args.onlyPublishedUpdates) {
+          query.where.publishedAt = { [Op.ne]: null };
+        }
         return models.Update.findAll(query);
       },
     },
@@ -1467,9 +1541,15 @@ const CollectiveFields = () => {
           ],
         };
 
-        if (args.limit) query.limit = args.limit;
-        if (args.offset) query.offset = args.offset;
-        if (!args.includeInactive) query.where.isActive = true;
+        if (args.limit) {
+          query.limit = args.limit;
+        }
+        if (args.offset) {
+          query.offset = args.offset;
+        }
+        if (!args.includeInactive) {
+          query.where.isActive = true;
+        }
         if (!args.includePastEvents) {
           // Use midnight so we only mark events as passed the day after
           const today = new Date().setHours(0, 0, 0, 0);
@@ -1497,6 +1577,7 @@ const CollectiveFields = () => {
     childCollectives: {
       type: new GraphQLList(CollectiveType),
       description: "Get all child collectives (with type=COLLECTIVE, doesn't return events)",
+      deprecationReason: '2020/01/08 - Sub-collectives are now handled through members',
       resolve(collective, _, req) {
         return req.loaders.Collective.childCollectives.load(collective.id);
       },
@@ -1585,6 +1666,17 @@ const CollectiveFields = () => {
         return paymentMethods;
       },
     },
+    payoutMethods: {
+      type: new GraphQLList(PayoutMethodType),
+      description: 'The list of payout methods that this collective can use to get paid',
+      async resolve(collective, _, req) {
+        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+          return null;
+        } else {
+          return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
+        }
+      },
+    },
     virtualCardsBatches: {
       type: new GraphQLList(PaymentMethodBatchInfo),
       description:
@@ -1661,6 +1753,12 @@ const CollectiveFields = () => {
         return req.loaders.Collective.connectedAccounts.load(collective.id);
       },
     },
+    plan: {
+      type: PlanType,
+      resolve(collective) {
+        return collective.getPlan();
+      },
+    },
     stats: {
       type: CollectiveStatsType,
       resolve(collective) {
@@ -1703,7 +1801,9 @@ export const UserCollectiveType = new GraphQLObjectType({
       email: {
         type: GraphQLString,
         resolve(userCollective, args, req) {
-          if (!req.remoteUser) return null;
+          if (!req.remoteUser) {
+            return null;
+          }
           return (
             userCollective && req.loaders.getUserDetailsByCollectiveId.load(userCollective.id).then(user => user.email)
           );
@@ -1711,10 +1811,12 @@ export const UserCollectiveType = new GraphQLObjectType({
       },
       applications: {
         type: new GraphQLList(ApplicationType),
-        resolve(userCollective) {
-          return models.Application.findAll({
-            where: { CreatedByUserId: userCollective.CreatedByUserId },
-          });
+        resolve(userCollective, _, req) {
+          if (req.remoteUser && req.remoteUser.isAdmin(userCollective.id)) {
+            return models.Application.findAll({
+              where: { CollectiveId: userCollective.id },
+            });
+          }
         },
       },
     };
@@ -1731,7 +1833,9 @@ export const OrganizationCollectiveType = new GraphQLObjectType({
       email: {
         type: GraphQLString,
         async resolve(orgCollective, args, req) {
-          if (!req.remoteUser) return null;
+          if (!req.remoteUser) {
+            return null;
+          }
           return (
             orgCollective && req.loaders.getOrgDetailsByCollectiveId.load(orgCollective.id).then(user => user.email)
           );

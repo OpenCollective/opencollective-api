@@ -4,7 +4,7 @@ import config from 'config';
  * Model.
  */
 export default (Sequelize, DataTypes) => {
-  const supportedServices = ['paypal', 'stripe', 'github', 'twitter', 'meetup'];
+  const supportedServices = ['paypal', 'stripe', 'github', 'twitter', 'meetup', 'transferwise'];
 
   const ConnectedAccount = Sequelize.define(
     'ConnectedAccount',
@@ -27,8 +27,8 @@ export default (Sequelize, DataTypes) => {
       token: DataTypes.STRING,
       refreshToken: DataTypes.STRING, // used for Stripe
 
-      data: DataTypes.JSON, // Extra service provider specific data, e.g. Stripe: { publishableKey, scope, tokenType }
-      settings: DataTypes.JSON, // configuration settings, e.g. defining templates for auto-tweeting
+      data: DataTypes.JSONB, // Extra service provider specific data, e.g. Stripe: { publishableKey, scope, tokenType }
+      settings: DataTypes.JSONB, // configuration settings, e.g. defining templates for auto-tweeting
 
       createdAt: {
         type: DataTypes.DATE,
@@ -64,8 +64,6 @@ export default (Sequelize, DataTypes) => {
       },
     },
   );
-
-  ConnectedAccount.schema('public');
 
   ConnectedAccount.associate = m => {
     ConnectedAccount.belongsTo(m.Collective, {

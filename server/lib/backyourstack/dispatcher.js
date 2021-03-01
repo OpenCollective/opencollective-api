@@ -1,5 +1,5 @@
 import fetch from 'node-fetch';
-import uuidV4 from 'uuid/v4';
+import { v4 as uuid } from 'uuid';
 import debugLib from 'debug';
 import moment from 'moment';
 import { map } from 'bluebird';
@@ -9,6 +9,8 @@ import models from '../../models';
 import status from '../../constants/order_status';
 import activities from '../../constants/activities';
 import * as paymentsLib from '../payments';
+
+const debug = debugLib('backyourstack');
 
 export function needsDispatching(nextDispatchDate) {
   const needs = moment(nextDispatchDate).isSameOrBefore();
@@ -52,7 +54,7 @@ async function createPaymentMethod(originalCreditTransaction) {
     name: 'BackYourStack dispatch Payment Method',
     service: 'opencollective',
     type: 'prepaid',
-    uuid: uuidV4(),
+    uuid: uuid(),
     data: {
       HostCollectiveId: originalCreditTransaction.HostCollectiveId,
       hidden: true,
@@ -61,7 +63,6 @@ async function createPaymentMethod(originalCreditTransaction) {
 }
 
 export async function dispatchFunds(order) {
-  const debug = debugLib('dispatch_prepaid_subscription');
   // Amount shareable amongst dependencies
   const transaction = await models.Transaction.findOne({
     where: { OrderId: order.id, type: 'CREDIT' },

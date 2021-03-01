@@ -37,7 +37,7 @@ export default (Sequelize, DataTypes) => {
 
       chargeNumber: DataTypes.INTEGER,
 
-      data: DataTypes.JSON,
+      data: DataTypes.JSONB,
 
       stripeSubscriptionId: DataTypes.STRING,
 
@@ -49,8 +49,6 @@ export default (Sequelize, DataTypes) => {
       paranoid: true,
     },
   );
-
-  Subscription.schema('public');
 
   Subscription.prototype.activate = function() {
     this.isActive = true;

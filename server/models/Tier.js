@@ -1,6 +1,6 @@
 import Temporal from 'sequelize-temporal';
 import Promise from 'bluebird';
-import _ from 'lodash';
+import { defaults } from 'lodash';
 import debugLib from 'debug';
 import slugify from 'limax';
 import { Op } from 'sequelize';
@@ -10,7 +10,7 @@ import { maxInteger } from '../constants/math';
 import { capitalize, days, formatCurrency, strip_tags } from '../lib/utils';
 import { isSupportedVideoProvider, supportedVideoProviders } from '../lib/validators';
 
-const debug = debugLib('tier');
+const debug = debugLib('models:Tier');
 
 export default function(Sequelize, DataTypes) {
   const { models } = Sequelize;
@@ -197,11 +197,11 @@ export default function(Sequelize, DataTypes) {
       },
 
       customFields: {
-        type: DataTypes.JSON,
+        type: DataTypes.JSONB,
       },
 
       data: {
-        type: DataTypes.JSON,
+        type: DataTypes.JSONB,
       },
 
       startsAt: {
@@ -276,8 +276,6 @@ export default function(Sequelize, DataTypes) {
     },
   );
 
-  Tier.schema('public');
-
   /**
    * Instance Methods
    */
@@ -297,10 +295,18 @@ export default function(Sequelize, DataTypes) {
         createdAt: { [Op.lte]: until },
       },
     }).then(membership => {
-      if (!membership) return false;
-      if (!this.interval) return true;
-      if (this.interval === 'month' && days(membership.createdAt, until) <= 31) return true;
-      if (this.interval === 'year' && days(membership.createdAt, until) <= 365) return true;
+      if (!membership) {
+        return false;
+      }
+      if (!this.interval) {
+        return true;
+      }
+      if (this.interval === 'month' && days(membership.createdAt, until) <= 31) {
+        return true;
+      }
+      if (this.interval === 'year' && days(membership.createdAt, until) <= 365) {
+        return true;
+      }
       return models.Order.findOne({
         where: {
           CollectiveId: this.CollectiveId,
@@ -308,7 +314,9 @@ export default function(Sequelize, DataTypes) {
           TierId: this.id,
         },
       }).then(order => {
-        if (!order) return false;
+        if (!order) {
+          return false;
+        }
         return models.Transaction.findOne({
           where: { OrderId: order.id, CollectiveId: this.CollectiveId },
           order: [['createdAt', 'DESC']],
@@ -317,8 +325,12 @@ export default function(Sequelize, DataTypes) {
             debug('No transaction found for order', order.dataValues);
             return false;
           }
-          if (this.interval === 'month' && days(transaction.createdAt, until) <= 31) return true;
-          if (this.interval === 'year' && days(transaction.createdAt, until) <= 365) return true;
+          if (this.interval === 'month' && days(transaction.createdAt, until) <= 31) {
+            return true;
+          }
+          if (this.interval === 'year' && days(transaction.createdAt, until) <= 365) {
+            return true;
+          }
           return false;
         });
       });
@@ -356,7 +368,7 @@ export default function(Sequelize, DataTypes) {
    * Class Methods
    */
   Tier.createMany = (tiers, defaultValues = {}) => {
-    return Promise.map(tiers, t => Tier.create(_.defaults({}, t, defaultValues)), { concurrency: 1 });
+    return Promise.map(tiers, t => Tier.create(defaults({}, t, defaultValues)), { concurrency: 1 });
   };
 
   /**

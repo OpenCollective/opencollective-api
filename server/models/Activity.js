@@ -6,7 +6,7 @@ export default function(Sequelize, DataTypes) {
     {
       type: DataTypes.STRING,
 
-      data: DataTypes.JSON,
+      data: DataTypes.JSONB,
 
       createdAt: {
         type: DataTypes.DATE,
@@ -23,8 +23,6 @@ export default function(Sequelize, DataTypes) {
       },
     },
   );
-
-  Activity.schema('public');
 
   return Activity;
 }
