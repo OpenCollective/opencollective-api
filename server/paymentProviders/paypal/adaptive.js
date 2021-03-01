@@ -1,7 +1,7 @@
 import paypalAdaptive from './adaptiveGateway';
 import { get, isNil } from 'lodash';
 import config from 'config';
-import uuidv1 from 'uuid/v1';
+import { v1 as uuid } from 'uuid';
 import logger from '../../lib/logger';
 import errors from '../../lib/errors';
 
@@ -14,7 +14,7 @@ import errors from '../../lib/errors';
  * Confirms that the preapprovalKey has been approved by PayPal
  * and updates the paymentMethod
  */
-const getPreapprovalDetailsAndUpdatePaymentMethod = async function(paymentMethod) {
+const getPreapprovalDetailsAndUpdatePaymentMethod = async function (paymentMethod) {
   if (!paymentMethod) {
     return Promise.reject(new Error('No payment method provided to getPreapprovalDetailsAndUpdatePaymentMethod'));
   }
@@ -49,7 +49,7 @@ export default {
   },
 
   fees: async ({ amount, currency, host }) => {
-    if (host.currency === currency)
+    if (host.currency === currency) {
       /*
         Paypal fees can vary from 2.9% + $0.30 to as much as 5% (maybe higher)
         with 2.9%, we saw a collective go in negative. Changing minimum to 3.9% to
@@ -57,7 +57,7 @@ export default {
         able to be paid out)
        */
       return 0.039 * amount + 30;
-    else {
+    } else {
       return 0.05 * amount + 30;
     }
   },
@@ -75,7 +75,7 @@ export default {
       currencyCode: expense.currency,
       feesPayer: 'SENDER',
       memo: `Reimbursement from ${collective.name}: ${expense.description}`,
-      trackingId: [uuidv1().substr(0, 8), expense.id].join(':'),
+      trackingId: [uuid().substr(0, 8), expense.id].join(':'),
       preapprovalKey,
       returnUrl: `${expenseUrl}?result=success&service=paypal`,
       cancelUrl: `${expenseUrl}?result=cancel&service=paypal`,

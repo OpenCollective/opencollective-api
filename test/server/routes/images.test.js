@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+import config from 'config';
 import request from 'supertest';
 import fetch from 'node-fetch';
 import { expect } from 'chai';
@@ -12,8 +13,14 @@ import * as utils from '../../utils';
 const application = utils.data('application');
 const userData = utils.data('user1');
 
-describe('images.routes.test.js', () => {
+describe('server/routes/images', () => {
   let user;
+
+  before(function () {
+    if (!config.aws.s3.key) {
+      this.skip();
+    }
+  });
 
   beforeEach(() => utils.resetTestDB());
 

@@ -1,7 +1,15 @@
 import roles from '../constants/roles';
 import { days } from '../lib/utils';
+import { invalidateContributorsCache } from '../lib/contributors';
 
-export default function(Sequelize, DataTypes) {
+export default function (Sequelize, DataTypes) {
+  const invalidateContributorsCacheUsingInstance = instance => {
+    if (instance.role !== roles.FOLLOWER) {
+      invalidateContributorsCache(instance.CollectiveId);
+    }
+    return null;
+  };
+
   const Member = Sequelize.define(
     'Member',
     {
@@ -59,19 +67,8 @@ export default function(Sequelize, DataTypes) {
         defaultValue: 'member',
         validate: {
           isIn: {
-            args: [
-              [
-                roles.HOST,
-                roles.ADMIN,
-                roles.MEMBER,
-                roles.BACKER,
-                roles.CONTRIBUTOR,
-                roles.ATTENDEE,
-                roles.FOLLOWER,
-                roles.FUNDRAISER,
-              ],
-            ],
-            msg: 'Must be host, admin, member, backer, contributor, attendee, fundraiser or follower',
+            args: [Object.values(roles)],
+            msg: `Must be one of ${Object.values(roles)}`,
           },
         },
       },
@@ -121,20 +118,30 @@ export default function(Sequelize, DataTypes) {
           };
         },
       },
+      hooks: {
+        afterCreate: instance => invalidateContributorsCacheUsingInstance(instance),
+        afterUpdate: instance => invalidateContributorsCacheUsingInstance(instance),
+      },
     },
   );
-
-  Member.schema('public');
 
   /**
    * Returns false if member is part of a tier with an interval and last donation is out of interval
    * @param {*} member { tier: { interval }, lastDonation}
    */
   Member.isActive = member => {
-    if (!member.tier || !member.tier.interval) return true;
-    if (!member.lastDonation) return false;
-    if (member.tier.interval === 'month' && days(new Date(member.lastDonation)) <= 31) return true;
-    if (member.tier.interval === 'year' && days(new Date(member.lastDonation)) <= 365) return true;
+    if (!member.tier || !member.tier.interval) {
+      return true;
+    }
+    if (!member.lastDonation) {
+      return false;
+    }
+    if (member.tier.interval === 'month' && days(new Date(member.lastDonation)) <= 31) {
+      return true;
+    }
+    if (member.tier.interval === 'year' && days(new Date(member.lastDonation)) <= 365) {
+      return true;
+    }
     return false;
   };
 

@@ -14,7 +14,7 @@ const userData = utils.data('user1');
 
 const { User } = models;
 
-describe('user.model.test.js', () => {
+describe('server/models/User', () => {
   beforeEach(() => utils.resetTestDB());
 
   /**
@@ -110,7 +110,6 @@ describe('user.model.test.js', () => {
     it('successfully get a user, user.info and user.public return correct information', done => {
       User.findOne({}).then(user => {
         expect(user.info).to.have.property('email');
-        expect(user.info).to.have.property('paypalEmail');
         expect(user.public).to.not.have.property('email');
         expect(user.public).to.not.have.property('paypalEmail');
         done();
