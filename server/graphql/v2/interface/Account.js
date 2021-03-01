@@ -23,11 +23,16 @@ import {
   TransactionType,
 } from '../enum';
 
-import { ChronologicalOrder } from '../input/ChronologicalOrder';
+import { ChronologicalOrderInput } from '../input/ChronologicalOrderInput';
 
 import { NotFound } from '../../errors';
 
 import models, { Op } from '../../../models';
+import { ConversationCollection } from '../collection/ConversationCollection';
+import { TagStats } from '../object/TagStats';
+import { TransferWise } from '../object/TransferWise';
+import PayoutMethod from '../object/PayoutMethod';
+import { Location } from '../object/Location';
 
 const accountFieldsDefinition = () => ({
   // _internal_id: {
@@ -52,6 +57,9 @@ const accountFieldsDefinition = () => ({
   description: {
     type: GraphQLString,
   },
+  tags: {
+    type: new GraphQLList(GraphQLString),
+  },
   website: {
     type: GraphQLString,
   },
@@ -62,6 +70,9 @@ const accountFieldsDefinition = () => ({
     type: GraphQLString,
   },
   currency: {
+    type: GraphQLString,
+  },
+  expensePolicy: {
     type: GraphQLString,
   },
   imageUrl: {
@@ -118,7 +129,7 @@ const accountFieldsDefinition = () => ({
         description: 'Type of transaction (DEBIT/CREDIT)',
       },
       orderBy: {
-        type: ChronologicalOrder,
+        type: ChronologicalOrderInput,
       },
     },
   },
@@ -131,12 +142,51 @@ const accountFieldsDefinition = () => ({
       status: { type: new GraphQLList(OrderStatus) },
       tierSlug: { type: GraphQLString },
       orderBy: {
-        type: ChronologicalOrder,
+        type: ChronologicalOrderInput,
       },
     },
   },
   settings: {
     type: GraphQLJSON,
+  },
+  conversations: {
+    type: ConversationCollection,
+    args: {
+      limit: { type: GraphQLInt },
+      offset: { type: GraphQLInt },
+      tag: {
+        type: GraphQLString,
+        description: 'Only return conversations matching this tag',
+      },
+    },
+  },
+  conversationsTags: {
+    type: new GraphQLList(TagStats),
+    description: "Returns conversation's tags for collective sorted by popularity",
+    args: {
+      limit: { type: GraphQLInt, defaultValue: 30 },
+    },
+  },
+  transferwise: {
+    type: TransferWise,
+    async resolve(collective) {
+      const connectedAccount = await models.ConnectedAccount.findOne({
+        where: { service: 'transferwise', CollectiveId: collective.id },
+      });
+      if (connectedAccount) {
+        return collective;
+      } else {
+        return null;
+      }
+    },
+  },
+  payoutMethods: {
+    type: new GraphQLList(PayoutMethod),
+    description: 'The list of payout methods that this collective can use to get paid',
+  },
+  location: {
+    type: Location,
+    description: 'The address associated to this account. This field is always public for collectives and events.',
   },
 });
 
@@ -153,8 +203,8 @@ const accountTransactions = {
     limit: { type: GraphQLInt, defaultValue: 100 },
     offset: { type: GraphQLInt, defaultValue: 0 },
     orderBy: {
-      type: ChronologicalOrder,
-      defaultValue: ChronologicalOrder.defaultValue,
+      type: ChronologicalOrderInput,
+      defaultValue: ChronologicalOrderInput.defaultValue,
     },
   },
   async resolve(collective, args) {
@@ -184,8 +234,8 @@ const accountOrders = {
     status: { type: new GraphQLList(OrderStatus) },
     tierSlug: { type: GraphQLString },
     orderBy: {
-      type: ChronologicalOrder,
-      defaultValue: ChronologicalOrder.defaultValue,
+      type: ChronologicalOrderInput,
+      defaultValue: ChronologicalOrderInput.defaultValue,
     },
   },
   async resolve(collective, args) {
@@ -265,6 +315,52 @@ export const AccountFields = {
   ...IsMemberOfFields,
   transactions: accountTransactions,
   orders: accountOrders,
+  conversations: {
+    type: ConversationCollection,
+    args: {
+      limit: { type: GraphQLInt },
+      offset: { type: GraphQLInt },
+      tag: {
+        type: GraphQLString,
+        description: 'Only return conversations matching this tag',
+      },
+    },
+    async resolve(collective, { limit, offset, tag }) {
+      const query = { where: { CollectiveId: collective.id }, order: [['createdAt', 'DESC']] };
+      if (limit) {
+        query.limit = limit;
+      }
+      if (offset) {
+        query.offset = offset;
+      }
+      if (tag) {
+        query.where.tags = { [Op.contains]: [tag] };
+      }
+      const result = await models.Conversation.findAndCountAll(query);
+      return { nodes: result.rows, total: result.count, limit, offset };
+    },
+  },
+  conversationsTags: {
+    type: new GraphQLList(TagStats),
+    description: "Returns conversation's tags for collective sorted by popularity",
+    args: {
+      limit: { type: GraphQLInt, defaultValue: 30 },
+    },
+    async resolve(collective, _, { limit }) {
+      return models.Conversation.getMostPopularTagsForCollective(collective.id, limit);
+    },
+  },
+  payoutMethods: {
+    type: new GraphQLList(PayoutMethod),
+    description: 'The list of payout methods that this collective can use to get paid',
+    async resolve(collective, _, req) {
+      if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        return null;
+      } else {
+        return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
+      }
+    },
+  },
 };
 
 export default Account;

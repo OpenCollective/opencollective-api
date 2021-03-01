@@ -1,5 +1,5 @@
 import moment from 'moment';
-import uuidv4 from 'uuid/v4';
+import { v4 as uuid } from 'uuid';
 import { get, times, isEmpty } from 'lodash';
 import config from 'config';
 import sanitize from 'sanitize-html';
@@ -102,17 +102,24 @@ async function processOrder(order) {
   }
   // finding Source Payment method and update order payment method properties
   const sourcePaymentMethod = await models.PaymentMethod.findByPk(paymentMethod.SourcePaymentMethodId);
-  // modifying original order to then process the order of the source payment method
-  order.PaymentMethodId = sourcePaymentMethod.id;
-  order.paymentMethod = sourcePaymentMethod;
+
   // finding the payment provider lib to execute the order
   const sourcePaymentMethodProvider = libpayments.findPaymentMethodProvider(sourcePaymentMethod);
 
-  // gets the Credit transaction generated
-  let creditTransaction = await sourcePaymentMethodProvider.processOrder(order);
-  // undo modification of original order after processing the source payment method order
-  order.PaymentMethodId = paymentMethod.id;
-  order.paymentMethod = paymentMethod;
+  let creditTransaction = null;
+  try {
+    // modifying original order to then process the order of the source payment method
+    order.PaymentMethodId = sourcePaymentMethod.id;
+    order.paymentMethod = sourcePaymentMethod;
+    // gets the Credit transaction generated
+    creditTransaction = await sourcePaymentMethodProvider.processOrder(order);
+  } finally {
+    // undo modification of original order after processing the source payment method order
+    await order.update({ PaymentMethodId: paymentMethod.id });
+    order.PaymentMethodId = paymentMethod.id;
+    order.paymentMethod = paymentMethod;
+  }
+
   // gets the Debit transaction generated through the TransactionGroup field.
   const updatedTransactions = await models.Transaction.update(
     {
@@ -182,7 +189,9 @@ async function create(args, remoteUser) {
  * @param {integer} count
  */
 export async function bulkCreateVirtualCards(args, remoteUser, count) {
-  if (!count) return [];
+  if (!count) {
+    return [];
+  }
 
   // Check rate limit
   const totalAmount = (args.amount || args.monthlyLimitPerMember) * count;
@@ -411,7 +420,7 @@ function getCreateParams(args, collective, sourcePaymentMethod, remoteUser) {
     limitedToTags: args.limitedToTags,
     limitedToCollectiveIds: isEmpty(args.limitedToCollectiveIds) ? null : args.limitedToCollectiveIds,
     limitedToHostCollectiveIds: isEmpty(args.limitedToHostCollectiveIds) ? null : args.limitedToHostCollectiveIds,
-    uuid: uuidv4(),
+    uuid: uuid(),
     service: 'opencollective',
     type: 'virtualcard',
     createdAt: new Date(),

@@ -1,18 +1,11 @@
-/*
- * Create a notification to receive certain type of events
- *
- * Notification.create({
- *  UserId, CollectiveId, type = 'collective.transaction.created', channel='email'
- * })
- * Notification.unsubscribe(); // To disable a notification
- */
 import Promise from 'bluebird';
-import _ from 'lodash';
+import { defaults } from 'lodash';
 import debugLib from 'debug';
 import { Op } from 'sequelize';
+
 import channels from '../constants/channels';
 
-const debug = debugLib('notification');
+const debug = debugLib('models:Notification');
 
 export default function(Sequelize, DataTypes) {
   const { models } = Sequelize;
@@ -95,7 +88,7 @@ export default function(Sequelize, DataTypes) {
   };
 
   Notification.createMany = (notifications, defaultValues) => {
-    return Promise.map(notifications, u => Notification.create(_.defaults({}, u, defaultValues))).catch(console.error);
+    return Promise.map(notifications, u => Notification.create(defaults({}, u, defaultValues))).catch(console.error);
   };
 
   /**
@@ -111,7 +104,9 @@ export default function(Sequelize, DataTypes) {
       models.Collective.findOne({
         where: { slug: mailinglist, type: 'EVENT' },
       }).then(event => {
-        if (!event) throw new Error('mailinglist_not_found');
+        if (!event) {
+          throw new Error('mailinglist_not_found');
+        }
         debug('getMembersForEvent', event.slug);
         return event.getMembers();
       });
@@ -119,7 +114,9 @@ export default function(Sequelize, DataTypes) {
     debug('getSubscribers', findByAttribute, collectiveSlug, 'found:', collective.slug, 'mailinglist:', mailinglist);
     const excludeUnsubscribed = members => {
       debug('excludeUnsubscribed: need to filter', members && members.length, 'members');
-      if (!members || members.length === 0) return [];
+      if (!members || members.length === 0) {
+        return [];
+      }
 
       return Notification.getUnsubscribersUserIds(`mailinglist.${mailinglist}`, collective.id).then(excludeIds => {
         debug('excluding', excludeIds.length, 'members');
@@ -144,7 +141,9 @@ export default function(Sequelize, DataTypes) {
   Notification.getSubscribersUsers = async (collectiveSlug, mailinglist) => {
     debug('getSubscribersUsers', collectiveSlug, mailinglist);
     const getUsers = memberships => {
-      if (!memberships || memberships.length === 0) return [];
+      if (!memberships || memberships.length === 0) {
+        return [];
+      }
       return models.User.findAll({
         where: {
           CollectiveId: { [Op.in]: memberships.map(m => m.MemberCollectiveId) },
@@ -158,7 +157,9 @@ export default function(Sequelize, DataTypes) {
   Notification.getSubscribersCollectives = async (collectiveSlug, mailinglist) => {
     debug('getSubscribersCollectives', collectiveSlug, mailinglist);
     const getCollectives = memberships => {
-      if (!memberships || memberships.length === 0) return [];
+      if (!memberships || memberships.length === 0) {
+        return [];
+      }
       return models.Collective.findAll({
         where: {
           id: { [Op.in]: memberships.map(m => m.MemberCollectiveId) },

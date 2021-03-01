@@ -1,12 +1,15 @@
 import { expect } from 'chai';
-import models from '../../../server/models';
+import models, { Op } from '../../../server/models';
 import * as utils from '../../utils';
 import sinon from 'sinon';
 import emailLib from '../../../server/lib/email';
+import { roles } from '../../../server/constants';
+import plans from '../../../server/constants/plans';
+import { fakeUser } from '../../test-helpers/fake-data';
 
 const { Transaction, Collective, User } = models;
 
-describe('Collective model', () => {
+describe('server/models/Collective', () => {
   let collective = {},
     opensourceCollective,
     user1,
@@ -98,6 +101,7 @@ describe('Collective model', () => {
       type: 'CREDIT',
       CreatedByUserId: 2,
       FromCollectiveId: 2,
+      platformFeeInHostCurrency: 0,
     },
   ];
 
@@ -134,6 +138,7 @@ describe('Collective model', () => {
           amount: 1000,
           currency: 'USD',
           UserId: user1.id,
+          FromCollectiveId: user1.CollectiveId,
           lastEditedById: user1.id,
           incurredAt: transactions[0].createdAt,
           createdAt: transactions[0].createdAt,
@@ -146,6 +151,7 @@ describe('Collective model', () => {
           amount: 15000,
           currency: 'USD',
           UserId: user1.id,
+          FromCollectiveId: user1.CollectiveId,
           lastEditedById: user1.id,
           incurredAt: transactions[1].createdAt,
           createdAt: transactions[1].createdAt,
@@ -158,6 +164,7 @@ describe('Collective model', () => {
           amount: 60100,
           currency: 'USD',
           UserId: user2.id,
+          FromCollectiveId: user2.CollectiveId,
           lastEditedById: user2.id,
           incurredAt: transactions[1].createdAt,
           createdAt: transactions[1].createdAt,
@@ -208,6 +215,32 @@ describe('Collective model', () => {
       expect(collective.slug).to.contain('incognito-');
       expect(collective.slug.length).to.equal(18);
     });
+  });
+
+  it('prevents collective creation and limit user if spam is detected', async () => {
+    const user = await fakeUser();
+    const spamCollectiveData = {
+      name: 'BUY MY KETO',
+      website: 'https://supplementslove.com/buy-stuff',
+      CreatedByUserId: user.id,
+    };
+
+    // Should prevent collective creation
+    await expect(models.Collective.create(spamCollectiveData)).to.be.eventually.rejectedWith(
+      Error,
+      'Collective creation failed',
+    );
+
+    // Should limit user account
+    await user.reload();
+    expect(user.data.features.ALL).to.be.false;
+
+    // User should not be able to create any new collectives
+    const legitCollectiveData = { name: 'Legit project', CreatedByUserId: user.id };
+    await expect(models.Collective.create(legitCollectiveData)).to.be.eventually.rejectedWith(
+      Error,
+      "You're not authorized to create new collectives at the moment.",
+    );
   });
 
   it('does not create collective with a blacklisted slug', () => {
@@ -287,6 +320,7 @@ describe('Collective model', () => {
     it('fails to add another host', async () => {
       try {
         await collective.addHost(newHost, user1);
+        throw new Error("Didn't throw expected error!");
       } catch (e) {
         expect(e.message).to.contain('This collective already has a host');
       }
@@ -295,8 +329,18 @@ describe('Collective model', () => {
     it('fails to change host if there is a pending balance', async () => {
       try {
         await collective.changeHost();
+        throw new Error("Didn't throw expected error!");
       } catch (e) {
         expect(e.message).to.contain('Unable to change host: you still have a balance of $965');
+      }
+    });
+
+    it('fails to deactivate as host if it is hosting any collective', async () => {
+      try {
+        await hostUser.collective.deactivateAsHost();
+        throw new Error("Didn't throw expected error!");
+      } catch (e) {
+        expect(e.message).to.contain("You can't deactivate hosting while still hosting");
       }
     });
 
@@ -343,6 +387,18 @@ describe('Collective model', () => {
       expect(applyArgs).to.exist;
       expect(applyArgs[0]).to.equal(user1.email);
       expect(applyArgs[3].from).to.equal('hello@wwcode.opencollective.com');
+    });
+
+    it('returns active plan', async () => {
+      const plan = await hostUser.collective.getPlan();
+
+      expect(plan).to.deep.equal({
+        name: 'default',
+        hostedCollectives: 2,
+        addedFunds: 0,
+        bankTransfers: 0,
+        ...plans.default,
+      });
     });
   });
 
@@ -393,7 +449,9 @@ describe('Collective model', () => {
     collective.getBalance(until).then(balance => {
       let sum = 0;
       transactions.map(t => {
-        if (t.createdAt < until) sum += t.netAmountInCollectiveCurrency;
+        if (t.createdAt < until) {
+          sum += t.netAmountInCollectiveCurrency;
+        }
       });
       expect(balance).to.equal(sum);
       done();
@@ -410,7 +468,9 @@ describe('Collective model', () => {
     collective.getBackersCount({ until }).then(count => {
       const backers = {};
       transactions.map(t => {
-        if (t.amount > 0 && t.createdAt < until) backers[t.CreatedByUserId] = t.amount;
+        if (t.amount > 0 && t.createdAt < until) {
+          backers[t.CreatedByUserId] = t.amount;
+        }
       });
       expect(count).to.equal(Object.keys(backers).length);
       done();
@@ -420,7 +480,9 @@ describe('Collective model', () => {
   it('gets all the expenses', done => {
     let totalExpenses = 0;
     transactions.map(t => {
-      if (t.netAmountInCollectiveCurrency < 0) totalExpenses++;
+      if (t.netAmountInCollectiveCurrency < 0) {
+        totalExpenses++;
+      }
     });
 
     collective
@@ -442,7 +504,9 @@ describe('Collective model', () => {
     let totalExpenses = 0;
 
     transactions.map(t => {
-      if (t.netAmountInCollectiveCurrency < 0 && t.createdAt > startDate && t.createdAt < endDate) totalExpenses++;
+      if (t.netAmountInCollectiveCurrency < 0 && t.createdAt > startDate && t.createdAt < endDate) {
+        totalExpenses++;
+      }
     });
 
     collective
@@ -592,65 +656,91 @@ describe('Collective model', () => {
 
   describe('members', () => {
     it('gets email addresses of admins', async () => {
-      await collective.editMembers([
-        {
-          id: user1.id,
-          MemberCollectiveId: user1.CollectiveId,
-          role: 'ADMIN',
-        },
-        {
-          role: 'ADMIN',
-          member: {
-            name: 'Etienne Dupont',
-            email: 'etiennedupont@email.com',
+      let emails = await collective.getEmails();
+      expect(emails.length).to.equal(0);
+
+      await collective.editMembers(
+        [
+          {
+            role: 'ADMIN',
+            member: {
+              id: user1.CollectiveId,
+            },
           },
-        },
-      ]);
-      const emails = await collective.getEmails();
+          {
+            role: 'ADMIN',
+            member: {
+              id: user2.CollectiveId,
+            },
+          },
+        ],
+        { remoteUser: user1 },
+      );
+
+      // Invitation needs to be approved before admins can access the email
+      const invitation = await models.MemberInvitation.findOne({
+        where: { CollectiveId: collective.id, MemberCollectiveId: user1.CollectiveId, role: 'ADMIN' },
+      });
+      await invitation.accept();
+
+      emails = await collective.getEmails();
+      expect(emails.length).to.equal(1);
+
+      // Approve user 2
+      const invitation2 = await models.MemberInvitation.findOne({
+        where: { CollectiveId: collective.id, MemberCollectiveId: user2.CollectiveId, role: 'ADMIN' },
+      });
+      await invitation2.accept();
+
+      emails = await collective.getEmails();
       expect(emails.length).to.equal(2);
     });
 
-    it('add/update/remove members', done => {
-      collective
-        .editMembers([
+    it('add/update/remove members', async () => {
+      const loadCoreContributors = () => {
+        return models.Member.findAll({
+          where: { CollectiveId: collective.id, role: { [Op.in]: [roles.ADMIN, roles.MEMBER] } },
+        });
+      };
+
+      let members = await collective.editMembers(
+        [
           {
-            id: user1.id,
-            MemberCollectiveId: user1.CollectiveId,
             role: 'ADMIN',
+            member: {
+              id: user1.CollectiveId,
+            },
           },
           {
             role: 'MEMBER',
             member: {
-              name: 'Etienne Dupont',
-              email: 'etiennedupont@email.com',
+              id: user2.CollectiveId,
             },
           },
-        ])
-        .then(members => {
-          expect(members.length).to.equal(2);
-          expect(members[0].role).to.equal('ADMIN');
-          expect(members[1].role).to.equal('MEMBER');
-          done();
-        });
-    });
+        ],
+        { remoteUser: user1 },
+      );
 
-    it('add an existing user to a collective by email address', done => {
-      collective
-        .editMembers([
-          {
-            role: 'ADMIN',
-            member: {
-              name: user1.name,
-              email: user1.email,
-            },
-          },
-        ])
-        .then(members => {
-          expect(members).to.have.length(1);
-          expect(members[0].role).to.equal('ADMIN');
-          expect(members[0].MemberCollectiveId).to.equal(user1.CollectiveId);
-          done();
-        });
+      expect(members.length).to.equal(0);
+
+      const invitation = await models.MemberInvitation.findOne({
+        where: { CollectiveId: collective.id, MemberCollectiveId: user1.CollectiveId, role: 'ADMIN' },
+      });
+      await invitation.accept();
+
+      members = await loadCoreContributors();
+      expect(members.length).to.equal(1);
+      expect(members[0].role).to.equal('ADMIN');
+
+      const invitation2 = await models.MemberInvitation.findOne({
+        where: { CollectiveId: collective.id, MemberCollectiveId: user2.CollectiveId, role: 'MEMBER' },
+      });
+      await invitation2.accept();
+
+      members = await loadCoreContributors();
+      expect(members.length).to.equal(2);
+      expect(members.find(m => m.MemberCollectiveId === user1.CollectiveId).role).to.equal('ADMIN');
+      expect(members.find(m => m.MemberCollectiveId === user2.CollectiveId).role).to.equal('MEMBER');
     });
   });
 

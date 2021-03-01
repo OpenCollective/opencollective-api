@@ -1,4 +1,4 @@
-import debug from 'debug';
+import debugLib from 'debug';
 import config from 'config';
 import jwt from 'jsonwebtoken';
 import passport from 'passport';
@@ -20,6 +20,7 @@ const { User } = models;
 const { BadRequest, CustomError } = errors;
 
 const { jwtSecret } = config.keys.opencollective;
+const debug = debugLib('auth');
 
 /**
  * Middleware related to authentication.
@@ -44,7 +45,9 @@ export const parseJwtNoExpiryCheck = (req, res, next) => {
   let token = req.params.access_token || req.query.access_token || req.body.access_token;
   if (!token) {
     const header = req.headers && req.headers.authorization;
-    if (!header) return next();
+    if (!header) {
+      return next();
+    }
 
     const parts = header.split(' ');
     const scheme = parts[0];
@@ -108,23 +111,26 @@ export const _authenticateUserByJwt = async (req, res, next) => {
           logger.warn(req.jwtPayload);
         }
       } else if (user.lastLoginAt.getTime() !== req.jwtPayload.lastLoginAt) {
-        logger.error('This login link is expired or has already been used');
         if (config.env === 'production') {
+          logger.error('This login link is expired or has already been used');
           return next(errors.Unauthorized('This login link is expired or has already been used'));
+        } else {
+          logger.info('This login link is expired or has already been used. Ignoring in non-production environment.');
         }
       }
     }
-    // The login was accepted, we can update lastLoginAt
-    // this will invalidate all older tokens
-    const now = new Date();
-    await user.update({ lastLoginAt: now });
+    await user.update({
+      // The login was accepted, we can update lastLoginAt. This will invalidate all older tokens.
+      lastLoginAt: new Date(),
+      data: { ...user.data, lastSignInRequest: { ip: req.ip, userAgent: req.header('user-agent') } },
+    });
   }
 
   await user.populateRoles();
 
   req.remoteUser = user;
 
-  debug('auth')('logged in user', req.remoteUser.id, 'roles:', req.remoteUser.rolesByCollectiveId);
+  debug('logged in user', req.remoteUser.id, 'roles:', req.remoteUser.rolesByCollectiveId);
   next();
 };
 
@@ -136,19 +142,21 @@ export const _authenticateUserByJwt = async (req, res, next) => {
  * @ERROR: Will return an error if a JWT token is provided and invalid
  */
 export function authenticateUser(req, res, next) {
-  if (req.remoteUser && req.remoteUser.id) return next();
+  if (req.remoteUser && req.remoteUser.id) {
+    return next();
+  }
 
   parseJwtNoExpiryCheck(req, res, e => {
     // If a token was submitted but is invalid, we continue without authenticating the user
     if (e) {
-      debug('auth')('>>> checkJwtExpiry invalid error', e);
+      debug('>>> checkJwtExpiry invalid error', e);
       return next();
     }
 
     checkJwtExpiry(req, res, e => {
       // If a token was submitted and is expired, we continue without authenticating the user
       if (e) {
-        debug('auth')('>>> checkJwtExpiry expiry error', e);
+        debug('>>> checkJwtExpiry expiry error', e);
         return next();
       }
       _authenticateUserByJwt(req, res, next);
@@ -158,21 +166,20 @@ export function authenticateUser(req, res, next) {
 
 export const authenticateService = (req, res, next) => {
   const { service } = req.params;
+  const { context } = req.query;
   const opts = { callbackURL: getOAuthCallbackUrl(req) };
 
   if (service === 'github') {
-    /*
-      'repo' gives us access to org repos and private repos (latter is an issue for some people)
-      'public_repo' should give us all public_repos but in some cases users report not
-        being able to see their repos.
+    if (context == 'createCollective') {
+      opts.scope = [
+        // We need this to call github.getOrgMemberships and check if the user is an admin of a given Organization
+        'read:org',
+      ];
+    } else {
+      // We try to deprecate this scope by progressively forcing a context
+      opts.scope = ['user:email', 'public_repo', 'read:org'];
+    }
 
-      We have fluctuated back and forth. With the new simplified GitHub signup flow,
-      it's possible that 'public_repo' is enough.
-
-      Update: removing public_repo as well, since technically we shouldn't need it.
-    */
-
-    opts.scope = ['user:email', 'public_repo', 'read:org'];
     return passport.authenticate(service, opts)(req, res, next);
   }
 

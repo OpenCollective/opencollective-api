@@ -1,8 +1,7 @@
-import logger from '../../../server/lib/logger';
 import { expect, assert } from 'chai';
 import { exportToPDF, sanitizeForLogs } from '../../../server/lib/utils';
 
-describe('utils', () => {
+describe('server/lib/utils', () => {
   it('sanitize for logs', () => {
     const obj = {
       user: {
@@ -22,9 +21,7 @@ describe('utils', () => {
     expect(res.card.expYear).to.equal(obj.card.expYear);
   });
 
-  it('exports PDF', function(done) {
-    this.timeout(10000);
-
+  it('exports PDF', done => {
     const data = {
       host: {
         name: 'WWCode',
@@ -49,11 +46,8 @@ describe('utils', () => {
       ],
     };
     exportToPDF('expenses', data).then(buffer => {
-      const expectedSize = ['ci', 'circleci'].includes(process.env.NODE_ENV) ? 27750 : 26123;
-      // Size varies for some reason...
-      logger.info('PDF length is', buffer.length, 'expected length', expectedSize);
       try {
-        assert.isAtLeast(buffer.length, 18000, 'PDF length should be at least 20000 bytes');
+        assert.isAtLeast(buffer.length, 9000, 'PDF length should be at least 9000 bytes');
         done();
       } catch (error) {
         done(error);

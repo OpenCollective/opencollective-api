@@ -60,6 +60,7 @@ describe('server/graphql/v1/comments', () => {
       CollectiveId: collective1.id,
       lastEditedById: user1.id,
       UserId: user1.id,
+      FromCollectiveId: user1.CollectiveId,
       description: 'Plane ticket',
       incurredAt: new Date(),
       amount: 100000,
@@ -407,7 +408,7 @@ describe('server/graphql/v1/comments', () => {
 
   describe('V2 - edit a comment', () => {
     const editCommentQuery = `
-      mutation editComment($comment: CommentEdit!) {
+      mutation editComment($comment: CommentUpdateInput!) {
         editComment(comment: $comment) {
           id
           markdown
@@ -456,7 +457,7 @@ describe('server/graphql/v1/comments', () => {
 
   describe('V2 - create a comment', () => {
     const createCommentQuery = `
-      mutation createComment($comment: CommentCreate!) {
+      mutation createComment($comment: CommentCreateInput!) {
         createComment(comment: $comment) {
           id
           markdown
