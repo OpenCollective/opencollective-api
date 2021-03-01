@@ -1,5 +1,3 @@
-/** @module models/Transaction */
-
 import Promise from 'bluebird';
 import moment from 'moment';
 import uuidv4 from 'uuid/v4';
@@ -12,7 +10,7 @@ import CustomDataTypes from './DataTypes';
 import { toNegative } from '../lib/math';
 import { exportToCSV } from '../lib/utils';
 
-const debug = debugLib('transaction');
+const debug = debugLib('models:Transaction');
 
 /*
  * Transaction model
@@ -240,8 +238,12 @@ export default (Sequelize, DataTypes) => {
   };
 
   Transaction.prototype.getSource = function() {
-    if (this.OrderId) return this.getOrder({ paranoid: false });
-    if (this.ExpenseId) return this.getExpense({ paranoid: false });
+    if (this.OrderId) {
+      return this.getOrder({ paranoid: false });
+    }
+    if (this.ExpenseId) {
+      return this.getExpense({ paranoid: false });
+    }
   };
 
   /**
@@ -273,7 +275,9 @@ export default (Sequelize, DataTypes) => {
   };
 
   Transaction.prototype.getRefundTransaction = function() {
-    if (!this.RefundTransactionId) return null;
+    if (!this.RefundTransactionId) {
+      return null;
+    }
     return Transaction.findByPk(this.RefundTransactionId);
   };
 
@@ -300,14 +304,23 @@ export default (Sequelize, DataTypes) => {
 
   Transaction.exportCSV = (transactions, collectivesById) => {
     const getColumnName = attr => {
-      if (attr === 'CollectiveId') return 'collective';
-      if (attr === 'Expense.privateMessage') return 'private note';
-      else return attr;
+      if (attr === 'CollectiveId') {
+        return 'collective';
+      }
+      if (attr === 'Expense.privateMessage') {
+        return 'private note';
+      } else {
+        return attr;
+      }
     };
 
     const processValue = (attr, value) => {
-      if (attr === 'CollectiveId') return get(collectivesById[value], 'slug');
-      if (attr === 'createdAt') return moment(value).format('YYYY-MM-DD');
+      if (attr === 'CollectiveId') {
+        return get(collectivesById[value], 'slug');
+      }
+      if (attr === 'createdAt') {
+        return moment(value).format('YYYY-MM-DD');
+      }
       if (
         [
           'amount',

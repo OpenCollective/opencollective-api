@@ -28,6 +28,9 @@ import { ChronologicalOrder } from '../input/ChronologicalOrder';
 import { NotFound } from '../../errors';
 
 import models, { Op } from '../../../models';
+import { ConversationCollection } from '../collection/ConversationCollection';
+import { TagStats } from '../object/TagStats';
+import { TransferWise } from '../object/TransferWise';
 
 const accountFieldsDefinition = () => ({
   // _internal_id: {
@@ -62,6 +65,9 @@ const accountFieldsDefinition = () => ({
     type: GraphQLString,
   },
   currency: {
+    type: GraphQLString,
+  },
+  expensePolicy: {
     type: GraphQLString,
   },
   imageUrl: {
@@ -137,6 +143,30 @@ const accountFieldsDefinition = () => ({
   },
   settings: {
     type: GraphQLJSON,
+  },
+  conversations: {
+    type: ConversationCollection,
+    args: {
+      limit: { type: GraphQLInt },
+      offset: { type: GraphQLInt },
+      tag: {
+        type: GraphQLString,
+        description: 'Only return conversations matching this tag',
+      },
+    },
+  },
+  conversationsTags: {
+    type: new GraphQLList(TagStats),
+    description: "Returns conversation's tags for collective sorted by popularity",
+    args: {
+      limit: { type: GraphQLInt, defaultValue: 30 },
+    },
+  },
+  transferwise: {
+    type: TransferWise,
+    resolve(collective) {
+      return collective;
+    },
   },
 });
 
@@ -265,6 +295,41 @@ export const AccountFields = {
   ...IsMemberOfFields,
   transactions: accountTransactions,
   orders: accountOrders,
+  conversations: {
+    type: ConversationCollection,
+    args: {
+      limit: { type: GraphQLInt },
+      offset: { type: GraphQLInt },
+      tag: {
+        type: GraphQLString,
+        description: 'Only return conversations matching this tag',
+      },
+    },
+    async resolve(collective, { limit, offset, tag }) {
+      const query = { where: { CollectiveId: collective.id }, order: [['createdAt', 'DESC']] };
+      if (limit) {
+        query.limit = limit;
+      }
+      if (offset) {
+        query.offset = offset;
+      }
+      if (tag) {
+        query.where.tags = { [Op.contains]: [tag] };
+      }
+      const result = await models.Conversation.findAndCountAll(query);
+      return { nodes: result.rows, total: result.count, limit, offset };
+    },
+  },
+  conversationsTags: {
+    type: new GraphQLList(TagStats),
+    description: "Returns conversation's tags for collective sorted by popularity",
+    args: {
+      limit: { type: GraphQLInt, defaultValue: 30 },
+    },
+    async resolve(collective, _, { limit }) {
+      return models.Conversation.getMostPopularTagsForCollective(collective.id, limit);
+    },
+  },
 };
 
 export default Account;

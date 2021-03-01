@@ -14,6 +14,9 @@ import {
 import { CollectiveInterfaceType, UserCollectiveType } from './CollectiveInterface';
 
 import { SubscriptionType, OrderType, PaymentMethodType, UserType, DateString, ExpenseType } from './types';
+import { canViewExpensePrivateInfo, getExpenseAttachments } from '../common/expenses';
+
+import { idEncode } from '../v2/identifiers';
 
 export const TransactionInterfaceType = new GraphQLInterfaceType({
   name: 'Transaction',
@@ -31,6 +34,7 @@ export const TransactionInterfaceType = new GraphQLInterfaceType({
   fields: () => {
     return {
       id: { type: GraphQLInt },
+      idV2: { type: GraphQLString },
       uuid: { type: GraphQLString },
       amount: { type: GraphQLInt },
       currency: { type: GraphQLString },
@@ -62,6 +66,12 @@ const TransactionFields = () => {
       type: GraphQLInt,
       resolve(transaction) {
         return transaction.id;
+      },
+    },
+    idV2: {
+      type: GraphQLString,
+      resolve(transaction) {
+        return idEncode(transaction.id, 'transaction');
       },
     },
     refundTransaction: {
@@ -183,11 +193,13 @@ const TransactionFields = () => {
         // This is very suboptimal. We should probably record the CreatedByCollectiveId (or better CreatedByProfileId) instead of the User.
         if (transaction && transaction.getCreatedByUser) {
           const fromCollective = await transaction.getFromCollective();
-          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.CollectiveId)))
+          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.CollectiveId))) {
             return {};
+          }
           const collective = await transaction.getCollective();
-          if (collective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.FromCollectiveId)))
+          if (collective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(transaction.FromCollectiveId))) {
             return {};
+          }
           return transaction.getCreatedByUser();
         }
         return null;
@@ -251,7 +263,9 @@ const TransactionFields = () => {
       type: PaymentMethodType,
       resolve(transaction, args, req) {
         const paymentMethodId = transaction.PaymentMethodId || get(transaction, 'paymentMethod.id');
-        if (!paymentMethodId) return null;
+        if (!paymentMethodId) {
+          return null;
+        }
         // TODO: put behind a login check
         return req.loaders.PaymentMethod.byId.load(paymentMethodId);
       },
@@ -309,12 +323,19 @@ export const TransactionExpenseType = new GraphQLObjectType({
       attachment: {
         type: GraphQLString,
         deprecationReason: 'Please use transaction.expense.attachment',
-        resolve(transaction, args, req) {
-          // If it's a expense transaction it'll have an ExpenseId
-          // otherwise we return null
-          return transaction.ExpenseId
-            ? req.loaders.Expense.byId.load(transaction.ExpenseId).then(expense => expense && expense.attachment)
-            : null;
+        async resolve(transaction, args, req) {
+          // If it's a expense transaction it'll have an ExpenseId otherwise we return null
+          if (!transaction.ExpenseId) {
+            return null;
+          } else {
+            const expense = req.loaders.Expense.byId.load(transaction.ExpenseId);
+            if (!expense || !(await canViewExpensePrivateInfo(expense, req))) {
+              return null;
+            } else {
+              const attachments = await getExpenseAttachments(transaction.ExpenseId, req);
+              return attachments[0] && attachments[0].url;
+            }
+          }
         },
       },
     };

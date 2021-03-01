@@ -1,4 +1,4 @@
-import debug from 'debug';
+import debugLib from 'debug';
 import config from 'config';
 import jwt from 'jsonwebtoken';
 import passport from 'passport';
@@ -20,6 +20,7 @@ const { User } = models;
 const { BadRequest, CustomError } = errors;
 
 const { jwtSecret } = config.keys.opencollective;
+const debug = debugLib('auth');
 
 /**
  * Middleware related to authentication.
@@ -44,7 +45,9 @@ export const parseJwtNoExpiryCheck = (req, res, next) => {
   let token = req.params.access_token || req.query.access_token || req.body.access_token;
   if (!token) {
     const header = req.headers && req.headers.authorization;
-    if (!header) return next();
+    if (!header) {
+      return next();
+    }
 
     const parts = header.split(' ');
     const scheme = parts[0];
@@ -108,9 +111,11 @@ export const _authenticateUserByJwt = async (req, res, next) => {
           logger.warn(req.jwtPayload);
         }
       } else if (user.lastLoginAt.getTime() !== req.jwtPayload.lastLoginAt) {
-        logger.error('This login link is expired or has already been used');
         if (config.env === 'production') {
+          logger.error('This login link is expired or has already been used');
           return next(errors.Unauthorized('This login link is expired or has already been used'));
+        } else {
+          logger.info('This login link is expired or has already been used. Ignoring in non-production environment.');
         }
       }
     }
@@ -124,7 +129,7 @@ export const _authenticateUserByJwt = async (req, res, next) => {
 
   req.remoteUser = user;
 
-  debug('auth')('logged in user', req.remoteUser.id, 'roles:', req.remoteUser.rolesByCollectiveId);
+  debug('logged in user', req.remoteUser.id, 'roles:', req.remoteUser.rolesByCollectiveId);
   next();
 };
 
@@ -136,19 +141,21 @@ export const _authenticateUserByJwt = async (req, res, next) => {
  * @ERROR: Will return an error if a JWT token is provided and invalid
  */
 export function authenticateUser(req, res, next) {
-  if (req.remoteUser && req.remoteUser.id) return next();
+  if (req.remoteUser && req.remoteUser.id) {
+    return next();
+  }
 
   parseJwtNoExpiryCheck(req, res, e => {
     // If a token was submitted but is invalid, we continue without authenticating the user
     if (e) {
-      debug('auth')('>>> checkJwtExpiry invalid error', e);
+      debug('>>> checkJwtExpiry invalid error', e);
       return next();
     }
 
     checkJwtExpiry(req, res, e => {
       // If a token was submitted and is expired, we continue without authenticating the user
       if (e) {
-        debug('auth')('>>> checkJwtExpiry expiry error', e);
+        debug('>>> checkJwtExpiry expiry error', e);
         return next();
       }
       _authenticateUserByJwt(req, res, next);
