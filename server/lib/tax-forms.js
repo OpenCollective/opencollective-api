@@ -1,6 +1,8 @@
 import config from 'config';
 import { uniqBy } from 'lodash';
+
 import models from '../models';
+
 import logger from './logger';
 import { isEmailInternal } from './utils';
 
@@ -71,15 +73,17 @@ export async function isUserTaxFormRequiredBeforePayment({ invoiceTotalThreshold
 
 export function SendHelloWorksTaxForm({ client, callbackUrl, workflowId, year }) {
   return async function sendHelloWorksUsTaxForm(user) {
+    const userCollective = await user.getCollective();
+
     const participants = {
+      // eslint-disable-next-line camelcase
       participant_swVuvW: {
         type: 'email',
         value: user.email,
-        fullName: `${user.firstName} ${user.lastName}`,
+        fullName: `${userCollective.name}`,
       },
     };
 
-    const userCollective = await user.getCollective();
     const saveDocumentStatus = status => {
       return LegalDocument.findOrCreate({
         where: { documentType: US_TAX_FORM, year, CollectiveId: userCollective.id },

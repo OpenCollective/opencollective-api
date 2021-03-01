@@ -1,12 +1,13 @@
+import Promise from 'bluebird';
 import { expect } from 'chai';
-import { processOnBoardingTemplate } from '../../../server/lib/onboarding';
-import emailLib from '../../../server/lib/email';
 import sinon from 'sinon';
+
+import emailLib from '../../../server/lib/email';
+import { processOnBoardingTemplate } from '../../../server/lib/onboarding';
 import models from '../../../server/models';
 import * as utils from '../../utils';
-import Promise from 'bluebird';
 
-describe('onboarding', () => {
+describe('server/lib/onboarding', () => {
   let admins, sandbox, emailLibSendSpy;
   before(async () => {
     await utils.resetTestDB();
