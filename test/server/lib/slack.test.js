@@ -1,19 +1,19 @@
-import _ from 'lodash';
 import { expect } from 'chai';
-import sinon from 'sinon';
+import _ from 'lodash';
 import Slack from 'node-slack';
-import activitiesLib from '../../../server/lib/activities';
+import sinon from 'sinon';
 
+import activitiesLib from '../../../server/lib/activities';
 import slackLib from '../../../server/lib/slack';
 
-describe('lib/slack', () => {
+describe('server/lib/slack', () => {
   describe('calling postMessage', () => {
     const message = 'lorem ipsum';
     const webhookUrl = 'hookurl';
     const basePayload = {
       text: message,
       username: 'OpenCollective Activity Bot',
-      icon_url: 'https://opencollective.com/favicon.ico',
+      icon_url: 'https://opencollective.com/favicon.ico', // eslint-disable-line camelcase
       attachments: [],
     };
 
@@ -90,8 +90,5 @@ function expectPayload(expectedPayload) {
 }
 
 function callSlackLib(done, msg, webhookUrl, options) {
-  slackLib
-    .postMessage(msg, webhookUrl, options)
-    .then(done)
-    .catch(done);
+  slackLib.postMessage(msg, webhookUrl, options).then(done).catch(done);
 }

@@ -29,10 +29,9 @@
   },
   "host": {
     "api": "http://localhost:3060",
-    "webapp": "http://localhost:3000/app",
     "website": "http://localhost:3000",
-    "images": "https://images.opencollective.com",
-    "invoices": "https://invoices.opencollective.com"
+    "images": "https://images-staging.opencollective.com",
+    "invoices": "https://invoices-staging.opencollective.com"
   },
   "limits": {
     "ordersPerHour": {
@@ -53,17 +52,15 @@
     "maxNumberOfAppsPerUser": 15,
     "maxWebhooksPerUserPerCollective": 50,
     "searchEmailPerHour": 150,
-    "collectiveEmailMessagePerHour": 5
+    "searchEmailPerHourPerIp": 50,
+    "collectiveEmailMessagePerHour": 5,
+    "maxMemberInvitationsPerCollective": 20
   },
   "email": {
     "from": "Open Collective <info@opencollective.com>"
   },
   "cache": {
-    "middleware": false,
-    "homepage": {
-      "disabled": false,
-      "refreshInterval": 3600
-    }
+    "middleware": false
   },
   "log": {
     "level": "info",
@@ -101,10 +98,8 @@
   "algolia": {
     "index": "dvl_collectives"
   },
-  "fixer": {
-    "accessKey": "UNDEFINED_FIXER_ACCESS_KEY"
-  },
   "stripe": {
+    "accountId": "acct_15vekcDjPFcHOcTm",
     "clientId": "ca_68FQcZXEcV66Kjg7egLnR1Ce87cqwoue",
     "key": "pk_test_VgSB4VSg2wb5LdAkz7p38Gw8",
     "secret": "sk_test_o3A3GoHbeb113oq1aZbDJNJe",
@@ -135,5 +130,9 @@
   },
   "githubFlow": {
     "minNbStars": 100
-  }
+  },
+  "transferwise": {
+    "apiUrl": "https://api.sandbox.transferwise.tech"
+  },
+  "fixie": {}
 }

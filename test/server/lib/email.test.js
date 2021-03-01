@@ -1,9 +1,10 @@
-import sinon from 'sinon';
-import nodemailer from 'nodemailer';
 import { expect } from 'chai';
+import config from 'config';
+import nodemailer from 'nodemailer';
+import sinon from 'sinon';
+
 import emailLib from '../../../server/lib/email';
 import * as utils from '../../utils';
-import config from 'config';
 
 const emailData = utils.data('emailData');
 
@@ -128,6 +129,11 @@ describe('server/lib/email', () => {
       config: { host: config.host },
       interval: 'month',
       user: emailData.user,
+      fromCollective: {
+        id: 2,
+        name: 'Test User',
+        slug: 'test-user-slug',
+      },
       collective: {
         name: '#BrusselsTogether',
         slug: 'brusselstogether',
@@ -152,7 +158,7 @@ describe('server/lib/email', () => {
       );
       expect(nm.sendMail.lastCall.args[0].html).to.contain(data.relatedCollectives[0].name);
       expect(nm.sendMail.lastCall.args[0].html).to.contain(
-        `${config.host.invoices}/${data.collective.slug}/transactions/${data.transaction.uuid}/invoice.pdf`,
+        `${config.host.website}/${data.fromCollective.slug}/transactions`,
       );
     });
   });

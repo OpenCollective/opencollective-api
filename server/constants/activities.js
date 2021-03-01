@@ -17,7 +17,11 @@ export default {
   COLLECTIVE_EXPENSE_UPDATED: 'collective.expense.updated',
   COLLECTIVE_EXPENSE_REJECTED: 'collective.expense.rejected',
   COLLECTIVE_EXPENSE_APPROVED: 'collective.expense.approved',
+  COLLECTIVE_EXPENSE_UNAPPROVED: 'collective.expense.unapproved',
   COLLECTIVE_EXPENSE_PAID: 'collective.expense.paid',
+  COLLECTIVE_EXPENSE_MARKED_AS_UNPAID: 'collective.expense.unpaid',
+  COLLECTIVE_EXPENSE_PROCESSING: 'collective.expense.processing',
+  COLLECTIVE_EXPENSE_ERROR: 'collective.expense.error',
   COLLECTIVE_MEMBER_CREATED: 'collective.member.created',
   COLLECTIVE_TRANSACTION_CREATED: 'collective.transaction.created',
   COLLECTIVE_UPDATE_CREATED: 'collective.update.created',
@@ -35,6 +39,8 @@ export default {
   ORDERS_SUSPICIOUS: 'orders.suspicious',
   BACKYOURSTACK_DISPATCH_CONFIRMED: 'backyourstack.dispatch.confirmed',
   ADDED_FUND_TO_ORG: 'added.fund.to.org',
+  ACTIVATED_COLLECTIVE_AS_HOST: 'activated.collective.as.host',
+  DEACTIVATED_COLLECTIVE_AS_HOST: 'deactivated.collective.as.host',
 
   // Not used anymore, leaving for historical reference
   COLLECTIVE_TRANSACTION_PAID: 'collective.transaction.paid', // replaced with COLLECTIVE_EXPENSE_PAID
