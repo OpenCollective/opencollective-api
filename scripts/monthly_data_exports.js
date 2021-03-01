@@ -1,17 +1,22 @@
-import models, { sequelize } from '../server/models';
-import { parse as json2csv } from 'json2csv';
+#!/usr/bin/env node
+import '../server/env';
+
 import fs from 'fs';
+
 import Promise from 'bluebird';
+import { parse as json2csv } from 'json2csv';
 import moment from 'moment';
 
-const GoogleDrivePath = process.env.OC_GOOGLE_DRIVE || `${process.env.HOME}/Google\ Drive/Open\ Collective`;
+import models, { sequelize } from '../server/models';
 
-if (!fs.existsSync(GoogleDrivePath)) {
-  console.error('error');
-  console.log(`Please make sure the Open Collective Drive is synchronized locally to ${GoogleDrivePath}.`);
-  console.log('You can override the default location with the env variable OC_GOOGLE_DRIVE');
-  process.exit(0);
-}
+// const GoogleDrivePath = process.env.OC_GOOGLE_DRIVE || `${process.env.HOME}/Google\ Drive/Open\ Collective`;
+
+// if (!fs.existsSync(GoogleDrivePath)) {
+//   console.error('error');
+//   console.log(`Please make sure the Open Collective Drive is synchronized locally to ${GoogleDrivePath}.`);
+//   console.log('You can override the default location with the env variable OC_GOOGLE_DRIVE');
+//   process.exit(0);
+// }
 
 const queries = [
   {
@@ -69,7 +74,7 @@ const queries = [
     query: `
     SELECT
     t."createdAt", c.slug as "collective slug", t.type as "transaction type", t.amount::float / 100,
-    t.currency, fc.slug as "from slug", fc.type as "from type", t.description, e.category as "expense category",
+    t.currency, fc.slug as "from slug", fc.type as "from type", t.description, e.tags as "expense tags",
     h.slug as "host slug", t."hostCurrency", t."hostCurrencyFxRate",
     pm.service as "payment processor", pm.type as "payment method type",
     t."paymentProcessorFeeInHostCurrency"::float / 100 as "paymentProcessorFeeInHostCurrency",
@@ -96,9 +101,13 @@ const endDate = new Date(d.getFullYear(), d.getMonth() + 1, 1);
 
 console.log('startDate', startDate, 'endDate', endDate);
 let month = startDate.getMonth() + 1;
-if (month < 10) month = `0${month}`;
+if (month < 10) {
+  month = `0${month}`;
+}
 
-const path = `${GoogleDrivePath}/Open Data/${startDate.getFullYear()}-${month}`;
+// const path = `${GoogleDrivePath}/Open Data/${startDate.getFullYear()}-${month}`;
+const path = `${startDate.getFullYear()}-${month}`;
+
 try {
   console.log('>>> mkdir', path);
   fs.mkdirSync(path);
@@ -122,9 +131,13 @@ async function run() {
     });
 
     const data = res.map(row => {
-      if (row.createdAt) row.createdAt = moment(row.createdAt).format('YYYY-MM-DD HH:mm');
+      if (row.createdAt) {
+        row.createdAt = moment(row.createdAt).format('YYYY-MM-DD HH:mm');
+      }
       Object.keys(row).map(key => {
-        if (row[key] === null) row[key] = '';
+        if (row[key] === null) {
+          row[key] = '';
+        }
       });
       return row;
     });

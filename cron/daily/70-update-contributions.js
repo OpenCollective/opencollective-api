@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import '../../server/env';
 
-import PQueue from 'p-queue';
 import { assign, get, isArray, pick } from 'lodash';
+import PQueue from 'p-queue';
 
-import models, { Op } from '../../server/models';
 import cache from '../../server/lib/cache';
-import logger from '../../server/lib/logger';
 import * as github from '../../server/lib/github';
+import logger from '../../server/lib/logger';
+import models, { Op } from '../../server/models';
 
 const { Collective } = models;
 
@@ -47,7 +47,7 @@ const getAllContributors = async repo => {
 
   const octokit = github.getOctokit();
 
-  const fetchParameters = { page: 1, per_page: 100 };
+  const fetchParameters = { page: 1, per_page: 100 }; // eslint-disable-line camelcase
 
   let contributors = [];
   let fetchContributors;
