@@ -1,12 +1,44 @@
 import notify from '../lib/notifications';
 
-export default function(Sequelize, DataTypes) {
+export default function (Sequelize, DataTypes) {
   const Activity = Sequelize.define(
     'Activity',
     {
       type: DataTypes.STRING,
 
-      data: DataTypes.JSON,
+      data: DataTypes.JSONB,
+
+      CollectiveId: {
+        type: DataTypes.INTEGER,
+        references: {
+          model: 'Collectives',
+          key: 'id',
+        },
+      },
+
+      UserId: {
+        type: DataTypes.INTEGER,
+        references: {
+          model: 'Users',
+          key: 'id',
+        },
+      },
+
+      TransactionId: {
+        type: DataTypes.INTEGER,
+        references: {
+          model: 'Transactions',
+          key: 'id',
+        },
+      },
+
+      ExpenseId: {
+        type: DataTypes.INTEGER,
+        references: {
+          model: 'Expenses',
+          key: 'id',
+        },
+      },
 
       createdAt: {
         type: DataTypes.DATE,
@@ -23,8 +55,6 @@ export default function(Sequelize, DataTypes) {
       },
     },
   );
-
-  Activity.schema('public');
 
   return Activity;
 }

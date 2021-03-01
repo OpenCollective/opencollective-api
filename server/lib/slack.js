@@ -2,11 +2,12 @@
  * Slack message sending logic
  */
 
-import Slack from 'node-slack';
 import config from 'config';
 import debug from 'debug';
-import activitiesLib from '../lib/activities';
+import Slack from 'node-slack';
+
 import constants from '../constants/activities';
+import activitiesLib from '../lib/activities';
 
 const debugSlack = debug('slack');
 
@@ -50,7 +51,7 @@ export default {
     const slackOptions = {
       text: msg,
       username: 'OpenCollective Activity Bot',
-      icon_url: 'https://opencollective.com/favicon.ico',
+      icon_url: 'https://opencollective.com/favicon.ico', // eslint-disable-line camelcase
       attachments: options.attachments || [],
     };
 

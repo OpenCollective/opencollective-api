@@ -1,7 +1,7 @@
-import LibSanitize from 'sanitize-html';
 import { truncate } from 'lodash';
+import LibSanitize from 'sanitize-html';
 
-interface IAllowedContentType {
+interface AllowedContentType {
   /** Allows titles  supported by RichTextEditor (`h3` only) */
   titles?: boolean;
   /** Includes bold, italic, strong and strike */
@@ -20,12 +20,12 @@ interface IAllowedContentType {
 
 interface SanitizeOptions {
   allowedTags: string[];
-  allowedAttributes: Object;
+  allowedAttributes: Record<string, any>;
   allowedIframeHostnames: string[];
   transformTags: any;
 }
 
-export const buildSanitizerOptions = (allowedContent: IAllowedContentType = {}): SanitizeOptions => {
+export const buildSanitizerOptions = (allowedContent: AllowedContentType = {}): SanitizeOptions => {
   // Nothing allowed by default
   const allowedTags = [];
   const allowedAttributes = {};
@@ -137,8 +137,17 @@ export const generateSummaryForHTML = (content, maxLength = 255) => {
     .replace(/\s+/g, ' ');
 
   // Truncate
-  const truncated = truncate(trimmed, { length: maxLength });
+  const truncated = truncate(trimmed, { length: maxLength, omission: ''});
 
   // Second sanitize pass: an additional precaution in case someones finds a way to play with the trimmed version
-  return sanitizeHTML(truncated, optsSanitizeSummary);
+  const secondSanitized = sanitizeHTML(truncated, optsSanitizeSummary);
+
+  const isTruncated = trimmed.length > maxLength;
+
+  // Check to see if the second sanitization cuts a html tag in the middle
+  if (isTruncated) {
+    return `${secondSanitized.trim()}...`;
+  } else {
+    return secondSanitized;
+  }
 };

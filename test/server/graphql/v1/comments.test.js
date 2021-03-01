@@ -2,11 +2,11 @@ import { expect } from 'chai';
 import { describe, it } from 'mocha';
 import sinon from 'sinon';
 
-import * as utils from '../../../utils';
-import models from '../../../../server/models';
 import roles from '../../../../server/constants/roles';
-import emailLib from '../../../../server/lib/email';
 import { idEncode } from '../../../../server/graphql/v2/identifiers';
+import emailLib from '../../../../server/lib/email';
+import models from '../../../../server/models';
+import * as utils from '../../../utils';
 
 let host,
   collectiveAdmin,
@@ -60,6 +60,7 @@ describe('server/graphql/v1/comments', () => {
       CollectiveId: collective1.id,
       lastEditedById: user1.id,
       UserId: user1.id,
+      FromCollectiveId: user1.CollectiveId,
       description: 'Plane ticket',
       incurredAt: new Date(),
       amount: 100000,
@@ -84,20 +85,20 @@ describe('server/graphql/v1/comments', () => {
 
   before(() => {
     comment = {
-      markdown: 'This is the **comment**',
+      html: '<p>This is the <strong>comment</strong></p>',
       ExpenseId: expense1.id,
     };
     comments = [
-      { markdown: 'comment 1', createdAt: new Date('2018-01-01'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 2', createdAt: new Date('2018-01-02'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 3', createdAt: new Date('2018-01-03'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 4', createdAt: new Date('2018-01-04'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 5', createdAt: new Date('2018-01-05'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 6', createdAt: new Date('2018-01-06'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 7', createdAt: new Date('2018-01-07'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 8', createdAt: new Date('2018-01-08'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 9', createdAt: new Date('2018-01-09'), FromCollectiveId: collectiveAdmin.CollectiveId },
-      { markdown: 'comment 10', createdAt: new Date('2018-01-10'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 1', createdAt: new Date('2018-01-01'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 2', createdAt: new Date('2018-01-02'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 3', createdAt: new Date('2018-01-03'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 4', createdAt: new Date('2018-01-04'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 5', createdAt: new Date('2018-01-05'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 6', createdAt: new Date('2018-01-06'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 7', createdAt: new Date('2018-01-07'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 8', createdAt: new Date('2018-01-08'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 9', createdAt: new Date('2018-01-09'), FromCollectiveId: collectiveAdmin.CollectiveId },
+      { html: 'comment 10', createdAt: new Date('2018-01-10'), FromCollectiveId: collectiveAdmin.CollectiveId },
     ];
   });
 
@@ -117,10 +118,10 @@ describe('server/graphql/v1/comments', () => {
       CollectiveId: collective1.id,
       FromCollectiveId: collectiveAdmin.CollectiveId,
       CreatedByUserId: collectiveAdmin.id,
-      markdown: 'first comment & "love"',
+      html: 'first comment & "love"',
       ExpenseId: expense1.id,
     });
-    await utils.waitForCondition(() => sendEmailSpy.callCount === 1);
+    await utils.waitForCondition(() => sendEmailSpy.callCount >= 1);
   }
 
   function populateComments() {
@@ -203,11 +204,11 @@ describe('server/graphql/v1/comments', () => {
     it('edits a comment successfully', async () => {
       const result = await utils.graphqlQuery(
         editCommentQuery,
-        { comment: { id: comment1.id, markdown: 'new *comment* text' } },
+        { comment: { id: comment1.id, html: 'new <em>comment</em> text' } },
         collectiveAdmin,
       );
       utils.expectNoErrorsFromResult(result);
-      expect(result.data.editComment.html).to.equal('<p>new <em>comment</em> text</p>');
+      expect(result.data.editComment.html).to.equal('new <em>comment</em> text');
     });
   });
 
@@ -261,6 +262,7 @@ describe('server/graphql/v1/comments', () => {
           allComments(ExpenseId: $ExpenseId, limit: $limit, offset: $offset) {
             id
             markdown
+            html
           }
         }
       `;
@@ -272,10 +274,10 @@ describe('server/graphql/v1/comments', () => {
       utils.expectNoErrorsFromResult(result);
       const comments = result.data.allComments;
       expect(comments).to.have.length(5);
-      expect(comments[0].markdown).to.equal('comment 3');
+      expect(comments[0].html).to.equal('comment 3');
     });
 
-    it('get an expense with associated comments', async () => {
+    it('get an expense with associated comments as unauthenticated', async () => {
       await populateComments();
       const expenseQuery = `
         query Expense($id: Int!, $limit: Int) {
@@ -299,6 +301,37 @@ describe('server/graphql/v1/comments', () => {
       });
       utils.expectNoErrorsFromResult(result);
       const expense = result.data.Expense;
+      expect(expense.comments).to.be.null;
+    });
+
+    it('get an expense with associated comments as collective admin', async () => {
+      await populateComments();
+      const expenseQuery = `
+        query Expense($id: Int!, $limit: Int) {
+          Expense(id: $id) {
+            description
+            amount
+            comments(limit: $limit) {
+              total
+              comments {
+                id
+                markdown
+                html
+              }
+            }
+          }
+        }
+      `;
+      const result = await utils.graphqlQuery(
+        expenseQuery,
+        {
+          id: expense1.id,
+          limit: 5,
+        },
+        collectiveAdmin,
+      );
+      utils.expectNoErrorsFromResult(result);
+      const expense = result.data.Expense;
       expect(expense.comments.total).to.equal(10);
       expect(expense.comments.comments).to.have.length(5);
     });
@@ -320,10 +353,14 @@ describe('server/graphql/v1/comments', () => {
           }
         }
       `;
-      const result = await utils.graphqlQuery(ExpenseQuery, {
-        id: expense1.id,
-        limit: 5,
-      });
+      const result = await utils.graphqlQuery(
+        ExpenseQuery,
+        {
+          id: expense1.id,
+          limit: 5,
+        },
+        collectiveAdmin,
+      );
       utils.expectNoErrorsFromResult(result);
       const expense = result.data.Expense;
       expect(expense.comments.total).to.equal(0);
@@ -369,16 +406,31 @@ describe('server/graphql/v1/comments', () => {
       }
     `;
 
-    it('get an expense with associated comments empty', async () => {
+    it('get an expense with associated comments empty (unauthenticated)', async () => {
       const result = await utils.graphqlQueryV2(expenseQuery, {
         id: `${expense1.id}`,
         limit: 5,
         offset: 0,
       });
       utils.expectNoErrorsFromResult(result);
+      expect(result.data.expense.comments).to.be.null;
+    });
+
+    it('get an expense with associated comments empty', async () => {
+      const result = await utils.graphqlQueryV2(
+        expenseQuery,
+        {
+          id: `${expense1.id}`,
+          limit: 5,
+          offset: 0,
+        },
+        collectiveAdmin,
+      );
+      utils.expectNoErrorsFromResult(result);
       expect(result.data.expense.comments.totalCount).to.equal(0);
       expect(result.data.expense.comments.nodes).to.have.length(0);
     });
+
     it('get expense with associated comments', async () => {
       await populateComments();
       const result = await utils.graphqlQueryV2(expenseQuery, {
@@ -400,14 +452,14 @@ describe('server/graphql/v1/comments', () => {
         .reverse()
         .slice(0, 5)
         .forEach((comment, index) => {
-          expect(result.data.expense.comments.nodes[index].html).to.contain(comment.markdown);
+          expect(result.data.expense.comments.nodes[index].html).to.contain(comment.hmtl);
         });
     });
   });
 
   describe('V2 - edit a comment', () => {
     const editCommentQuery = `
-      mutation editComment($comment: CommentEdit!) {
+      mutation editComment($comment: CommentUpdateInput!) {
         editComment(comment: $comment) {
           id
           markdown
@@ -434,29 +486,26 @@ describe('server/graphql/v1/comments', () => {
       );
     });
     it('edits a comment successfully', async () => {
-      const markdown = 'new *comment* text';
       const html = '<p>new <em>comment</em> text</p>';
       const result = await utils.graphqlQueryV2(
         editCommentQuery,
-        { comment: { id: idEncode(comment1.id), markdown } },
+        { comment: { id: idEncode(comment1.id), html } },
         collectiveAdmin,
       );
       utils.expectNoErrorsFromResult(result);
 
       // Check the returned edited comment has the correct value.
       expect(result.data.editComment.html).to.equal(html);
-      expect(result.data.editComment.markdown).to.equal(markdown);
 
       // Check the database has the correct value.
       const comment = await models.Comment.findByPk(comment1.id);
       expect(comment.html).to.equal(html);
-      expect(comment.markdown).to.equal(markdown);
     });
   });
 
   describe('V2 - create a comment', () => {
     const createCommentQuery = `
-      mutation createComment($comment: CommentCreate!) {
+      mutation createComment($comment: CommentCreateInput!) {
         createComment(comment: $comment) {
           id
           markdown
@@ -466,13 +515,19 @@ describe('server/graphql/v1/comments', () => {
     `;
 
     it('fails if not authenticated', async () => {
-      const result = await utils.graphqlQueryV2(createCommentQuery, { comment });
+      const result = await utils.graphqlQueryV2(createCommentQuery, {
+        comment: { html: comment.html, expense: { legacyId: comment.ExpenseId } },
+      });
       expect(result.errors).to.have.length(1);
       expect(result.errors[0].message).to.equal('You must be logged in to create a comment');
     });
 
     it('creates a comment', async () => {
-      const result = await utils.graphqlQueryV2(createCommentQuery, { comment }, user1);
+      const result = await utils.graphqlQueryV2(
+        createCommentQuery,
+        { comment: { html: comment.html, expense: { legacyId: comment.ExpenseId } } },
+        user1,
+      );
       utils.expectNoErrorsFromResult(result);
       const createdComment = result.data.createComment;
       expect(createdComment.html).to.equal('<p>This is the <strong>comment</strong></p>');

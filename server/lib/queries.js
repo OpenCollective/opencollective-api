@@ -4,9 +4,10 @@ import { get, pick } from 'lodash';
 
 import { memoize } from './cache';
 import { convertToCurrency } from './currency';
-import models, { sequelize, Op } from '../models';
+import sequelize, { Op } from './sequelize';
 
 const twoHoursInSeconds = 2 * 60 * 60;
+const models = sequelize.models;
 
 /*
  * Hacky way to do currency conversion
@@ -249,7 +250,7 @@ const getTopExpenseCategories = (CollectiveId, options = {}) => {
 
   return sequelize.query(
     `
-    SELECT category, COUNT(*) as "count", SUM("amount") as "totalExpenses"
+    SELECT tags[1] as category, COUNT(*) as "count", SUM("amount") as "totalExpenses"
     FROM "Expenses" e
     WHERE "CollectiveId"=:CollectiveId AND e.status!='REJECTED' ${since} ${until}
     GROUP BY category
@@ -625,16 +626,10 @@ const getMembersWithTotalDonations = (where, options = {}) => {
   const untilCondition = table => {
     let condition = '';
     if (options.since) {
-      condition += `AND ${table}."createdAt" >= '${options.since
-        .toISOString()
-        .toString()
-        .substr(0, 10)}'`;
+      condition += `AND ${table}."createdAt" >= '${options.since.toISOString().toString().substr(0, 10)}'`;
     }
     if (options.until) {
-      condition += `AND ${table}."createdAt" < '${options.until
-        .toISOString()
-        .toString()
-        .substr(0, 10)}'`;
+      condition += `AND ${table}."createdAt" < '${options.until.toISOString().toString().substr(0, 10)}'`;
     }
     return condition;
   };
@@ -744,12 +739,7 @@ const getMembersWithTotalDonations = (where, options = {}) => {
 const getMembersWithBalance = (where, options = {}) => {
   const { until } = options;
   const untilCondition = table =>
-    until
-      ? `AND ${table}."createdAt" < '${until
-          .toISOString()
-          .toString()
-          .substr(0, 10)}'`
-      : '';
+    until ? `AND ${table}."createdAt" < '${until.toISOString().toString().substr(0, 10)}'` : '';
   const roleCond = where.role ? `AND member.role = '${where.role}'` : '';
 
   let types,
@@ -884,7 +874,9 @@ const getCollectivesWithMinBackersQuery = async ({
   offset = 0,
   where = {},
 }) => {
-  if (where.type) delete where.type;
+  if (where.type) {
+    delete where.type;
+  }
 
   const whereStatement = Object.keys(where).reduce((statement, key) => `${statement} AND c."${key}"=$${key}`, '');
   const params = {
@@ -922,6 +914,43 @@ const getCollectivesWithMinBackersQuery = async ({
   return { total, collectives };
 };
 
+const getBalances = async (collectiveIds, until = new Date()) =>
+  sequelize.query(
+    `
+        WITH "blockedFunds" AS (
+          SELECT
+            e."CollectiveId", COALESCE(sum(e.amount), 0) as sum
+          FROM
+            "Expenses" e
+          WHERE
+            e."CollectiveId" IN (:ids)
+            AND e."deletedAt" IS NULL
+            AND e."createdAt" < :until
+            AND (
+              e.status = 'SCHEDULED_FOR_PAYMENT'
+              OR (
+                e.status = 'PROCESSING' AND e.data ->> 'payout_batch_id' IS NOT NULL
+              )
+          )
+          GROUP BY
+            e."CollectiveId"
+        )
+        SELECT
+          t."CollectiveId",
+          COALESCE(sum(t."netAmountInCollectiveCurrency") - COALESCE(max(bf.sum), 0), 0) AS "balance"
+        FROM
+          "Transactions" t
+        LEFT JOIN "blockedFunds" bf ON t."CollectiveId" = bf."CollectiveId"
+        WHERE
+          t."CollectiveId" IN (:ids)
+          AND t."deletedAt" IS NULL
+          AND t."createdAt" < :until
+        GROUP BY
+          t."CollectiveId";
+      `,
+    { type: sequelize.QueryTypes.SELECT, replacements: { ids: collectiveIds, until } },
+  );
+
 const serializeCollectivesResult = JSON.stringify;
 
 const unserializeCollectivesResult = string => {
@@ -946,6 +975,7 @@ const getCollectivesWithMinBackers = memoize(getCollectivesWithMinBackersQuery, 
 
 const queries = {
   getHosts,
+  getBalances,
   getCollectivesOrderedByMonthlySpending,
   getCollectivesOrderedByMonthlySpendingQuery,
   getTotalDonationsByCollectiveType,
