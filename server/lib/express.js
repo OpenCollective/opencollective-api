@@ -3,7 +3,6 @@ import config from 'config';
 import connectRedis from 'connect-redis';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import debug from 'debug';
 import errorHandler from 'errorhandler';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -17,10 +16,11 @@ import { Strategy as TwitterStrategy } from 'passport-twitter';
 import { Strategy as MeetupStrategy } from 'passport-meetup-oauth2';
 import { has, get } from 'lodash';
 
+import logger from './logger';
 import forest from './forest';
 import cacheMiddleware from '../middleware/cache';
 import { loadersMiddleware } from '../graphql/loaders';
-import { sanitizeForLogs } from '../lib/utils';
+import { sanitizeForLogs } from './utils';
 
 export default function(app) {
   app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal'].concat(cloudflareIps));
@@ -30,22 +30,6 @@ export default function(app) {
   // Loaders are attached to the request to batch DB queries per request
   // It also creates in-memory caching (based on request auth);
   app.use(loadersMiddleware);
-
-  if (process.env.DEBUG && process.env.DEBUG.match(/response/)) {
-    app.use((req, res, next) => {
-      const temp = res.end;
-      res.end = function(str) {
-        try {
-          const obj = JSON.parse(str);
-          debug('response')(JSON.stringify(obj, null, '  '));
-        } catch (e) {
-          debug('response', str);
-        }
-        temp.apply(this, arguments);
-      };
-      next();
-    });
-  }
 
   // Log requests if enabled (default false)
   if (get(config, 'log.accessLogs')) {
@@ -100,17 +84,17 @@ export default function(app) {
   if (has(config, 'github.clientID') && has(config, 'github.clientSecret')) {
     passport.use(new GitHubStrategy(get(config, 'github'), verify));
   } else {
-    console.warn('Configuration missing for passport GitHubStrategy, skipping.');
+    logger.info('Configuration missing for passport GitHubStrategy, skipping.');
   }
   if (has(config, 'meetup.clientID') && has(config, 'meetup.clientSecret')) {
     passport.use(new MeetupStrategy(get(config, 'meetup'), verify));
   } else {
-    console.warn('Configuration missing for passport MeetupStrategy, skipping.');
+    logger.info('Configuration missing for passport MeetupStrategy, skipping.');
   }
   if (has(config, 'twitter.consumerKey') && has(config, 'twitter.consumerSecret')) {
     passport.use(new TwitterStrategy(get(config, 'twitter'), verify));
   } else {
-    console.warn('Configuration missing for passport TwitterStrategy, skipping.');
+    logger.info('Configuration missing for passport TwitterStrategy, skipping.');
   }
 
   app.use(cookieParser());

@@ -11,10 +11,6 @@ import { getHostedCollectives, getBackersStats, sumTransactions } from '../serve
 
 const debug = debugLib('hostreport');
 
-if (process.env.SKIP_PLATFORM_STATS) {
-  console.log('Skipping computing platform stats');
-}
-
 const summary = {
   totalHosts: 0,
   totalActiveHosts: 0,
@@ -52,7 +48,7 @@ async function HostReport(year, month, hostId) {
     createdAt: { [Op.gte]: startDate, [Op.lt]: endDate },
   };
 
-  const emailTemplate = yearlyReport ? 'host.yearlyreport' : 'host.monthlyreport';
+  const emailTemplate = yearlyReport ? 'host.yearlyreport' : 'host.monthlyreport'; // NOTE: this will be later converted to 'host.report'
   const reportName = yearlyReport ? `${year} Yearly Host Report` : `${year}/${month + 1} Monthly Host Report`;
   const dateFormat = yearlyReport ? 'YYYY' : 'YYYYMM';
   const csv_filename = `${moment(d).format(dateFormat)}-transactions.csv`;
@@ -62,8 +58,9 @@ async function HostReport(year, month, hostId) {
   year = year || startDate.getFullYear();
 
   let previewCondition = '';
-  if (process.env.DEBUG && process.env.DEBUG.match(/preview/))
-    previewCondition = 'AND c.id IN (11004, 9804, 9802, 9801)'; // open source collective host, wwcode host, brusselstogether, changex
+  if (process.env.DEBUG && process.env.DEBUG.match(/preview/)) {
+    previewCondition = 'AND c.id IN (11004, 9804, 9802, 9801)';
+  } // open source collective host, wwcode host, brusselstogether, changex
   // previewCondition = "AND c.id IN (9802)"; // brusselstogether
 
   if (hostId) {
@@ -73,7 +70,10 @@ async function HostReport(year, month, hostId) {
   if (process.env.SLUGS) {
     const slugs = process.env.SLUGS.split(',');
     previewCondition = `AND c.slug IN ('${slugs.join("','")}')`;
-    process.env.SKIP_PLATFORM_STATS = true;
+  }
+  if (process.env.SKIP_SLUGS) {
+    const slugs = process.env.SKIP_SLUGS.split(',');
+    previewCondition = `AND c.slug NOT IN ('${slugs.join("','")}')`;
   }
 
   const getHostStats = (host, collectiveids) => {
@@ -285,16 +285,23 @@ async function HostReport(year, month, hostId) {
         });
       })
       .then(transactions => (data.transactions = transactions))
-      .then(() =>
-        exportToPDF('expenses', data, {
+      .then(() => {
+        // Don't generate PDF in email if it's the yearly report
+        if (yearlyReport) {
+          return;
+        }
+        return exportToPDF('expenses', data, {
           paper: host.currency === 'USD' ? 'Letter' : 'A4',
-        }),
-      )
-      .then(pdf => {
-        attachments.push({
-          filename: pdf_filename,
-          content: pdf,
         });
+      })
+      .then(pdf => {
+        if (pdf) {
+          attachments.push({
+            filename: pdf_filename,
+            content: pdf,
+          });
+          data.expensesPdf = true;
+        }
       })
       .then(() => getHostStats(host, Object.keys(collectivesById)))
       .then(stats => {
@@ -347,7 +354,7 @@ async function HostReport(year, month, hostId) {
       .then(() => getHostAdminsEmails(host))
       .then(admins => sendEmail(admins, data, attachments))
       .catch(e => {
-        console.error(`Error in processing host ${host.slug}:`, e.message, e);
+        console.error(`Error in processing host ${host.slug}:`, e.message);
         debug(e);
       });
   };

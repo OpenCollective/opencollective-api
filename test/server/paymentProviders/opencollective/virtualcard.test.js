@@ -9,12 +9,14 @@ import { expect } from 'chai';
 import app from '../../../../server/index';
 import models from '../../../../server/models';
 import virtualcard from '../../../../server/paymentProviders/opencollective/virtualcard';
+import creditCardLib from '../../../../server/paymentProviders/stripe/creditcard';
 import emailLib from '../../../../server/lib/email';
 import { maxInteger } from '../../../../server/constants/math';
 
 import * as utils from '../../../utils';
 import * as store from '../../../stores';
 import initNock from '../../../nocks/paymentMethods.opencollective.virtualcard.nock';
+import { fakeOrder } from '../../../test-helpers/fake-data';
 
 const ORDER_TOTAL_AMOUNT = 5000;
 const STRIPE_FEE_STUBBED_VALUE = 300;
@@ -67,7 +69,7 @@ const createOrderQuery = `
   }
 `;
 
-describe('opencollective.virtualcard', () => {
+describe('server/paymentProviders/opencollective/virtualcard', () => {
   let sandbox, sendEmailSpy;
 
   before(initNock);
@@ -528,6 +530,36 @@ describe('opencollective.virtualcard', () => {
         });
         expect(collectiveMember).to.exist;
       }); /** End Of "Process order of a virtual card" */
+
+      describe('if the transaction fails', () => {
+        let creditCardProcessOrderMock;
+
+        beforeEach(() => {
+          creditCardProcessOrderMock = sinon.stub(creditCardLib, 'processOrder');
+        });
+
+        afterEach(() => {
+          creditCardProcessOrderMock.restore();
+        });
+
+        it('does not mess up with the PaymentMethodId', async () => {
+          const order = await fakeOrder({ PaymentMethodId: virtualCardPaymentMethod.id, totalAmount: 100 });
+          creditCardProcessOrderMock.callsFake(order =>
+            order.save().then(() => {
+              throw new Error();
+            }),
+          );
+
+          try {
+            await virtualcard.processOrder(order);
+          } catch {
+            // Ignore error
+          }
+
+          await order.reload();
+          expect(order.PaymentMethodId).to.eq(virtualCardPaymentMethod.id);
+        });
+      });
     }); /** End Of "#processOrder" */
 
     describe('#refundTransaction', () => {
@@ -598,19 +630,16 @@ describe('opencollective.virtualcard', () => {
 
       it('refunds transaction and restore balance', async () => {
         const initialBalance = await virtualcard.getBalance(virtualCardPm);
-        const orderData = {
-          createdByUser: user,
+        const order = await fakeOrder({
           CreatedByUserId: user.id,
-          fromCollective: user.collective,
           FromCollectiveId: user.collective.id,
-          collective: targetCollective,
           CollectiveId: targetCollective.id,
-          paymentMethod: virtualCardPm,
+          PaymentMethodId: virtualCardPm.id,
           totalAmount: 1000,
           currency: 'USD',
-        };
+        });
 
-        const transaction = await virtualcard.processOrder(orderData);
+        const transaction = await virtualcard.processOrder(order);
         expect(transaction).to.exist;
 
         // Check balance decreased

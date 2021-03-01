@@ -1,7 +1,7 @@
 import pg from 'pg';
 import Sequelize from 'sequelize';
 import config from 'config';
-import debug from 'debug';
+import debugLib from 'debug';
 
 import logger from '../lib/logger';
 import { getDBConf } from '../lib/db';
@@ -11,6 +11,7 @@ import { getDBConf } from '../lib/db';
 pg.defaults.parseInt8 = true;
 
 const dbConfig = getDBConf('database');
+const debug = debugLib('psql');
 
 /**
  * Database connection.
@@ -26,12 +27,12 @@ if (config.database.options.logging) {
   if (process.env.NODE_ENV === 'production') {
     config.database.options.logging = (query, executionTime) => {
       if (executionTime > 50) {
-        debug('psql')(query.replace(/(\n|\t| +)/g, ' ').slice(0, 100), '|', executionTime, 'ms');
+        debug(query.replace(/(\n|\t| +)/g, ' ').slice(0, 100), '|', executionTime, 'ms');
       }
     };
   } else {
     config.database.options.logging = (query, executionTime) => {
-      debug('psql')(
+      debug(
         '\n-------------------- <query> --------------------\n',
         query,
         `\n-------------------- </query executionTime="${executionTime}"> --------------------\n`,
@@ -79,11 +80,14 @@ export function setupModels(client) {
     'Conversation',
     'ConversationFollower',
     'Expense',
+    'ExpenseAttachment',
     'LegalDocument',
     'Member',
+    'MemberInvitation',
     'Notification',
     'Order',
     'PaymentMethod',
+    'PayoutMethod',
     'RequiredLegalDocument',
     'Session',
     'Subscription',
@@ -138,10 +142,38 @@ export function setupModels(client) {
   });
   m.Member.belongsTo(m.Tier);
 
+  // Member invitations
+  m.MemberInvitation.belongsTo(m.User, {
+    foreignKey: 'CreatedByUserId',
+    as: 'createdByUser',
+  });
+
+  m.MemberInvitation.belongsTo(m.Collective, {
+    foreignKey: 'MemberCollectiveId',
+    as: 'memberCollective',
+  });
+
+  m.MemberInvitation.belongsTo(m.Collective, {
+    foreignKey: 'CollectiveId',
+    as: 'collective',
+  });
+
+  m.MemberInvitation.belongsTo(m.Tier);
+
   // Activity.
   m.Activity.belongsTo(m.Collective);
   m.Activity.belongsTo(m.User);
   m.Activity.belongsTo(m.Transaction);
+
+  // Conversation
+  m.Conversation.belongsTo(m.Collective, {
+    foreignKey: 'CollectiveId',
+    as: 'collective',
+  });
+  m.Conversation.belongsTo(m.Collective, {
+    foreignKey: 'FromCollectiveId',
+    as: 'fromCollective',
+  });
 
   // Notification.
   m.Notification.belongsTo(m.User);
@@ -176,12 +208,22 @@ export function setupModels(client) {
 
   // Expense
   m.Expense.belongsTo(m.User);
+  m.Expense.belongsTo(m.PayoutMethod);
   m.Expense.belongsTo(m.Collective, {
     foreignKey: 'CollectiveId',
     as: 'collective',
   });
+  m.Expense.belongsTo(m.Collective, {
+    foreignKey: 'FromCollectiveId',
+    as: 'fromCollective',
+  });
+  m.Expense.hasMany(m.ExpenseAttachment);
+  m.Expense.hasMany(m.Transaction);
   m.Transaction.belongsTo(m.Expense);
   m.Transaction.belongsTo(m.Order);
+
+  // Expense attachments
+  m.ExpenseAttachment.belongsTo(m.Expense);
 
   // Order.
   m.Order.belongsTo(m.User, {
@@ -215,6 +257,10 @@ export function setupModels(client) {
   });
   m.PaymentMethod.hasMany(m.Order);
   m.Transaction.belongsTo(m.PaymentMethod);
+
+  // Payout method
+  m.PayoutMethod.belongsTo(m.User, { foreignKey: 'CreatedByUserId', as: 'createdByUser' });
+  m.PayoutMethod.belongsTo(m.Collective);
 
   // Tier
   m.Tier.belongsTo(m.Collective);
