@@ -1,7 +1,8 @@
 import { expect } from 'chai';
 import sinon from 'sinon';
-import * as utils from '../../utils';
+
 import models from '../../../server/models';
+import * as utils from '../../utils';
 
 const { Transaction } = models;
 
@@ -9,7 +10,7 @@ const userData = utils.data('user1');
 const collectiveData = utils.data('collective1');
 const transactionsData = utils.data('transactions1').transactions;
 
-describe('transaction model', () => {
+describe('server/models/Transaction', () => {
   let user, host, collective, defaultTransactionData;
 
   beforeEach(() => utils.resetTestDB());

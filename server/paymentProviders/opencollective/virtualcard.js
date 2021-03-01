@@ -1,16 +1,16 @@
-import moment from 'moment';
-import uuidv4 from 'uuid/v4';
-import { get, times, isEmpty } from 'lodash';
 import config from 'config';
+import { get, isEmpty, times } from 'lodash';
+import moment from 'moment';
 import sanitize from 'sanitize-html';
+import { v4 as uuid } from 'uuid';
 
-import models, { Op, sequelize } from '../../models';
-import * as libpayments from '../../lib/payments';
-import * as currency from '../../lib/currency';
-import { formatCurrency, isValidEmail } from '../../lib/utils';
-import emailLib from '../../lib/email';
-import cache from '../../lib/cache';
 import { ValidationFailed } from '../../graphql/errors';
+import cache from '../../lib/cache';
+import * as currency from '../../lib/currency';
+import emailLib from '../../lib/email';
+import * as libpayments from '../../lib/payments';
+import { formatCurrency, isValidEmail } from '../../lib/utils';
+import models, { Op, sequelize } from '../../models';
 
 /**
  * Virtual Card Payment method - This payment Method works basically as an alias
@@ -102,17 +102,24 @@ async function processOrder(order) {
   }
   // finding Source Payment method and update order payment method properties
   const sourcePaymentMethod = await models.PaymentMethod.findByPk(paymentMethod.SourcePaymentMethodId);
-  // modifying original order to then process the order of the source payment method
-  order.PaymentMethodId = sourcePaymentMethod.id;
-  order.paymentMethod = sourcePaymentMethod;
+
   // finding the payment provider lib to execute the order
   const sourcePaymentMethodProvider = libpayments.findPaymentMethodProvider(sourcePaymentMethod);
 
-  // gets the Credit transaction generated
-  let creditTransaction = await sourcePaymentMethodProvider.processOrder(order);
-  // undo modification of original order after processing the source payment method order
-  order.PaymentMethodId = paymentMethod.id;
-  order.paymentMethod = paymentMethod;
+  let creditTransaction = null;
+  try {
+    // modifying original order to then process the order of the source payment method
+    order.PaymentMethodId = sourcePaymentMethod.id;
+    order.paymentMethod = sourcePaymentMethod;
+    // gets the Credit transaction generated
+    creditTransaction = await sourcePaymentMethodProvider.processOrder(order);
+  } finally {
+    // undo modification of original order after processing the source payment method order
+    await order.update({ PaymentMethodId: paymentMethod.id });
+    order.PaymentMethodId = paymentMethod.id;
+    order.paymentMethod = paymentMethod;
+  }
+
   // gets the Debit transaction generated through the TransactionGroup field.
   const updatedTransactions = await models.Transaction.update(
     {
@@ -168,7 +175,7 @@ async function create(args, remoteUser) {
 
   const createParams = getCreateParams(args, collective, sourcePaymentMethod, remoteUser);
   const virtualCard = await models.PaymentMethod.create(createParams);
-  sendVirtualCardCreatedEmail(virtualCard, collective);
+  sendVirtualCardCreatedEmail(virtualCard, collective.info);
   registerCreateInCache(args.CollectiveId, 1, totalAmount);
   return virtualCard;
 }
@@ -182,7 +189,9 @@ async function create(args, remoteUser) {
  * @param {integer} count
  */
 export async function bulkCreateVirtualCards(args, remoteUser, count) {
-  if (!count) return [];
+  if (!count) {
+    return [];
+  }
 
   // Check rate limit
   const totalAmount = (args.amount || args.monthlyLimitPerMember) * count;
@@ -237,7 +246,7 @@ export async function createVirtualCardsForEmails(args, remoteUser, emails, cust
     return getCreateParams(createArgs, collective, sourcePaymentMethod, remoteUser);
   });
   const virtualCards = models.PaymentMethod.bulkCreate(virtualCardsParams);
-  virtualCards.map(vc => sendVirtualCardCreatedEmail(vc, collective));
+  virtualCards.map(vc => sendVirtualCardCreatedEmail(vc, collective.info));
   registerCreateInCache(args.CollectiveId, virtualCards.length, totalAmount);
   return virtualCards;
 }
@@ -349,11 +358,7 @@ function getCreateParams(args, collective, sourcePaymentMethod, remoteUser) {
   }
 
   // Set a default expirity date to 2 years by default
-  const expiryDate = args.expiryDate
-    ? moment(args.expiryDate).format()
-    : moment()
-        .add(24, 'months')
-        .format();
+  const expiryDate = args.expiryDate ? moment(args.expiryDate).format() : moment().add(24, 'months').format();
 
   // If monthlyLimitPerMember is defined, we ignore the amount field and
   // consider monthlyLimitPerMember times the months from now until the expiry date
@@ -411,7 +416,7 @@ function getCreateParams(args, collective, sourcePaymentMethod, remoteUser) {
     limitedToTags: args.limitedToTags,
     limitedToCollectiveIds: isEmpty(args.limitedToCollectiveIds) ? null : args.limitedToCollectiveIds,
     limitedToHostCollectiveIds: isEmpty(args.limitedToHostCollectiveIds) ? null : args.limitedToHostCollectiveIds,
-    uuid: uuidv4(),
+    uuid: uuid(),
     service: 'opencollective',
     type: 'virtualcard',
     createdAt: new Date(),
@@ -478,7 +483,7 @@ async function claim(args, remoteUser) {
   if (!sourcePaymentMethod || sourcePaymentMethod.CollectiveId !== virtualCardPaymentMethod.CollectiveId) {
     throw Error('Gift Card already redeemed');
   } else if (virtualCardPaymentMethod.expiryDate < new Date()) {
-    throw new ValidationFailed({ message: `This gift card has expired` });
+    throw new ValidationFailed(`This gift card has expired`);
   }
 
   // find or creating a user with its collective

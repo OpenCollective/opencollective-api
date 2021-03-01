@@ -1,15 +1,15 @@
-import config from 'config';
 import Promise from 'bluebird';
-import Twitter from 'twitter';
-import IntlMessageFormat from 'intl-messageformat';
+import config from 'config';
 import debugLib from 'debug';
-import { has, get } from 'lodash';
-
-import models from '../models';
-import logger from './logger';
-import { formatCurrency } from './utils';
+import IntlMessageFormat from 'intl-messageformat';
+import { get, has } from 'lodash';
+import Twitter from 'twitter';
 
 import activityType from '../constants/activities';
+import models from '../models';
+
+import logger from './logger';
+import { formatCurrency } from './utils';
 
 const debug = debugLib('twitter');
 
@@ -99,12 +99,14 @@ const tweetStatus = (twitterAccount, status, url, options = {}) => {
 
   debug('tweeting status: ', status, 'with options:', options);
   if (has(config, 'twitter.consumerKey') && has(config, 'twitter.consumerSecret')) {
+    /* eslint-disable camelcase */
     const client = new Twitter({
       consumer_key: get(config, 'twitter.consumerKey'),
       consumer_secret: get(config, 'twitter.consumerSecret'),
       access_token_key: twitterAccount.clientId,
       access_token_secret: twitterAccount.token,
     });
+    /* eslint-enable camelcase */
 
     return client.post('statuses/update', { status, ...options }).catch(err => {
       err = Array.isArray(err) ? err.shift() : err;

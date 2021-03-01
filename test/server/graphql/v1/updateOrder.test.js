@@ -1,9 +1,9 @@
-import sinon from 'sinon';
 import { expect } from 'chai';
 import { pick } from 'lodash';
+import sinon from 'sinon';
 
-import * as utils from '../../../utils';
 import models from '../../../../server/models';
+import * as utils from '../../../utils';
 
 const ordersData = utils.data('orders');
 
@@ -90,7 +90,7 @@ describe('server/graphql/v1/updateOrder', () => {
 
     utils.stubStripeCreate(sandbox, {
       // charge: { currency: 'eur', status: 'succeeded' },
-      paymentIntent: {
+      paymentIntentConfirmed: {
         charges: { data: [{ currency: 'eur', status: 'succeeded' }] },
         status: 'succeeded',
       },

@@ -1,13 +1,9 @@
-// Test tools
 import { expect } from 'chai';
 import nock from 'nock';
-import * as utils from '../../../utils';
 
-// Components needed for writing the test
 import models from '../../../../server/models';
-
-// What's being tested
 import creditcard from '../../../../server/paymentProviders/stripe/creditcard';
+import * as utils from '../../../utils';
 
 async function createOrderWithPaymentMethod(paymentMethodName, orderParams = {}) {
   const user = await models.User.createUserWithCollective({
@@ -53,29 +49,28 @@ async function createOrderWithPaymentMethod(paymentMethodName, orderParams = {})
   return { order, user, collective, paymentMethod, connectedAccount };
 }
 
-describe('paymentmethods.stripe.creditcard', () => {
+describe('server/paymentProviders/stripe/creditcard', () => {
   describe('#processOrder()', async () => {
     let secondCallToCreateCustomer;
 
     beforeEach(() => utils.resetTestDB());
 
+    /* eslint-disable camelcase */
     beforeEach(() => {
       // Call performed by getOrCreateCustomerOnPlatformAccount
-      nock('https://api.stripe.com:443')
-        .post('/v1/customers')
-        .reply(200, {});
+      nock('https://api.stripe.com:443').post('/v1/customers').reply(200, {});
 
       // Calls performed by getOrCreateCustomerIdForHost
-      nock('https://api.stripe.com:443')
-        .post('/v1/tokens')
-        .reply(200, {});
-      secondCallToCreateCustomer = nock('https://api.stripe.com:443')
-        .post('/v1/customers')
-        .reply(200, {});
+      nock('https://api.stripe.com:443').post('/v1/tokens').reply(200, {});
+      secondCallToCreateCustomer = nock('https://api.stripe.com:443').post('/v1/customers').reply(200, {});
 
       // Calls performed by createChargeAndTransactions
+      nock('https://api.stripe.com:443').post('/v1/payment_intents').reply(200, {
+        id: 'pi_1F82vtBYycQg1OMfS2Rctiau',
+        status: 'requires_confirmation',
+      });
       nock('https://api.stripe.com:443')
-        .post('/v1/payment_intents')
+        .post('/v1/payment_intents/pi_1F82vtBYycQg1OMfS2Rctiau/confirm')
         .reply(200, {
           charges: {
             data: [{ id: 'ch_1B5j91D8MNtzsDcgNMsUgI8L', balance_transaction: 'txn_1B5j92D8MNtzsDcgQzIcmfrn' }],
@@ -86,6 +81,7 @@ describe('paymentmethods.stripe.creditcard', () => {
         .get('/v1/balance_transactions/txn_1B5j92D8MNtzsDcgQzIcmfrn')
         .reply(200, { amount: 1000, fee: 0, fee_details: [] });
     });
+    /* eslint-enable camelcase */
 
     afterEach(() => nock.cleanAll());
 
