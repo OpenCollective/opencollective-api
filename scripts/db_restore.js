@@ -2,6 +2,7 @@
 import '../server/env';
 
 import { ArgumentParser } from 'argparse';
+
 import * as libdb from '../server/lib/db';
 
 /** Help on how to use this script */
@@ -62,4 +63,6 @@ function parseCommandLineArguments() {
   return parser.parseArgs();
 }
 
-if (!module.parent) main(parseCommandLineArguments());
+if (!module.parent) {
+  main(parseCommandLineArguments());
+}
