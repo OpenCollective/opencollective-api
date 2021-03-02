@@ -92,6 +92,7 @@ export const SPAMMERS_DOMAINS = [
   'biznutra.com',
   'biznutrition.com',
   'bollyshake.com',
+  'bonfire.com',
   'bumpsweat.com',
   'buypurelifeketo.com',
   'buzrush.com',
@@ -133,9 +134,11 @@ export const SPAMMERS_DOMAINS = [
   'getyouroffers.xyz',
   'givebutter.com',
   'health4trend.com',
+  'healthcarthub.com',
   'healthline.com',
   'healthlinenutrition.com',
   'healthmassive.com',
+  'healthmife.com',
   'healthonlinecare.com',
   'healthsupplementcart.com',
   'healthtalkrev.blogspot.com',
@@ -173,6 +176,7 @@ export const SPAMMERS_DOMAINS = [
   'ketofasttrim.com',
   'ketofitstore.com',
   'ketogenicdietpills.com',
+  'ketogenicsupplementsreview.com',
   'ketohour.com',
   'ketopiller.com',
   'ketoplanusa.com',
@@ -185,6 +189,7 @@ export const SPAMMERS_DOMAINS = [
   'ketotrin.info',
   'ketovatrudiet.info',
   'ketoviante.info',
+  'ktc.instructure.com',
   'lakubet.co',
   'lunaireketobhb.blogspot.com',
   'mafiatek.my.id',
@@ -203,6 +208,7 @@ export const SPAMMERS_DOMAINS = [
   'myshorturl.net',
   'myunbiasedreview.wordpress.com',
   'naturalketopill.com',
+  'netchorus.com',
   'norton.com',
   'nutraplatform.com',
   'nutrifitweb.com',
@@ -216,6 +222,7 @@ export const SPAMMERS_DOMAINS = [
   'orderfitness.org',
   'organicsupplementdietprogram.com',
   'ourunbiasedreview.blogspot.com',
+  'paper.li',
   'patch.com',
   'penzu.com',
   'petsaw.com',
@@ -223,10 +230,12 @@ export const SPAMMERS_DOMAINS = [
   'pillsfact.com',
   'pillsfect.com',
   'pillsmumy.com',
+  'pillsvibe.com',
   'pilsadiet.com',
   'plarium.com',
   'pornlike.net',
   'praltrix.info',
+  'products99.com',
   'pubhtml5.com',
   'publons.com',
   'purefiter.com',
@@ -289,6 +298,7 @@ export const SPAMMERS_DOMAINS = [
   'trentandallievan.com',
   'tripoto.com',
   'trippleresult.com',
+  'tryittoday.xyz',
   'trypurenutrition.com',
   'uchearts.com',
   'udaipurqueen.com',
@@ -297,10 +307,13 @@ export const SPAMMERS_DOMAINS = [
   'webcampornodirecto.es',
   'weddingwire.us',
   'wellnessketoz.com',
+  'wfmj.com',
   'wheretocare.com',
   'wintersupplement.com',
+  'wiseintro.co',
   'works.bepress.com',
   'worldgymdiet.com',
+  'wow-keto.com',
   'zobuz.com',
 ];
 
@@ -401,7 +414,9 @@ const getBayesClassifier = async (): Promise<BayesClassifier> => {
 };
 
 export const collectiveBayesCheck = async (collective: any, extraString: string): Promise<string> => {
-  const content = `${collective.slug} ${collective.name} ${collective.description} ${collective.longDescription} ${collective.website} ${extraString}`;
+  const content = `${collective.slug.split('-').join(' ')} ${collective.name} ${collective.description} ${
+    collective.longDescription
+  } ${collective.website} ${extraString}`;
 
   const classifier = await getBayesClassifier();
 

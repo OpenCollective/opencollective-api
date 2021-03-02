@@ -14,6 +14,7 @@ import {
   isNull,
   omit,
   pick,
+  round,
   sum,
   sumBy,
   trim,
@@ -54,52 +55,25 @@ import { buildSanitizerOptions, sanitizeHTML } from '../lib/sanitize-html';
 import { collectiveSpamCheck, notifyTeamAboutSuspiciousCollective } from '../lib/spam';
 import { canUseFeature } from '../lib/user-permissions';
 import userlib from '../lib/userlib';
-import { capitalize, cleanTags, flattenArray, formatCurrency, getDomain, md5, stripTags } from '../lib/utils';
+import {
+  capitalize,
+  cleanTags,
+  flattenArray,
+  formatCurrency,
+  getDomain,
+  md5,
+  stripTags,
+  sumByWhen,
+} from '../lib/utils';
 
 import CustomDataTypes from './DataTypes';
 import { PayoutMethodTypes } from './PayoutMethod';
 
 const debug = debugLib('models:Collective');
 
-export const defaultTiers = (HostCollectiveId, currency) => {
-  const tiers = [];
-
-  if (HostCollectiveId === 858) {
-    // if request coming from opencollective.com/meetups
-    tiers.push({
-      type: 'TIER',
-      name: '1 month',
-      description:
-        'Sponsor our meetup and get: a shout-out on social media, presence on the merch table and your logo on our meetup page.',
-      slug: '1month-sponsor',
-      amount: 25000,
-      button: 'become a sponsor',
-      currency: currency,
-    });
-    tiers.push({
-      type: 'TIER',
-      name: '3 months',
-      description:
-        '**10% off!** - Sponsor our meetup and get: a shout-out on social media, presence on the merch table and your logo on our meetup page.',
-      slug: '3month-sponsor',
-      amount: 67500,
-      button: 'become a sponsor',
-      currency: currency,
-    });
-    tiers.push({
-      type: 'TIER',
-      name: '6 months',
-      description:
-        '**20% off!** - Sponsor our meetup and get: a shout-out on social media, presence on the merch table and your logo on our meetup page.',
-      slug: '6month-sponsor',
-      amount: 120000,
-      button: 'become a sponsor',
-      currency: currency,
-    });
-    return tiers;
-  }
-  if (tiers.length === 0) {
-    tiers.push({
+const defaultTiers = currency => {
+  return [
+    {
       type: 'TIER',
       name: 'backer',
       slug: 'backers',
@@ -109,8 +83,8 @@ export const defaultTiers = (HostCollectiveId, currency) => {
       currency: currency,
       minimumAmount: 500,
       amountType: 'FLEXIBLE',
-    });
-    tiers.push({
+    },
+    {
       type: 'TIER',
       name: 'sponsor',
       slug: 'sponsors',
@@ -120,9 +94,8 @@ export const defaultTiers = (HostCollectiveId, currency) => {
       currency: currency,
       minimumAmount: 10000,
       amountType: 'FLEXIBLE',
-    });
-  }
-  return tiers;
+    },
+  ];
 };
 
 const validTypes = ['USER', 'COLLECTIVE', 'ORGANIZATION', 'EVENT', 'PROJECT', 'FUND', 'BOT'];
@@ -712,20 +685,22 @@ export default function (Sequelize, DataTypes) {
             instance.data = { ...instance.data, spamReport };
           }
         },
-        afterCreate: async instance => {
+        afterCreate: async (instance, options) => {
           instance.findImage();
 
           if ([types.COLLECTIVE, types.FUND, types.EVENT, types.PROJECT].includes(instance.type)) {
-            await models.PaymentMethod.create({
-              CollectiveId: instance.id,
-              service: 'opencollective',
-              type: 'collective',
-              name: `${instance.name} (${capitalize(instance.type.toLowerCase())})`,
-              primary: true,
-              currency: instance.currency,
-            });
+            await models.PaymentMethod.create(
+              {
+                CollectiveId: instance.id,
+                service: 'opencollective',
+                type: 'collective',
+                name: `${instance.name} (${capitalize(instance.type.toLowerCase())})`,
+                primary: true,
+                currency: instance.currency,
+              },
+              { transaction: options.transaction },
+            );
           }
-
           return null;
         },
         afterUpdate: async (instance, options) => {
@@ -952,7 +927,7 @@ export default function (Sequelize, DataTypes) {
 
   Collective.prototype.getOrCreateHostPaymentMethod = async function () {
     const hostPaymentMethod = await models.PaymentMethod.findOne({
-      where: { service: 'opencollective', type: 'host', CollectiveId: this.id },
+      where: { service: 'opencollective', type: 'host', CollectiveId: this.id, currency: this.currency },
     });
 
     if (hostPaymentMethod) {
@@ -993,6 +968,16 @@ export default function (Sequelize, DataTypes) {
     });
 
     return this;
+  };
+
+  Collective.prototype.hasBudget = function () {
+    if ([types.COLLECTIVE, types.EVENT, types.PROJECT, types.FUND].includes(this.type)) {
+      return true;
+    } else if (this.type === types.ORGANIZATION) {
+      return this.isHostAccount && this.isActive;
+    } else {
+      return false;
+    }
   };
 
   /**
@@ -1065,11 +1050,10 @@ export default function (Sequelize, DataTypes) {
   };
 
   /**
-   * If the collective is a host, this function return true in case it's open to applications.
-   * It does **not** check that the collective is indeed a host.
+   * Returns true if Collective is a host account open to applications.
    */
   Collective.prototype.canApply = async function () {
-    return Boolean(this.settings && this.settings.apply);
+    return Boolean(this.isHostAccount && this.settings?.apply);
   };
 
   /**
@@ -1142,7 +1126,7 @@ export default function (Sequelize, DataTypes) {
     debug('getUsers for ', this.id);
     return models.Member.findAll({
       where: { CollectiveId: this.id },
-      include: [{ model: models.Collective, as: 'memberCollective' }],
+      include: [{ model: models.Collective, as: 'memberCollective', required: true }],
     })
       .tap(memberships => debug('>>> members found', memberships.length))
       .map(membership => membership.memberCollective)
@@ -1716,7 +1700,7 @@ export default function (Sequelize, DataTypes) {
   Collective.prototype.getTotalMoneyManaged = async function (until) {
     const hostedCollectives = await this.getHostedCollectives();
     const ids = hostedCollectives.map(c => c.id);
-    const balances = await queries.getBalances(ids, until.toString());
+    const balances = await queries.getBalances(ids, until.toISOString());
     return sumBy(balances, 'balance');
   };
 
@@ -1724,7 +1708,7 @@ export default function (Sequelize, DataTypes) {
     if (typeof hostFeePercent === undefined || !remoteUser || hostFeePercent === this.hostFeePercent) {
       return;
     }
-    if (this.type === types.COLLECTIVE || this.type === types.EVENT) {
+    if ([types.COLLECTIVE, types.EVENT, types.FUND, types.PROJECT].includes(this.type)) {
       // only an admin of the host of the collective can edit `hostFeePercent` of a COLLECTIVE
       if (!remoteUser || !remoteUser.isAdmin(this.HostCollectiveId)) {
         throw new Error('Only an admin of the host collective can edit the host fee for this collective');
@@ -1753,6 +1737,44 @@ export default function (Sequelize, DataTypes) {
 
         // Update host
         return this.update({ hostFeePercent });
+      }
+    }
+    return this;
+  };
+
+  Collective.prototype.updatePlatformFee = async function (platformFeePercent, remoteUser) {
+    if (typeof platformFeePercent === undefined || !remoteUser || platformFeePercent === this.platformFeePercent) {
+      return;
+    }
+    if ([types.COLLECTIVE, types.EVENT, types.FUND, types.PROJECT].includes(this.type)) {
+      // only an admin of the host of the collective can edit `platformFeePercent` of a COLLECTIVE
+      if (!remoteUser || !remoteUser.isAdmin(this.HostCollectiveId)) {
+        throw new Error('Only an admin of the host collective can edit the host fee for this collective');
+      }
+      return this.update({ platformFeePercent });
+    } else {
+      const isHost = await this.isHost();
+      if (isHost) {
+        if (!remoteUser.isAdmin(this.id)) {
+          throw new Error('You must be an admin of this host to change the platform fee');
+        }
+
+        await models.Collective.update(
+          { platformFeePercent },
+          {
+            hooks: false,
+            where: {
+              HostCollectiveId: this.id,
+              approvedAt: { [Op.not]: null },
+              data: {
+                useCustomPlatformFee: { [Op.not]: true },
+              },
+            },
+          },
+        );
+
+        // Update host
+        return this.update({ platformFeePercent });
       }
     }
     return this;
@@ -1902,7 +1924,7 @@ export default function (Sequelize, DataTypes) {
     if (this.type === types.COLLECTIVE) {
       let tiers = await this.getTiers();
       if (!tiers || tiers.length === 0) {
-        tiers = defaultTiers(hostCollective.id, hostCollective.currency);
+        tiers = defaultTiers(hostCollective.currency);
         promises.push(models.Tier.createMany(tiers, { CollectiveId: this.id }));
       } else {
         // if the collective already had some tiers, we delete the ones that don't have the same currency
@@ -1947,7 +1969,18 @@ export default function (Sequelize, DataTypes) {
               'githubHandle',
             ]),
           },
+          application: {
+            message: options?.message,
+          },
         };
+
+        // Record application
+        promises.push(
+          models.HostApplication.recordApplication(hostCollective, this, {
+            message: options?.message,
+            customData: options?.applicationData,
+          }),
+        );
 
         if (!options?.skipCollectiveApplyActivity) {
           promises.push(
@@ -1992,7 +2025,7 @@ export default function (Sequelize, DataTypes) {
    * @param {*} newHostCollective: { id }
    * @param {*} remoteUser { id }
    */
-  Collective.prototype.changeHost = async function (newHostCollectiveId, remoteUser) {
+  Collective.prototype.changeHost = async function (newHostCollectiveId, remoteUser, message) {
     const balance = await this.getBalance();
     if (balance > 0) {
       throw new Error(`Unable to change host: you still have a balance of ${formatCurrency(balance, this.currency)}`);
@@ -2004,6 +2037,7 @@ export default function (Sequelize, DataTypes) {
         role: roles.HOST,
       },
     });
+
     if (membership) {
       await membership.destroy();
     }
@@ -2037,7 +2071,7 @@ export default function (Sequelize, DataTypes) {
       if (!newHostCollective.isHostAccount) {
         await newHostCollective.becomeHost({ remoteUser });
       }
-      return this.addHost(newHostCollective, remoteUser);
+      return this.addHost(newHostCollective, remoteUser, { message });
     } else {
       // if we remove the host
       return this.save();
@@ -2938,7 +2972,11 @@ export default function (Sequelize, DataTypes) {
    * @param {Date} from Defaults to beginning of the current month.
    * @param {Date} [to] Optional, defaults to the end of the 'from' month and 'from' is reseted to the beginning of its month.
    */
-  Collective.prototype.getHostMetrics = async function (from = moment().utc().startOf('month'), to) {
+  Collective.prototype.getHostMetrics = async function (
+    from = moment().utc().startOf('month'),
+    to,
+    { returnTransactions = false } = {},
+  ) {
     if (!this.isHostAccount || !this.isActive || this.type !== types.ORGANIZATION) {
       return null;
     }
@@ -2950,15 +2988,15 @@ export default function (Sequelize, DataTypes) {
     }
 
     const isPendingTransaction = t =>
-      t.PaymentMethod?.service !== 'stripe' && t.PaymentMethod?.sourcePaymentMethod?.service !== 'stripe';
+      !(t.PaymentMethod?.service == 'stripe' || t.PaymentMethod?.sourcePaymentMethod?.service == 'stripe');
     const plan = await this.getPlan();
-    const hostFeeChargePercent = plan.hostFeeChargePercent || 0;
+    const hostFeeSharePercent = plan.hostFeeSharePercent || 0;
 
     const transactions = await models.Transaction.findAll({
       where: {
         HostCollectiveId: this.id,
         type: TransactionTypes.CREDIT,
-        createdAt: { [Op.gte]: from, [Op.lte]: to },
+        createdAt: { [Op.gte]: from, [Op.lt]: to },
       },
       include: [
         {
@@ -2971,11 +3009,26 @@ export default function (Sequelize, DataTypes) {
 
     const hostFees = Math.abs(sumBy(transactions, 'hostFeeInHostCurrency'));
     const platformFees = Math.abs(sumBy(transactions, 'platformFeeInHostCurrency'));
-    const pendingPlatformFees = Math.abs(sumBy(transactions.filter(isPendingTransaction), 'platformFeeInHostCurrency'));
+    const pendingPlatformFees = Math.abs(sumByWhen(transactions, 'platformFeeInHostCurrency', isPendingTransaction));
+    const hostFeeShare = Math.abs(
+      sumByWhen(
+        transactions,
+        t => round((t.hostFeeInHostCurrency * (t.data?.hostFeeSharePercent || plan.hostFeeSharePercent)) / 100),
+        t => !t.platformFeeInHostCurrency && t.hostFeeInHostCurrency,
+      ),
+    );
+    const pendingHostFeeShare = Math.abs(
+      sumByWhen(
+        transactions,
+        t => round((t.hostFeeInHostCurrency * (t.data?.hostFeeSharePercent || plan.hostFeeSharePercent)) / 100),
+        t => !t.platformFeeInHostCurrency && t.hostFeeInHostCurrency && isPendingTransaction(t),
+      ),
+    );
 
     const tipsTransactions = await models.Transaction.findAll({
       where: {
         ...pick(FEES_ON_TOP_TRANSACTION_PROPERTIES, ['CollectiveId', 'HostCollectiveId']),
+        createdAt: { [Op.gte]: from, [Op.lt]: to },
         type: TransactionTypes.CREDIT,
         PlatformTipForTransactionGroup: { [Op.in]: transactions.map(t => t.TransactionGroup) },
       },
@@ -2988,24 +3041,32 @@ export default function (Sequelize, DataTypes) {
       ],
     });
 
-    const getTipAmountInHostCurrency = t => t.amount / t.data?.hostToPlatformFxRate || 1;
+    const getTipAmountInHostCurrency = t => t.netAmountInCollectiveCurrency / (t.data?.hostToPlatformFxRate || 1);
     const platformTips = Math.round(sumBy(tipsTransactions, getTipAmountInHostCurrency));
     const pendingPlatformTips = Math.round(
-      sumBy(tipsTransactions.filter(isPendingTransaction), getTipAmountInHostCurrency),
+      sumByWhen(tipsTransactions, getTipAmountInHostCurrency, isPendingTransaction),
     );
 
     const totalMoneyManaged = await this.getTotalMoneyManaged(to);
 
-    return {
+    const metrics = {
       hostFees,
       platformFees,
       pendingPlatformFees,
       platformTips,
       pendingPlatformTips,
-      hostFeeCharge: (hostFees * hostFeeChargePercent) / 100,
-      hostFeeChargePercent,
+      hostFeeShare,
+      pendingHostFeeShare,
+      hostFeeSharePercent,
       totalMoneyManaged,
     };
+
+    if (returnTransactions) {
+      metrics.transactions = transactions;
+      metrics.tipsTransactions = tipsTransactions;
+    }
+
+    return metrics;
   };
 
   /**

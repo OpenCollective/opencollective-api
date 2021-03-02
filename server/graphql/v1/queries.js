@@ -1,17 +1,15 @@
 import Promise from 'bluebird';
-import config from 'config';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLString } from 'graphql';
 import { get, pick, uniq } from 'lodash';
 import { isEmail } from 'validator';
 
 import { roles } from '../../constants';
 import { types as CollectiveTypes } from '../../constants/collectives';
-import Algolia from '../../lib/algolia';
 import { fetchCollectiveId } from '../../lib/cache';
 import { getConsolidatedInvoicesData } from '../../lib/pdf';
 import rawQueries from '../../lib/queries';
-import { searchCollectivesByEmail, searchCollectivesInDB, searchCollectivesOnAlgolia } from '../../lib/search';
-import { parseToBoolean, toIsoDateStr } from '../../lib/utils';
+import { searchCollectivesByEmail, searchCollectivesInDB } from '../../lib/search';
+import { toIsoDateStr } from '../../lib/utils';
 import models, { Op, sequelize } from '../../models';
 import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../errors';
 
@@ -1278,7 +1276,7 @@ const queries = {
     },
     resolve(collective, args, { remoteUser }) {
       if (!remoteUser) {
-        new Forbidden('Only collective admins can see pending invitations');
+        throw new Forbidden('Only collective admins can see pending invitations');
       }
       if (!args.CollectiveId && !args.MemberCollectiveId) {
         throw new ValidationFailed('You must either provide a CollectiveId or a MemberCollectiveId');
@@ -1401,7 +1399,7 @@ const queries = {
       },
       hostCollectiveIds: {
         type: new GraphQLList(GraphQLInt),
-        description: '[NON AVAILABLE WITH ALGOLIA] Limit the search to collectives under these hosts',
+        description: 'Limit the search to collectives under these hosts',
       },
       types: {
         type: new GraphQLList(TypeOfCollectiveType),
@@ -1414,6 +1412,12 @@ const queries = {
       onlyActive: {
         type: GraphQLBoolean,
         description: 'Whether to return only active accounts',
+        deprecationReason: '2021-01-20: Not supported anymore.',
+      },
+      skipRecentAccounts: {
+        type: GraphQLBoolean,
+        description: 'Whether to skip recent accounts (48h)',
+        defaultValue: false,
       },
       limit: {
         type: GraphQLInt,
@@ -1426,24 +1430,20 @@ const queries = {
       },
       useAlgolia: {
         type: GraphQLBoolean,
-        deprecationReason: '2020-11-18: Algolia is intended to be removed in a near future',
-        defaultValue: parseToBoolean(config.algolia.useAsDefault),
-        description: `
-          If set to false, an internal query will be used to search the collective rather than Algolia.
-          You **must** set this to false when searching for users/organizations.
-        `,
+        deprecationReason: '2020-12-14: Algolia is intended to be removed in a near future',
+        defaultValue: false,
+        description: `This flag is now ignored in favor of regular search`,
       },
     },
     async resolve(_, args, req) {
-      const { limit, offset, term, types, isHost, hostCollectiveIds, onlyActive, useAlgolia } = args;
+      const { limit, offset, term, types, isHost, hostCollectiveIds, skipRecentAccounts } = args;
       const cleanTerm = term ? term.trim() : '';
       const listToStr = list => (list ? list.join('_') : '');
       const generateResults = (collectives, total) => {
         const optionalParamsKey = `${listToStr(types)}-${listToStr(hostCollectiveIds)}`;
-        const activeKey = onlyActive ? 'active' : 'all';
-        const providerKey = useAlgolia ? 'algolia' : 'direct';
+        const skipRecentKey = skipRecentAccounts ? 'skipRecent' : 'all';
         return {
-          id: `search-${optionalParamsKey}-${cleanTerm}-${activeKey}-${offset}-${limit}-${providerKey}`,
+          id: `search-${optionalParamsKey}-${cleanTerm}-${skipRecentKey}-${offset}-${limit}`,
           total,
           collectives,
           limit,
@@ -1451,10 +1451,7 @@ const queries = {
         };
       };
 
-      if (useAlgolia && Algolia.isAvailable()) {
-        const [collectives, total] = await searchCollectivesOnAlgolia(cleanTerm, offset, limit, types, isHost);
-        return generateResults(collectives, total);
-      } else if (isEmail(cleanTerm) && req.remoteUser && (!types || types.includes(CollectiveTypes.USER))) {
+      if (isEmail(cleanTerm) && req.remoteUser && (!types || types.includes(CollectiveTypes.USER))) {
         // If an email is provided, search in the user table. Users must be authenticated
         // because we limit the rate of queries for this feature.
         const [collectives, total] = await searchCollectivesByEmail(cleanTerm, req.remoteUser);
@@ -1464,6 +1461,7 @@ const queries = {
           types,
           hostCollectiveIds,
           isHost,
+          skipRecentAccounts,
         });
         return generateResults(collectives, total);
       }

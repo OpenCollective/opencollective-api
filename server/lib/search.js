@@ -4,13 +4,11 @@
 
 import config from 'config';
 import slugify from 'limax';
-import { get, sortBy } from 'lodash';
+import { get } from 'lodash';
 
-import { CollectiveTypesList } from '../constants/collectives';
 import { RateLimitExceeded } from '../graphql/errors';
-import models, { Op, sequelize } from '../models';
+import models, { sequelize } from '../models';
 
-import algolia from './algolia';
 import RateLimit, { ONE_HOUR_IN_SECONDS } from './rate-limit';
 
 // Returned when there's no result for a search
@@ -89,7 +87,7 @@ export const searchCollectivesInDB = async (
   term,
   offset = 0,
   limit = 100,
-  { types, hostCollectiveIds, isHost, onlyActive } = {},
+  { types, hostCollectiveIds, isHost, onlyActive, skipRecentAccounts } = {},
 ) => {
   // Build dynamic conditions based on arguments
   let dynamicConditions = '';
@@ -110,6 +108,10 @@ export const searchCollectivesInDB = async (
     dynamicConditions += 'AND "isActive" = TRUE ';
   }
 
+  if (skipRecentAccounts) {
+    dynamicConditions += `AND "createdAt" < (NOW() - interval '2 day')`;
+  }
+
   // Cleanup term
   if (term && term.length > 0) {
     term = term.replace(/(_|%|\\)/g, ' ').trim();
@@ -121,8 +123,8 @@ export const searchCollectivesInDB = async (
   // Build the query
   const result = await sequelize.query(
     `
-    SELECT 
-      c.*, 
+    SELECT
+      c.*,
       COUNT(*) OVER() AS __total__,
       (
         CASE WHEN (slug = :slugifiedTerm OR name ILIKE :term) THEN
@@ -134,6 +136,10 @@ export const searchCollectivesInDB = async (
     FROM "Collectives" c
     WHERE "deletedAt" IS NULL
     AND "deactivatedAt" IS NULL
+    AND ("data" ->> 'isGuest')::boolean IS NOT TRUE
+    AND ("data" ->> 'hideFromSearch')::boolean IS NOT TRUE
+    AND name != 'incognito'
+    AND name != 'anonymous'
     AND "isIncognito" = FALSE ${dynamicConditions}
     ORDER BY __rank__ DESC
     OFFSET :offset
@@ -156,46 +162,4 @@ export const searchCollectivesInDB = async (
   );
 
   return [result, get(result[0], 'dataValues.__total__', 0)];
-};
-
-/**
- * Search for collectives using Algolia.
- *
- * @returns a tuple like [collectives, total]
- */
-export const searchCollectivesOnAlgolia = async (term, offset, limit, types, isHostAccount) => {
-  if (term.length === 0) {
-    // No need to search on Algolia if there's no query term
-    return searchCollectivesInDB(term, offset, limit, types, null, isHostAccount);
-  }
-
-  const index = algolia.getIndex();
-  if (!index) {
-    return EMPTY_SEARCH_RESULT;
-  }
-
-  const { hits, nbHits: total } = await index.search({
-    query: term,
-    length: limit,
-    offset,
-  });
-
-  const collectiveIds = hits.map(({ id }) => id);
-
-  if (collectiveIds.length === 0) {
-    return EMPTY_SEARCH_RESULT;
-  }
-
-  // Build and run SQL query
-  const where = { id: { [Op.in]: collectiveIds } };
-  if (types !== undefined) {
-    where.type = { [Op.in]: types };
-  }
-  if (isHostAccount !== undefined) {
-    where.isHostAccount = isHostAccount;
-  }
-
-  const collectives = await models.Collective.findAll({ where });
-  const sortedCollectives = sortBy(collectives, collective => collectiveIds.indexOf(collective.id));
-  return [sortedCollectives, total];
 };

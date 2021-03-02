@@ -3,6 +3,7 @@ import '../server/env';
 
 import geoip from 'geoip-lite'; // eslint-disable-line node/no-unpublished-import
 import { get } from 'lodash';
+import moment from 'moment';
 
 import { collectiveBayesCheck } from '../server/lib/spam';
 import models, { Op, sequelize } from '../server/models';
@@ -35,7 +36,7 @@ async function run() {
         { longDescription: { [Op.not]: null } },
         // { website: { [Op.not]: null } },
       ],
-      updatedAt: { [Op.gt]: '2020-11-15' },
+      updatedAt: { [Op.gte]: moment().subtract(7, 'days').toDate() },
     },
     order: [['updatedAt', 'DESC']],
     paranoid: true,
@@ -51,9 +52,18 @@ async function run() {
       // console.log('MISS', `https://opencollective.com/${collective.slug}`);
     }
 
-    if (bayesResult === 'spam' && collective.data?.isBanned !== true && collective.data?.seo !== true) {
-      console.log('NEW', collective.slug, `https://opencollective.com/${collective.slug}`, collective.createdAt);
-      // console.log(collective.slug);
+    if (
+      bayesResult === 'spam' &&
+      collective.data?.isBanned !== true &&
+      collective.data?.seo !== true &&
+      collective.data?.notSpam !== true
+    ) {
+      const transactions = await collective.getTransactions({});
+      if (transactions.length === 0) {
+        console.log('NEW', collective.slug, `https://opencollective.com/${collective.slug}`);
+      } else {
+        // console.log('HAS_TRANSACTIONS', `https://opencollective.com/${collective.slug}`);
+      }
     }
   }
 
