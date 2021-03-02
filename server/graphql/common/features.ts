@@ -1,3 +1,4 @@
+import { types } from '../../constants/collectives';
 import FEATURE from '../../constants/feature';
 import FEATURE_STATUS from '../../constants/feature-status';
 import { hasFeature, isFeatureAllowedForCollectiveType } from '../../lib/allowed-features';
@@ -8,6 +9,21 @@ const checkIsActive = (
   fallback = FEATURE_STATUS.AVAILABLE,
 ): Promise<FEATURE_STATUS> => {
   return promise.then(result => (result ? FEATURE_STATUS.ACTIVE : fallback));
+};
+
+const checkReceiveFinancialContributions = collective => {
+  if (!collective.HostCollectiveId || !collective.approvedAt) {
+    return FEATURE_STATUS.DISABLED;
+  } else if (!collective.isActive) {
+    return FEATURE_STATUS.UNSUPPORTED;
+  } else {
+    return checkIsActive(
+      models.Order.count({
+        where: { CollectiveId: collective.id, status: { [Op.or]: ['PAID', 'ACTIVE'] } },
+        limit: 1,
+      }),
+    );
+  }
 };
 
 /**
@@ -27,6 +43,10 @@ export const getFeatureStatusResolver = (feature: FEATURE) => async (
   // Add some special cases that check for data to see if the feature is `ACTIVE` or just `AVAILABLE`
   // Right now only UPDATES, CONVERSATIONS, and RECURRING CONTRIBUTIONS
   switch (feature) {
+    case FEATURE.RECEIVE_FINANCIAL_CONTRIBUTIONS:
+      return checkReceiveFinancialContributions(collective);
+    case FEATURE.RECEIVE_EXPENSES:
+      return checkIsActive(models.Expense.count({ where: { CollectiveId: collective.id }, limit: 1 }));
     case FEATURE.UPDATES:
       return checkIsActive(
         models.Update.count({
@@ -35,12 +55,7 @@ export const getFeatureStatusResolver = (feature: FEATURE) => async (
         }),
       );
     case FEATURE.CONVERSATIONS:
-      return checkIsActive(
-        models.Conversation.count({
-          where: { CollectiveId: collective.id, deletedAt: { [Op.eq]: null } },
-          limit: 1,
-        }),
-      );
+      return checkIsActive(models.Conversation.count({ where: { CollectiveId: collective.id }, limit: 1 }));
     case FEATURE.RECURRING_CONTRIBUTIONS:
       return checkIsActive(
         models.Order.count({
@@ -55,6 +70,34 @@ export const getFeatureStatusResolver = (feature: FEATURE) => async (
           limit: 1,
         }),
         FEATURE_STATUS.DISABLED,
+      );
+    case FEATURE.EVENTS:
+      return checkIsActive(
+        models.Collective.count({
+          where: { type: types.EVENT, ParentCollectiveId: collective.id },
+          limit: 1,
+        }),
+      );
+    case FEATURE.PROJECTS:
+      return checkIsActive(
+        models.Collective.count({
+          where: { type: types.PROJECT, ParentCollectiveId: collective.id },
+          limit: 1,
+        }),
+      );
+    case FEATURE.CONNECTED_ACCOUNTS:
+      return checkIsActive(
+        models.Member.count({
+          where: { role: 'CONNECTED_COLLECTIVE', CollectiveId: collective.id },
+          limit: 1,
+        }),
+      );
+    case FEATURE.TRANSACTIONS:
+      return checkIsActive(
+        models.Transaction.count({
+          where: { [Op.or]: { CollectiveId: collective.id, FromCollectiveId: collective.id } },
+          limit: 1,
+        }),
       );
     default:
       return FEATURE_STATUS.ACTIVE;
