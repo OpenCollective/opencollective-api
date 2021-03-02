@@ -89,7 +89,7 @@ export async function updateExpenseStatus(remoteUser, expenseId, status) {
       }
       break;
   }
-  const res = await expense.update({ status, lastEditedById: remoteUser.id });
+  const res = await expense.update({ status, lastEditedById: remoteUser.id }, { returning: true });
   return res;
 }
 
@@ -107,7 +107,7 @@ export async function createExpense(remoteUser, expenseData) {
   // Update remoteUser's paypal email if it has changed
   if (get(expenseData, 'user.paypalEmail') !== remoteUser.paypalEmail) {
     remoteUser.paypalEmail = get(expenseData, 'user.paypalEmail');
-    remoteUser.save();
+    remoteUser.save({ returning: true });
   }
   expenseData.UserId = remoteUser.id;
 
@@ -189,7 +189,7 @@ export async function editExpense(remoteUser, expenseData) {
   }
 
   expenseData.lastEditedById = remoteUser.id;
-  await expense.update(expenseData);
+  await expense.update(expenseData, { returning: true });
   expense.createActivity(activities.COLLECTIVE_EXPENSE_UPDATED);
   return expense;
 }
@@ -224,7 +224,7 @@ export async function deleteExpense(remoteUser, expenseId) {
 /** Helper that finishes the process of paying an expense */
 async function markExpenseAsPaid(expense) {
   debug('update expense status to PAID', expense.id);
-  const updatedExpense = await expense.update({ status: statuses.PAID });
+  const updatedExpense = await expense.update({ status: statuses.PAID }, { returning: true });
   await expense.createActivity(activities.COLLECTIVE_EXPENSE_PAID);
   return updatedExpense;
 }
@@ -423,5 +423,10 @@ export async function markExpenseAsUnpaid(remoteUser, ExpenseId, processorFeeRef
   );
   await libPayments.associateTransactionRefundId(transaction, refundedTransaction);
 
-  return expense.update({ status: statuses.APPROVED, lastEditedById: remoteUser.id });
+  const updatedExpense = await expense.update(
+    { status: statuses.APPROVED, lastEditedById: remoteUser.id },
+    { returning: true },
+  );
+
+  return updatedExpense;
 }

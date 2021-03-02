@@ -217,24 +217,25 @@ export async function newCollectiveInHost(name, currency, hostCollective, user =
  * @return {models.Expense} newly created expense instance.
  */
 export async function createExpense(user, expenseData) {
-  return expenses.createExpense(user, expenseData);
+  const expense = await expenses.createExpense(user, expenseData);
+  return expense;
 }
 
 export async function createApprovedExpense(user, expenseData) {
   const expense = await createExpense(user, expenseData);
-  await expense.update({ status: 'APPROVED' });
+  await expense.update({ status: 'APPROVED' }, { returning: true });
   return expense;
 }
 
 export async function createPaidExpense(user, expenseData) {
   const expense = await createExpense(user, expenseData);
-  await expense.update({ status: 'PAID' });
+  await expense.update({ status: 'PAID' }, { returning: true });
   return expense;
 }
 
 export async function createRejectedExpense(user, expenseData) {
   const expense = await createExpense(user, expenseData);
-  await expense.update({ status: 'REJECTED' });
+  await expense.update({ status: 'REJECTED' }, { returning: true });
   return expense;
 }
 
