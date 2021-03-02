@@ -93,6 +93,16 @@ interface Account {
     role: [MemberRole]
 
     """
+    Filter on (un)approved collectives
+    """
+    isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Type of accounts (BOT/COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)
     """
     accountType: [AccountType]
@@ -564,6 +574,11 @@ type Bot implements Account {
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -778,6 +793,11 @@ type Collective implements Account & AccountWithHost & AccountWithContributions 
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -974,6 +994,7 @@ Describes the features enabled and available for this collective
 type CollectiveFeatures {
   RECEIVE_FINANCIAL_CONTRIBUTIONS: CollectiveFeatureStatus
   RECURRING_CONTRIBUTIONS: CollectiveFeatureStatus
+  TRANSACTIONS: CollectiveFeatureStatus
   EVENTS: CollectiveFeatureStatus
   PROJECTS: CollectiveFeatureStatus
   USE_EXPENSES: CollectiveFeatureStatus
@@ -993,6 +1014,7 @@ type CollectiveFeatures {
   PAYPAL_PAYOUTS: CollectiveFeatureStatus
   PAYPAL_DONATIONS: CollectiveFeatureStatus
   HOST_DASHBOARD: CollectiveFeatureStatus
+  CONNECTED_ACCOUNTS: CollectiveFeatureStatus
 }
 
 enum CollectiveFeatureStatus {
@@ -1060,6 +1082,7 @@ input CommentCreateInput {
   expense: ExpenseReferenceInput
   ExpenseId: Int
   ConversationId: String
+  update: UpdateReferenceInput
 }
 
 input CommentReferenceInput {
@@ -1174,8 +1197,8 @@ enum ConnectedAccountService {
   stripe
   github
   twitter
-  meetup
   transferwise
+  meetup @deprecated(reason: "Not using this service anymore")
 }
 
 enum ContributionFrequency {
@@ -2893,6 +2916,11 @@ type Event implements Account & AccountWithHost & AccountWithContributions {
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -3760,6 +3788,11 @@ type Fund implements Account & AccountWithHost & AccountWithContributions {
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -4051,6 +4084,11 @@ type Host implements Account & AccountWithContributions {
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -4266,7 +4304,41 @@ type Host implements Account & AccountWithContributions {
     Order of the results
     """
     orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: DESC }
-  ): AccountCollection!
+  ): HostApplicationCollection!
+}
+
+type HostApplication {
+  id: String!
+
+  """
+  The account who applied to this host
+  """
+  account: Account!
+
+  """
+  The date on which the item was created
+  """
+  createdAt: DateTime!
+  status: HostApplicationStatus
+  message: String
+  customData: JSON
+}
+
+"""
+A collection of "HostApplication"
+"""
+type HostApplicationCollection implements Collection {
+  offset: Int
+  limit: Int
+  totalCount: Int
+  nodes: [HostApplication]
+}
+
+enum HostApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
 }
 
 """
@@ -4331,7 +4403,7 @@ type HostMetrics {
   """
   Amount in host fee shared with the platform
   """
-  hostFeeCharge: Amount
+  hostFeeShare: Amount
 
   """
   Total amount managed on behalf of hosted collectives
@@ -4341,7 +4413,7 @@ type HostMetrics {
   """
   Host fee sharing percent
   """
-  hostFeeChargePercent: Int
+  hostFeeSharePercent: Int
 }
 
 """
@@ -4499,6 +4571,11 @@ type Individual implements Account {
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -4618,7 +4695,19 @@ type Individual implements Account {
   isGuest: Boolean!
   isFollowingConversation(id: String!): Boolean!
   hasTwoFactorAuth: Boolean
+
+  """
+  If the individual is a host account, this will return the matching Host object
+  """
+  host: Host
 }
+
+input IndividualCreateInput {
+  name: String!
+  email: String!
+}
+
+scalar IsoDateString
 
 """
 ISO-8601 date
@@ -4817,9 +4906,24 @@ type Mutation {
     host: AccountReferenceInput
 
     """
+    User information to create along with the collective
+    """
+    user: IndividualCreateInput
+
+    """
     Wether to trigger the automated approval for Open Source collectives with GitHub.
     """
     automateApprovalWithGithub: Boolean = false
+
+    """
+    A message to attach for the host to review the application
+    """
+    message: String
+
+    """
+    Further information about collective applying to host
+    """
+    applicationData: JSON
   ): Collective
   createFund(
     """
@@ -5047,6 +5151,26 @@ type Mutation {
   ): Expense!
 
   """
+  Apply to an host with a collective
+  """
+  applyToHost(
+    """
+    Account applying to the host.
+    """
+    collective: AccountReferenceInput!
+
+    """
+    Host to apply to.
+    """
+    host: AccountReferenceInput!
+
+    """
+    A message to attach for the host to review the application
+    """
+    message: String
+  ): Collective!
+
+  """
   Reply to a host application
   """
   processHostApplication(
@@ -5127,11 +5251,11 @@ type Mutation {
   ): Individual!
 
   """
-  Add 2FA to the Account if it does not have it
+  Remove 2FA from the Account if it has been enabled
   """
   removeTwoFactorAuthTokenFromIndividual(
     """
-    Account that will have 2FA added to it
+    Account that will have 2FA removed from it
     """
     account: AccountReferenceInput!
 
@@ -5155,21 +5279,6 @@ type Mutation {
     """
     plan: String!
   ): Host!
-
-  """
-  Apply to an host with a collective
-  """
-  applyToHost(
-    """
-    Account applying to the host.
-    """
-    collective: AccountReferenceInput!
-
-    """
-    Host to apply to.
-    """
-    host: AccountReferenceInput!
-  ): Collective!
 
   """
   Sends an email for guest to confirm their emails and create their Open Collective account
@@ -5373,6 +5482,11 @@ type Mutation {
     """
     message: String
   ): Member!
+  createUpdate(update: UpdateCreateInput!): Update!
+  editUpdate(update: UpdateUpdateInput!): Update!
+  publishUpdate(id: String!, notificationAudience: UpdateAudienceType!): Update!
+  unpublishUpdate(id: String!): Update!
+  deleteUpdate(id: String!): Update!
 }
 
 input NewAccountOrganizationInput {
@@ -5692,6 +5806,11 @@ type Organization implements Account & AccountWithContributions {
     isApproved: Boolean
 
     """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
     """
     includeIncognito: Boolean = true
@@ -5851,7 +5970,7 @@ type Organization implements Account & AccountWithContributions {
   email: String
 
   """
-  If the organization if a host account, this will return the matchig Host object
+  If the organization if a host account, this will return the matching Host object
   """
   host: Host
 }
@@ -6046,7 +6165,7 @@ type ProcessHostApplicationResponse {
   """
   The account that applied to the host
   """
-  account: Account!
+  account: Collective!
 
   """
   When sending a public message, this field will have the info about the conversation created
@@ -6144,6 +6263,11 @@ type Project implements Account & AccountWithHost & AccountWithContributions {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -6692,6 +6816,27 @@ type Query {
     """
     includeIncognitoTransactions: Boolean! = false
   ): TransactionCollection
+  update(
+    """
+    Public identifier
+    """
+    id: String
+
+    """
+    The update slug identifying the update
+    """
+    updateSlug: String
+
+    """
+    The update slug identifying the update
+    """
+    slug: String
+
+    """
+    When fetching by slug, an account must be provided
+    """
+    account: AccountReferenceInput
+  ): Update
   loggedInAccount: Account
 }
 
@@ -6953,6 +7098,11 @@ type Update {
   tags: [String]
   fromAccount: Account
   account: Account
+
+  """
+  List the comments for this update. Not backed by a loader, don't use this in lists.
+  """
+  comments(limit: Int, offset: Int): CommentCollection
 }
 
 """
@@ -6983,6 +7133,38 @@ type UpdateCollection implements Collection {
   limit: Int
   totalCount: Int
   nodes: [Update]
+}
+
+"""
+Input type for UpdateType
+"""
+input UpdateCreateInput {
+  title: String!
+  isPrivate: Boolean
+  makePublicOn: IsoDateString
+  html: String
+  fromAccount: AccountReferenceInput
+  account: AccountReferenceInput!
+}
+
+input UpdateReferenceInput {
+  """
+  The public id identifying the update
+  """
+  id: String
+}
+
+"""
+Input type for UpdateType
+"""
+input UpdateUpdateInput {
+  id: String!
+  slug: String
+  title: String
+  isPrivate: Boolean
+  makePublicOn: ISODateTime
+  html: String
+  fromAccount: AccountReferenceInput
 }
 
 """
