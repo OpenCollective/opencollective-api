@@ -335,7 +335,7 @@ export const loaders = req => {
         `
         SELECT "Order"."TierId" AS "TierId", COALESCE(SUM("Transaction"."netAmountInCollectiveCurrency"), 0) AS "totalDonated"
         FROM "Transactions" AS "Transaction"
-        INNER JOIN "Orders" AS "Order" ON "Transaction"."OrderId" = "Order"."id" AND ("Order"."deletedAt" IS NULL)
+        INNER JOIN "Orders" AS "Order" ON "Transaction"."OrderId" = "Order"."id" AND "Transaction"."CollectiveId" = "Order"."CollectiveId" AND ("Order"."deletedAt" IS NULL)
         WHERE "TierId" IN (?)
         AND "Transaction"."deletedAt" IS NULL
         AND "Transaction"."RefundTransactionId" IS NULL
@@ -441,19 +441,20 @@ export const loaders = req => {
 
   /** *** PaymentMethod *****/
   // PaymentMethod - findByCollectiveId
-  context.loaders.PaymentMethod.findByCollectiveId = new DataLoader(CollectiveIds =>
-    models.PaymentMethod.findAll({
+  context.loaders.PaymentMethod.findByCollectiveId = new DataLoader(CollectiveIds => {
+    const oneDayInMilliseonds = 86400000;
+    return models.PaymentMethod.findAll({
       where: {
         CollectiveId: { [Op.in]: CollectiveIds },
-        name: { [Op.ne]: null },
+        name: { [Op.ne]: null  ashinzekene/feat/payment-max-expiry
         archivedAt: null,
         expiryDate: {
           [Op.or]: [null, { [Op.gte]: moment().subtract(6, 'month') }],
         },
       },
       order: [['id', 'DESC']],
-    }).then(results => sortResults(CollectiveIds, results, 'CollectiveId', [])),
-  );
+    }).then(results => sortResults(CollectiveIds, results, 'CollectiveId', []));
+  });
 
   /** *** Order *****/
   // Order - findByMembership

@@ -278,6 +278,12 @@ export const PlanType = new GraphQLObjectType({
     transferwisePayoutsLimit: {
       type: GraphQLInt,
     },
+    hostFees: {
+      type: GraphQLBoolean,
+    },
+    hostFeeSharePercent: {
+      type: GraphQLInt,
+    },
   },
 });
 
@@ -840,6 +846,11 @@ export const CollectiveInterfaceType = new GraphQLInterfaceType({
             defaultValue: false,
             description: 'Defines if the host "collective" payment method should be returned',
           },
+          includeRecentlyExpiredGiftCards: {
+            type: GraphQLBoolean,
+            defaultValue: false,
+            description: 'Include gift cards that have expired recently (30 days)',
+          },
         },
       },
       payoutMethods: {
@@ -981,7 +992,7 @@ const CollectiveFields = () => {
           return collective.location;
         } else if (!req.remoteUser) {
           return null;
-        } else if (req.remoteUser.isAdmin(collective.id)) {
+        } else if (req.remoteUser.isAdminOfCollective(collective)) {
           return collective.location;
         } else {
           return req.loaders.Collective.privateInfos.load(collective).then(c => c.location);
@@ -1420,7 +1431,7 @@ const CollectiveFields = () => {
       resolve(collective, args, req) {
         // There's no reason for other people than admins to know about this.
         // Also the webhooks URL are supposed to be private (can contain tokens).
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
 
@@ -1734,9 +1745,14 @@ const CollectiveFields = () => {
           defaultValue: false,
           description: 'Defines if the host "collective" payment method should be returned',
         },
+        includeRecentlyExpiredGiftCards: {
+          type: GraphQLBoolean,
+          defaultValue: false,
+          description: 'Include gift cards that have expired recently (30 days)',
+        },
       },
       async resolve(collective, args, req) {
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
         let paymentMethods = await req.loaders.PaymentMethod.findByCollectiveId.load(collective.id);
@@ -1747,6 +1763,10 @@ const CollectiveFields = () => {
           (collective.type === 'ORGANIZATION' || collective.type === 'USER')
         ) {
           paymentMethods = paymentMethods.filter(pm => !(pm.service === 'opencollective' && pm.type === 'host'));
+        }
+        // Remove payment methods that have expired
+        if (!args.includeRecentlyExpiredGiftCards) {
+          paymentMethods = paymentMethods.filter(pm => +new Date(pm.expiry) > +new Date());
         }
         // Filter only "saved" stripe Payment Methods
         // In the future we should only return the "saved" whatever the service
@@ -1791,7 +1811,7 @@ const CollectiveFields = () => {
       type: new GraphQLList(PayoutMethodType),
       description: 'The list of payout methods that this collective can use to get paid',
       async resolve(collective, _, req) {
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return null;
         } else {
           return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
@@ -1804,7 +1824,7 @@ const CollectiveFields = () => {
         'List all the gift cards batches emitted by this collective. May include `null` for unbatched gift cards.',
       resolve: async (collective, _args, req) => {
         // Must be admin of the collective
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
 
@@ -1825,7 +1845,7 @@ const CollectiveFields = () => {
       },
       resolve: async (collective, args, req) => {
         // Must be admin of the collective
-        if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+        if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
           return [];
         }
 

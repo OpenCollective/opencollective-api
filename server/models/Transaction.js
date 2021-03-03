@@ -1,6 +1,6 @@
 import Promise from 'bluebird';
 import debugLib from 'debug';
-import { defaultsDeep, get, isNull, isUndefined } from 'lodash';
+import { defaultsDeep, get, isNull, isUndefined, pick } from 'lodash';
 import moment from 'moment';
 import { v4 as uuid } from 'uuid';
 
@@ -222,6 +222,8 @@ export default (Sequelize, DataTypes) => {
             amountSentToHostInHostCurrency: this.amountSentToHostInHostCurrency,
             hostCurrency: this.hostCurrency,
             ExpenseId: this.ExpenseId,
+            OrderId: this.OrderId,
+            isRefund: this.isRefund,
           };
         },
       },
@@ -303,6 +305,22 @@ export default (Sequelize, DataTypes) => {
     return Transaction.findByPk(this.RefundTransactionId);
   };
 
+  Transaction.prototype.hasPlatformTip = function () {
+    return this.data?.isFeesOnTop ? true : false;
+  };
+
+  Transaction.prototype.getPlatformTipTransaction = function () {
+    if (this.hasPlatformTip()) {
+      return models.Transaction.findOne({
+        where: {
+          ...pick(FEES_ON_TOP_TRANSACTION_PROPERTIES, ['CollectiveId']),
+          type: this.type,
+          PlatformTipForTransactionGroup: this.TransactionGroup,
+        },
+      });
+    }
+  };
+
   /**
    * Class Methods
    */
@@ -351,6 +369,7 @@ export default (Sequelize, DataTypes) => {
           'hostFeeInHostCurrency',
           'platformFeeInHostCurrency',
           'netAmountInHostCurrency',
+          'amountInHostCurrency',
         ].indexOf(attr) !== -1
       ) {
         return value / 100; // converts cents
@@ -364,6 +383,7 @@ export default (Sequelize, DataTypes) => {
       'type',
       'CollectiveId',
       'amount',
+      'amountInHostCurrency',
       'currency',
       'description',
       'netAmountInCollectiveCurrency',
@@ -374,6 +394,8 @@ export default (Sequelize, DataTypes) => {
       'platformFeeInHostCurrency',
       'netAmountInHostCurrency',
       'Expense.privateMessage',
+      'source',
+      'isRefund',
     ];
 
     // We only add tax amount for european hosts
@@ -540,6 +562,7 @@ export default (Sequelize, DataTypes) => {
         data: {
           hostToPlatformFxRate: await getFxRate(transaction.hostCurrency, FEES_ON_TOP_TRANSACTION_PROPERTIES.currency),
           feeOnTopPaymentProcessorFee,
+          settled: transaction.data?.settled,
         },
       },
       transaction,
@@ -552,8 +575,9 @@ export default (Sequelize, DataTypes) => {
       transaction.paymentProcessorFeeInHostCurrency - feeOnTopPaymentProcessorFee;
     // Recalculate amount
     transaction.amountInHostCurrency = transaction.amountInHostCurrency + transaction.platformFeeInHostCurrency;
-    transaction.amount =
-      transaction.amount + transaction.platformFeeInHostCurrency / (transaction.hostCurrencyFxRate || 1);
+    transaction.amount = Math.round(
+      transaction.amount + transaction.platformFeeInHostCurrency / (transaction.hostCurrencyFxRate || 1),
+    );
     // Reset the platformFee because we're accounting for this value in a separate set of transactions
     transaction.platformFeeInHostCurrency = 0;
 

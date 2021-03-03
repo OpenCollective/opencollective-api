@@ -82,14 +82,17 @@ export const SPAMMERS_DOMAINS = [
   'allnutritionhub.com',
   'allsupplementshop.com',
   'amazonhealthmart.com',
+  'anyflip.com',
   'apnews.com',
   'atozfitnesstalks.com',
   'avengersdiet.com',
+  'bebee.com',
   'benzinga.com',
   'bhitmagazine.com.ng',
   'biznutra.com',
   'biznutrition.com',
   'bollyshake.com',
+  'bonfire.com',
   'bumpsweat.com',
   'buypurelifeketo.com',
   'buzrush.com',
@@ -102,6 +105,7 @@ export const SPAMMERS_DOMAINS = [
   'completefoods.co',
   'consultbestastro.com',
   'copymethat.com',
+  'coub.com',
   'create.arduino.cc',
   'creativehealthcart.com',
   'csopartnership.org',
@@ -117,7 +121,9 @@ export const SPAMMERS_DOMAINS = [
   'dragonsdenketo.com',
   'dridainfotech.com',
   'edu-24.info',
+  'elitecaretreatment.com',
   'faqssupplement.com',
+  'feedsfloor.com',
   'fitcareketo.com',
   'fitdiettrends.com',
   'fitnesscarezone.com',
@@ -128,9 +134,11 @@ export const SPAMMERS_DOMAINS = [
   'getyouroffers.xyz',
   'givebutter.com',
   'health4trend.com',
+  'healthcarthub.com',
   'healthline.com',
   'healthlinenutrition.com',
   'healthmassive.com',
+  'healthmife.com',
   'healthonlinecare.com',
   'healthsupplementcart.com',
   'healthtalkrev.blogspot.com',
@@ -153,6 +161,7 @@ export const SPAMMERS_DOMAINS = [
   'identifyscam.com',
   'innovationdiet.com',
   'insta-keto.org',
+  'ipsnews.net',
   'isajain.com',
   'janvhikapoor.com',
   'justgiving.com',
@@ -167,6 +176,7 @@ export const SPAMMERS_DOMAINS = [
   'ketofasttrim.com',
   'ketofitstore.com',
   'ketogenicdietpills.com',
+  'ketogenicsupplementsreview.com',
   'ketohour.com',
   'ketopiller.com',
   'ketoplanusa.com',
@@ -179,6 +189,8 @@ export const SPAMMERS_DOMAINS = [
   'ketotrin.info',
   'ketovatrudiet.info',
   'ketoviante.info',
+  'ktc.instructure.com',
+  'lakubet.co',
   'lunaireketobhb.blogspot.com',
   'mafiatek.my.id',
   'maleenhancementtips.com',
@@ -196,11 +208,13 @@ export const SPAMMERS_DOMAINS = [
   'myshorturl.net',
   'myunbiasedreview.wordpress.com',
   'naturalketopill.com',
+  'netchorus.com',
   'norton.com',
   'nutraplatform.com',
   'nutrifitweb.com',
   'nutritioun.com',
   'offer4cart.com',
+  'office.com',
   'officemaster.ae',
   'onlineairlinesbooking.com',
   'onlinereservationbooking.com',
@@ -208,16 +222,23 @@ export const SPAMMERS_DOMAINS = [
   'orderfitness.org',
   'organicsupplementdietprogram.com',
   'ourunbiasedreview.blogspot.com',
+  'paper.li',
   'patch.com',
+  'penzu.com',
   'petsaw.com',
   'pharmacistreviews.com',
   'pillsfact.com',
   'pillsfect.com',
+  'pillsmumy.com',
+  'pillsvibe.com',
   'pilsadiet.com',
   'plarium.com',
   'pornlike.net',
   'praltrix.info',
+  'products99.com',
+  'pubhtml5.com',
   'publons.com',
+  'purefiter.com',
   'purefitketopills.com',
   'purnimasingh.com',
   'rembachduong.vn',
@@ -277,6 +298,7 @@ export const SPAMMERS_DOMAINS = [
   'trentandallievan.com',
   'tripoto.com',
   'trippleresult.com',
+  'tryittoday.xyz',
   'trypurenutrition.com',
   'uchearts.com',
   'udaipurqueen.com',
@@ -285,10 +307,13 @@ export const SPAMMERS_DOMAINS = [
   'webcampornodirecto.es',
   'weddingwire.us',
   'wellnessketoz.com',
+  'wfmj.com',
   'wheretocare.com',
   'wintersupplement.com',
+  'wiseintro.co',
   'works.bepress.com',
   'worldgymdiet.com',
+  'wow-keto.com',
   'zobuz.com',
 ];
 
@@ -389,7 +414,9 @@ const getBayesClassifier = async (): Promise<BayesClassifier> => {
 };
 
 export const collectiveBayesCheck = async (collective: any, extraString: string): Promise<string> => {
-  const content = `${collective.slug} ${collective.name} ${collective.description} ${collective.longDescription} ${collective.website} ${extraString}`;
+  const content = `${collective.slug.split('-').join(' ')} ${collective.name} ${collective.description} ${
+    collective.longDescription
+  } ${collective.website} ${extraString}`;
 
   const classifier = await getBayesClassifier();
 
@@ -447,25 +474,5 @@ export const notifyTeamAboutSuspiciousCollective = async (report: SpamAnalysisRe
   message = addLine(`Score: ${score}`);
   message = addLine(keywords.length > 0 && `Keywords: \`${keywords.toString()}\``);
   message = addLine(domains.length > 0 && `Domains: \`${domains.toString()}\``);
-  return slackLib.postMessageToOpenCollectiveSlack(message, OPEN_COLLECTIVE_SLACK_CHANNEL.ABUSE);
-};
-
-/**
- * Post a message on Slack if the collective is suspicious
- */
-export const notifyTeamAboutPreventedCollectiveCreate = async (
-  report: SpamAnalysisReport,
-  user: any | null,
-): Promise<void> => {
-  const { keywords, domains } = report;
-  let message = `A collective creation was prevented and the user has been put in limited mode.`;
-  const addLine = (line: string): string => (line ? `${message}\n${line}` : message);
-  if (user) {
-    message = addLine(`UserId: ${user.id}`);
-  }
-  message = addLine(keywords.length > 0 && `Keywords: \`${keywords.toString()}\``);
-  message = addLine(domains.length > 0 && `Domains: \`${domains.toString()}\``);
-  message = addLine(`Collective data:`);
-  message = addLine(`> ${JSON.stringify(report.data)}`);
   return slackLib.postMessageToOpenCollectiveSlack(message, OPEN_COLLECTIVE_SLACK_CHANNEL.ABUSE);
 };

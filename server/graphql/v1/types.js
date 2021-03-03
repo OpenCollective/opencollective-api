@@ -724,7 +724,7 @@ export const InvoiceType = new GraphQLObjectType({
         type: CollectiveInterfaceType,
         async resolve(invoice, args, req) {
           const fromCollective = await req.loaders.Collective.byId.load(invoice.FromCollectiveId);
-          if (fromCollective && req.remoteUser.isAdmin(fromCollective.id)) {
+          if (fromCollective && req.remoteUser?.isAdminOfCollective(fromCollective)) {
             allowContextPermission(req, PERMISSION_TYPE.SEE_INCOGNITO_ACCOUNT_DETAILS, fromCollective.id);
           }
           return fromCollective;
@@ -883,20 +883,20 @@ export const ExpenseType = new GraphQLObjectType({
       },
       privateMessage: {
         type: GraphQLString,
-        resolve(expense, args, req) {
+        async resolve(expense, args, req) {
           if (!req.remoteUser) {
             return null;
           }
-          if (req.remoteUser.isAdmin(expense.CollectiveId) || req.remoteUser.id === expense.UserId) {
+
+          const collective = await req.loaders.Collective.byId.load(expense.CollectiveId);
+
+          if (req.remoteUser.isAdminOfCollective(collective) || req.remoteUser.id === expense.UserId) {
             return expense.privateMessage;
+          } else if (req.remoteUser.isAdmin(collective.HostCollectiveId)) {
+            return expense.privateMessage;
+          } else {
+            return null;
           }
-          return req.loaders.Collective.byId.load(expense.CollectiveId).then(collective => {
-            if (req.remoteUser.isAdmin(collective.HostCollectiveId)) {
-              return expense.privateMessage;
-            } else {
-              return null;
-            }
-          });
         },
       },
       attachment: {
@@ -1059,10 +1059,11 @@ export const UpdateType = new GraphQLObjectType({
         description: 'Indicates whether or not the user is allowed to see the content of this update',
         type: GraphQLBoolean,
         resolve(update, _, req) {
-          if (!update.isPrivate) {
+          if (!update.publishedAt || update.isPrivate) {
+            return Boolean(req.remoteUser && req.remoteUser.canSeePrivateUpdates(update.CollectiveId));
+          } else {
             return true;
           }
-          return req.remoteUser && req.remoteUser.canSeeUpdates(update.CollectiveId);
         },
       },
       title: {
@@ -1092,7 +1093,7 @@ export const UpdateType = new GraphQLObjectType({
       summary: {
         type: GraphQLString,
         resolve(update, _, req) {
-          if (update.isPrivate && !(req.remoteUser && req.remoteUser.canSeeUpdates(update.CollectiveId))) {
+          if (update.isPrivate && !(req.remoteUser && req.remoteUser.canSeePrivateUpdates(update.CollectiveId))) {
             return null;
           }
 
@@ -1102,7 +1103,7 @@ export const UpdateType = new GraphQLObjectType({
       html: {
         type: GraphQLString,
         resolve(update, _, req) {
-          if (update.isPrivate && !(req.remoteUser && req.remoteUser.canSeeUpdates(update.CollectiveId))) {
+          if (update.isPrivate && !(req.remoteUser && req.remoteUser.canSeePrivateUpdates(update.CollectiveId))) {
             return null;
           }
 
@@ -1112,7 +1113,7 @@ export const UpdateType = new GraphQLObjectType({
       markdown: {
         type: GraphQLString,
         resolve(update, _, req) {
-          if (update.isPrivate && !(req.remoteUser && req.remoteUser.canSeeUpdates(update.CollectiveId))) {
+          if (update.isPrivate && !(req.remoteUser && req.remoteUser.canSeePrivateUpdates(update.CollectiveId))) {
             return null;
           }
 
@@ -1495,9 +1496,14 @@ export const TierType = new GraphQLObjectType({
       hasLongDescription: {
         type: GraphQLBoolean,
         description: 'Returns true if the tier has a long description',
+        deprecationReason: '2020-12-24: This field is being deprecated in favor of useStandalonePage',
         resolve(tier) {
           return Boolean(tier.longDescription);
         },
+      },
+      useStandalonePage: {
+        type: GraphQLBoolean,
+        description: 'Returns true if the tier has its standalone page activated',
       },
       videoUrl: {
         type: GraphQLString,
@@ -1735,8 +1741,9 @@ export const OrderType = new GraphQLObjectType({
       createdByUser: {
         type: UserType,
         async resolve(order, args, req) {
-          const fromCollective = await order.getFromCollective();
-          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdmin(order.CollectiveId))) {
+          const collective = await req.loaders.Collective.byId.load(order.CollectiveId);
+          const fromCollective = await req.loaders.Collective.byId.load(order.FromCollectiveId);
+          if (fromCollective.isIncognito && (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective))) {
             return {};
           }
 
@@ -1773,8 +1780,9 @@ export const OrderType = new GraphQLObjectType({
             console.warn('There is no FromCollectiveId for order', order.id);
             return null;
           }
+          const collective = await req.loaders.Collective.byId.load(order.CollectiveId);
           const fromCollective = await req.loaders.Collective.byId.load(order.FromCollectiveId);
-          if (req.remoteUser && req.remoteUser.isAdmin(order.CollectiveId)) {
+          if (req.remoteUser && req.remoteUser.isAdminOfCollective(collective)) {
             allowContextPermission(req, PERMISSION_TYPE.SEE_INCOGNITO_ACCOUNT_DETAILS, fromCollective.id);
           }
           return fromCollective;
