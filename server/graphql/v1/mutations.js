@@ -1,14 +1,9 @@
-import config from 'config';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
-import { pick } from 'lodash';
 
-import statuses from '../../constants/expense_status';
-import roles from '../../constants/roles';
-import emailLib from '../../lib/email';
-import logger from '../../lib/logger';
-import models, { sequelize } from '../../models';
+import models from '../../models';
 import { bulkCreateVirtualCards, createVirtualCardsForEmails } from '../../paymentProviders/opencollective/virtualcard';
 import { editPublicMessage } from '../common/members';
+import * as updateMutations from '../common/update';
 import { createUser } from '../common/user';
 import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../errors';
 
@@ -32,14 +27,6 @@ import {
 } from './mutations/collectives';
 import * as commentMutations from './mutations/comments';
 import { editConnectedAccount } from './mutations/connectedAccounts';
-import {
-  createExpense,
-  deleteExpense,
-  editExpense,
-  markExpenseAsUnpaid,
-  payExpense,
-  updateExpenseStatus,
-} from './mutations/expenses';
 import { createWebhook, deleteNotification, editWebhooks } from './mutations/notifications';
 import {
   addFundsToCollective,
@@ -52,7 +39,6 @@ import {
 } from './mutations/orders';
 import * as paymentMethodsMutation from './mutations/paymentMethods';
 import { editTier, editTiers } from './mutations/tiers';
-import * as updateMutations from './mutations/updates';
 import { confirmUserEmail, updateUserEmail } from './mutations/users';
 import { ApplicationInputType, ApplicationType } from './Application';
 import { CollectiveInterfaceType } from './CollectiveInterface';
@@ -62,12 +48,10 @@ import {
   CommentInputType,
   ConfirmOrderInputType,
   ConnectedAccountInputType,
-  ExpenseInputType,
   MemberInputType,
   NotificationInputType,
   OrderInputType,
   PaymentMethodDataVirtualCardInputType,
-  PaymentMethodInputType,
   StripeCreditCardDataInputType,
   TierInputType,
   UpdateAttributesInputType,
@@ -78,7 +62,6 @@ import { TransactionInterfaceType } from './TransactionInterface';
 import {
   CommentType,
   ConnectedAccountType,
-  ExpenseType,
   MemberType,
   NotificationType,
   OrderType,
@@ -279,56 +262,6 @@ const mutations = {
       return editConnectedAccount(req.remoteUser, args.connectedAccount);
     },
   },
-  approveExpense: {
-    type: ExpenseType,
-    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(_, args, req) {
-      return updateExpenseStatus(req, args.id, statuses.APPROVED);
-    },
-  },
-  unapproveExpense: {
-    type: ExpenseType,
-    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(_, args, req) {
-      return updateExpenseStatus(req, args.id, statuses.PENDING);
-    },
-  },
-  rejectExpense: {
-    type: ExpenseType,
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(_, args, req) {
-      return updateExpenseStatus(req, args.id, statuses.REJECTED);
-    },
-  },
-  payExpense: {
-    type: ExpenseType,
-    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-      paymentProcessorFeeInCollectiveCurrency: { type: GraphQLInt },
-      hostFeeInCollectiveCurrency: { type: GraphQLInt },
-      platformFeeInCollectiveCurrency: { type: GraphQLInt },
-      forceManual: {
-        type: GraphQLBoolean,
-        description: 'Force expense with paypal method to be paid manually',
-      },
-      twoFactorAuthenticatorCode: {
-        type: GraphQLString,
-        description: '2FA code for if the host account has 2FA for payouts turned on.',
-      },
-    },
-    resolve(_, args, req) {
-      return payExpense(req, args);
-    },
-  },
   markOrderAsPaid: {
     type: OrderType,
     args: {
@@ -345,47 +278,6 @@ const mutations = {
     },
     resolve(_, args, req) {
       return markPendingOrderAsExpired(req.remoteUser, args.id);
-    },
-  },
-  createExpense: {
-    type: ExpenseType,
-    deprecationReason: '2020-09-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      expense: { type: new GraphQLNonNull(ExpenseInputType) },
-    },
-    resolve(_, args, req) {
-      return createExpense(req.remoteUser, args.expense);
-    },
-  },
-  editExpense: {
-    type: ExpenseType,
-    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      expense: { type: new GraphQLNonNull(ExpenseInputType) },
-    },
-    resolve(_, args, req) {
-      return editExpense(req, args.expense);
-    },
-  },
-  deleteExpense: {
-    type: ExpenseType,
-    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-    },
-    resolve(_, args, req) {
-      return deleteExpense(req, args.id);
-    },
-  },
-  markExpenseAsUnpaid: {
-    type: ExpenseType,
-    deprecationReason: '2020-11-17: [LegacyExpenseFlow] Now using GQLV2 for that',
-    args: {
-      id: { type: new GraphQLNonNull(GraphQLInt) },
-      processorFeeRefunded: { type: new GraphQLNonNull(GraphQLBoolean) },
-    },
-    resolve(_, args, req) {
-      return markExpenseAsUnpaid(req, args.id, args.processorFeeRefunded);
     },
   },
   editTier: {
@@ -422,7 +314,7 @@ const mutations = {
       const collective = await models.Collective.findByPk(args.collectiveId);
       if (!collective) {
         throw new NotFound();
-      } else if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+      } else if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
         throw new Unauthorized();
       } else {
         await collective.editMembers(args.members, {
@@ -480,6 +372,7 @@ const mutations = {
   },
   createUpdate: {
     type: UpdateType,
+    deprecationReason: 'This endpoint has been moved to GQLV2',
     args: {
       update: {
         type: new GraphQLNonNull(UpdateInputType),
@@ -543,7 +436,13 @@ const mutations = {
         type: new GraphQLNonNull(CommentInputType),
       },
     },
-    resolve: commentMutations.createComment,
+    resolve: (_, args, req) => {
+      if (args['UpdateId']) {
+        throw new Error('Use QPI V2 to post comments on updates');
+      }
+
+      return commentMutations.createComment(_, args, req);
+    },
   },
   editComment: {
     type: CommentType,
