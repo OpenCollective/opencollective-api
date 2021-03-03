@@ -55,6 +55,10 @@ async function run({ dryRun, limit, force } = {}) {
     const collective = await models.Collective.findByPk(order.CollectiveId);
     const fromCollective = await models.Collective.findByPk(order.FromCollectiveId);
 
+    if (collective.slug === 'opencollective') {
+      continue;
+    }
+
     logger.info(`Checking order #${order.id} from #${fromCollective.slug} to #${collective.slug}`);
 
     const rejectedCategories = getContributorRejectedCategories(fromCollective, collective);
@@ -67,6 +71,7 @@ async function run({ dryRun, limit, force } = {}) {
     logger.info(`  - Found rejected categories: ${rejectedCategories.join(', ')}`);
 
     let shouldMarkAsRejected = true;
+    let shouldNotifyContributor = true;
 
     // Retrieve latest transaction
     const transaction = await models.Transaction.findOne({
@@ -76,6 +81,7 @@ async function run({ dryRun, limit, force } = {}) {
         createdAt: { [Op.gte]: sequelize.literal("NOW() - INTERVAL '30 days'") },
       },
       order: [['createdAt', 'DESC']],
+      include: [models.PaymentMethod],
     });
 
     if (transaction) {
@@ -83,10 +89,9 @@ async function run({ dryRun, limit, force } = {}) {
       // Refund transaction if not already refunded
       if (!transaction.RefundTransactionId) {
         logger.info(`  - Refunding transaction`);
-        const paymentMethod = transaction.PaymentMethodId
-          ? await models.PaymentMethod.findByPk(transaction.PaymentMethodId)
+        const paymentMethodProvider = transaction.PaymentMethod
+          ? libPayments.findPaymentMethodProvider(transaction.PaymentMethod)
           : null;
-        const paymentMethodProvider = paymentMethod ? libPayments.findPaymentMethodProvider(paymentMethod) : null;
         if (!paymentMethodProvider || !paymentMethodProvider.refundTransaction) {
           if (force) {
             logger.info(`  - refundTransaction not available. Creating refundTransaction in the database only.`);
@@ -117,6 +122,7 @@ async function run({ dryRun, limit, force } = {}) {
       logger.info(`  - No transaction found`);
       if (order.status === 'PAID') {
         shouldMarkAsRejected = false;
+        shouldNotifyContributor = false;
       }
     }
 
@@ -162,17 +168,18 @@ async function run({ dryRun, limit, force } = {}) {
       purgeCacheForCollective(fromCollective.slug);
     }
 
-    const activity = {
-      type: 'contribution.rejected',
-      data: {
-        collective: { name: collective.name },
-        rejectionReason: `${collective.name} banned some specific categories of contributors and there was a match with your profile.`,
-      },
-    };
-
-    logger.info(`  - Notifying admins of ${fromCollective.slug}`);
-    if (!dryRun) {
-      await notifyAdminsOfCollective(fromCollective.id, activity);
+    if (shouldNotifyContributor) {
+      const activity = {
+        type: 'contribution.rejected',
+        data: {
+          collective: { name: collective.name },
+          rejectionReason: `${collective.name} banned some specific categories of contributors and there was a match with your profile.`,
+        },
+      };
+      logger.info(`  - Notifying admins of ${fromCollective.slug}`);
+      if (!dryRun) {
+        await notifyAdminsOfCollective(fromCollective.id, activity);
+      }
     }
   }
 }
