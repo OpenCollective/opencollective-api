@@ -1,6 +1,7 @@
 import { GraphQLNonNull, GraphQLString } from 'graphql';
 import { pick } from 'lodash';
 
+import logger from '../../../lib/logger';
 import models from '../../../models';
 import { Forbidden, NotFound, Unauthorized } from '../../errors';
 import { idDecode, IDENTIFIER_TYPES } from '../identifiers';
@@ -28,11 +29,17 @@ const payoutMethodMutations = {
       }
 
       const collective = await fetchAccountWithReference(args.account, { loaders: req.loaders, throwIfMissing: true });
-      if (!req.remoteUser.isAdmin(collective.id)) {
+      if (!req.remoteUser.isAdminOfCollective(collective)) {
         throw new Unauthorized("You don't have permission to edit this collective");
       }
 
       if (args.payoutMethod.data.isManualBankTransfer) {
+        try {
+          await collective.setCurrency(args.payoutMethod.data.currency);
+        } catch (error) {
+          logger.error(`Unable to set currency for '${collective.slug}': ${error.message}`);
+        }
+
         const existingBankAccount = await models.PayoutMethod.findOne({
           where: {
             data: { isManualBankTransfer: true },
@@ -66,9 +73,13 @@ const payoutMethodMutations = {
 
       const pmId = idDecode(args.payoutMethodId, IDENTIFIER_TYPES.PAYOUT_METHOD);
       const payoutMethod = await req.loaders.PayoutMethod.byId.load(pmId);
-      if (!pmId) {
+
+      if (!payoutMethod) {
         throw new NotFound('This payout method does not exist');
-      } else if (!req.remoteUser.isAdmin(payoutMethod.CollectiveId)) {
+      }
+
+      const collective = await req.loaders.Collective.byId.load(payoutMethod.CollectiveId);
+      if (!req.remoteUser.isAdminOfCollective(collective)) {
         throw new Forbidden();
       }
 
