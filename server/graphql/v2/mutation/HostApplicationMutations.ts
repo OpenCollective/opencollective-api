@@ -1,22 +1,26 @@
 import { GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
+import GraphQLJSON from 'graphql-type-json';
 
 import { activities } from '../../../constants';
+import { types as CollectiveType } from '../../../constants/collectives';
 import { purgeCacheForCollective } from '../../../lib/cache';
 import emailLib from '../../../lib/email';
 import { handleHostCollectivesLimit } from '../../../lib/plans';
 import { stripHTML } from '../../../lib/sanitize-html';
 import models from '../../../models';
+import { HostApplicationStatus } from '../../../models/HostApplication';
 import { NotFound, Unauthorized, ValidationFailed } from '../../errors';
 import { ProcessHostApplicationAction } from '../enum/ProcessHostApplicationAction';
 import { AccountReferenceInput, fetchAccountWithReference } from '../input/AccountReferenceInput';
 import { Account } from '../interface/Account';
+import { Collective } from '../object/Collective';
 import Conversation from '../object/Conversation';
 
 const ProcessHostApplicationResponse = new GraphQLObjectType({
   name: 'ProcessHostApplicationResponse',
   fields: () => ({
     account: {
-      type: new GraphQLNonNull(Account),
+      type: new GraphQLNonNull(Collective),
       description: 'The account that applied to the host',
     },
     conversation: {
@@ -27,6 +31,56 @@ const ProcessHostApplicationResponse = new GraphQLObjectType({
 });
 
 const HostApplicationMutations = {
+  applyToHost: {
+    type: new GraphQLNonNull(Account),
+    description: 'Apply to an host with a collective',
+    args: {
+      collective: {
+        type: new GraphQLNonNull(AccountReferenceInput),
+        description: 'Account applying to the host.',
+      },
+      host: {
+        type: new GraphQLNonNull(AccountReferenceInput),
+        description: 'Host to apply to.',
+      },
+      message: {
+        type: GraphQLString,
+        description: 'A message to attach for the host to review the application',
+      },
+      applicationData: {
+        type: GraphQLJSON,
+        description: 'Further information about collective applying to host',
+      },
+    },
+    async resolve(_, args, req): Promise<object> {
+      if (!req.remoteUser) {
+        throw new Unauthorized('You need to be logged in');
+      }
+
+      const collective = await fetchAccountWithReference(args.collective);
+      if (!collective) {
+        throw new NotFound('Collective not found');
+      }
+      if (![CollectiveType.COLLECTIVE, CollectiveType.FUND].includes(collective.type)) {
+        throw new Error('Account must be a collective or a fund');
+      }
+      if (!req.remoteUser.isAdminOfCollective(collective)) {
+        throw new Unauthorized('You need to be an Admin of the account');
+      }
+
+      const host = await fetchAccountWithReference(args.host);
+      if (!host) {
+        throw new NotFound('Host not found');
+      }
+
+      // No need to check the balance, this is being handled in changeHost, along with most other checks
+
+      return collective.changeHost(host.id, req.remoteUser, {
+        message: args.message,
+        applicationData: args.applicationData,
+      });
+    },
+  },
   processHostApplication: {
     type: new GraphQLNonNull(ProcessHostApplicationResponse),
     description: 'Reply to a host application',
@@ -105,10 +159,11 @@ const approveApplication = async (host, collective, remoteUser) => {
     }),
   );
 
-  purgeCacheForCollective(collective.slug);
-
   // Approve the collective and return it
-  return collective.update({ isActive: true, approvedAt: new Date() });
+  await collective.update({ isActive: true, approvedAt: new Date() });
+  purgeCacheForCollective(collective.slug);
+  await models.HostApplication.updatePendingApplications(host, collective, HostApplicationStatus.APPROVED);
+  return collective;
 };
 
 const rejectApplication = async (host, collective, remoteUser, reason: string) => {
@@ -127,8 +182,10 @@ const rejectApplication = async (host, collective, remoteUser, reason: string) =
     },
   });
 
+  await collective.changeHost(null, remoteUser);
   purgeCacheForCollective(collective.slug);
-  return collective.changeHost(null, remoteUser);
+  await models.HostApplication.updatePendingApplications(host, collective, HostApplicationStatus.REJECTED);
+  return collective;
 };
 
 const sendPrivateMessage = async (host, collective, message: string): Promise<void> => {

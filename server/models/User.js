@@ -5,6 +5,7 @@ import debugLib from 'debug';
 import slugify from 'limax';
 import { defaults, get, intersection, pick } from 'lodash';
 import { Op } from 'sequelize';
+import Temporal from 'sequelize-temporal';
 
 import roles from '../constants/roles';
 import * as auth from '../lib/auth';
@@ -100,6 +101,11 @@ export default (Sequelize, DataTypes) => {
 
       twoFactorAuthToken: {
         type: DataTypes.STRING,
+        allowNull: true,
+      },
+
+      twoFactorAuthRecoveryCodes: {
+        type: DataTypes.ARRAY(DataTypes.STRING),
         allowNull: true,
       },
     },
@@ -338,7 +344,7 @@ export default (Sequelize, DataTypes) => {
   };
 
   User.prototype.isRoot = function () {
-    const result = this.hasRole([roles.ADMIN], 1);
+    const result = this.hasRole([roles.ADMIN], 1) || this.hasRole([roles.ADMIN], 8686);
     debug('isRoot?', result);
     return result;
   };
@@ -350,12 +356,21 @@ export default (Sequelize, DataTypes) => {
     return result;
   };
 
+  // Slightly better API than the former
+  User.prototype.isMemberOfCollective = function (collective) {
+    if (collective.type === 'EVENT' || collective.type === 'PROJECT') {
+      return this.isMember(collective.id) || this.isMember(collective.ParentCollectiveId);
+    } else {
+      return this.isMember(collective.id);
+    }
+  };
+
   // Determines whether a user can see updates for a collective based on their roles.
-  User.prototype.canSeeUpdates = function (CollectiveId) {
+  User.prototype.canSeePrivateUpdates = function (CollectiveId) {
     const result =
       this.CollectiveId === CollectiveId ||
       this.hasRole([roles.HOST, roles.ADMIN, roles.MEMBER, roles.CONTRIBUTOR, roles.BACKER], CollectiveId);
-    debug('userid:', this.id, 'canSeeUpdates', CollectiveId, '?', result);
+    debug('userid:', this.id, 'canSeePrivateUpdates', CollectiveId, '?', result);
     return result;
   };
 
@@ -398,7 +413,7 @@ export default (Sequelize, DataTypes) => {
    * Limit the user account, preventing most actions on the platoform
    * @param spamReport: an optional spam report to attach to the account limitation. See `server/lib/spam.ts`.
    */
-  User.prototype.limitAcount = async function (spamReport = null) {
+  User.prototype.limitAccount = async function (spamReport = null) {
     const newData = { ...this.data, features: { ...get(this.data, 'features'), ALL: false } };
     if (spamReport) {
       newData.spamReports = [...get(this.data, 'spamReports', []), spamReport];
@@ -425,8 +440,8 @@ export default (Sequelize, DataTypes) => {
     );
   };
 
-  User.findByEmail = email => {
-    return User.findOne({ where: { email } });
+  User.findByEmail = (email, transaction) => {
+    return User.findOne({ where: { email } }, { transaction });
   };
 
   User.createUserWithCollective = async (userData, transaction) => {
@@ -494,6 +509,8 @@ export default (Sequelize, DataTypes) => {
     }
     return { firstName, lastName };
   };
+
+  Temporal(User, Sequelize);
 
   return User;
 };

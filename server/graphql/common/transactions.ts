@@ -47,16 +47,13 @@ const isPayerCollectiveAdmin = async (req, transaction): Promise<boolean> => {
 
   const collectiveId =
     transaction.type === 'DEBIT'
-      ? // If Transaction was paid with VirtualCard, only the card issuer has access to it
-        transaction.UsingVirtualCardFromCollectiveId || transaction.CollectiveId
+      ? // If Transaction was paid with Gift Card, only the card issuer has access to it
+        transaction.UsingGiftCardFromCollectiveId || transaction.CollectiveId
       : transaction.FromCollectiveId;
 
-  if (req.remoteUser.isAdmin(collectiveId)) {
-    return true;
-  } else {
-    const collective = await req.loaders.Collective.byId.load(collectiveId);
-    return req.remoteUser.isAdmin(collective.ParentCollectiveId);
-  }
+  const collective = await req.loaders.Collective.byId.load(collectiveId);
+
+  return req.remoteUser.isAdminOfCollective(collective);
 };
 
 const isPayeeHostAdmin = async (req, transaction): Promise<boolean> => {
@@ -76,7 +73,7 @@ const isPayeeCollectiveAdmin = async (req, transaction): Promise<boolean> => {
   const collective = await req.loaders.Collective.byId.load(
     transaction.type === 'CREDIT' ? transaction.CollectiveId : transaction.FromCollectiveId,
   );
-  return req.remoteUser.isAdmin(collective.id);
+  return req.remoteUser.isAdminOfCollective(collective);
 };
 
 /**

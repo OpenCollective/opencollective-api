@@ -93,6 +93,16 @@ interface Account {
     role: [MemberRole]
 
     """
+    Filter on (un)approved collectives
+    """
+    isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
+
+    """
     Type of accounts (BOT/COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)
     """
     accountType: [AccountType]
@@ -131,7 +141,7 @@ interface Account {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -164,7 +174,7 @@ interface Account {
   """
   paymentMethods(
     """
-    Filter on given types (creditcard, virtualcard...)
+    Filter on given types (creditcard, giftcard...)
     """
     types: [String]
 
@@ -288,6 +298,14 @@ enum AccountType {
   INDIVIDUAL
   ORGANIZATION
   PROJECT
+}
+
+input AccountUpdateInput {
+  """
+  The public id identifying the account (ie: dgm9bnk8-0437xqry-ejpvzeol-jdayw5re)
+  """
+  id: String!
+  currency: Currency
 }
 
 """
@@ -459,6 +477,21 @@ enum ActivityType {
 }
 
 """
+Response for the addTwoFactorAuthTokenToIndividual mutation
+"""
+type AddTwoFactorAuthTokenToIndividualResponse {
+  """
+  The Individual that the 2FA has been enabled for
+  """
+  account: Individual!
+
+  """
+  The recovery codes for the Individual to write down
+  """
+  recoveryCodes: [String]
+}
+
+"""
 A financial amount.
 """
 type Amount {
@@ -545,7 +578,17 @@ type Bot implements Account {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -562,6 +605,11 @@ type Bot implements Account {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -607,7 +655,7 @@ type Bot implements Account {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -759,7 +807,17 @@ type Collective implements Account & AccountWithHost & AccountWithContributions 
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -776,6 +834,11 @@ type Collective implements Account & AccountWithHost & AccountWithContributions 
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -821,7 +884,7 @@ type Collective implements Account & AccountWithHost & AccountWithContributions 
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -972,27 +1035,29 @@ input CollectiveCreateInput {
 Describes the features enabled and available for this collective
 """
 type CollectiveFeatures {
-  CONTRIBUTE: CollectiveFeatureStatus
-  CONTRIBUTIONS: CollectiveFeatureStatus
+  RECEIVE_FINANCIAL_CONTRIBUTIONS: CollectiveFeatureStatus
   RECURRING_CONTRIBUTIONS: CollectiveFeatureStatus
+  TRANSACTIONS: CollectiveFeatureStatus
   EVENTS: CollectiveFeatureStatus
   PROJECTS: CollectiveFeatureStatus
-  BUDGET: CollectiveFeatureStatus
-  TRANSACTIONS: CollectiveFeatureStatus
   USE_EXPENSES: CollectiveFeatureStatus
+  RECEIVE_EXPENSES: CollectiveFeatureStatus
+  RECEIVE_HOST_APPLICATIONS: CollectiveFeatureStatus
   COLLECTIVE_GOALS: CollectiveFeatureStatus
   TOP_FINANCIAL_CONTRIBUTORS: CollectiveFeatureStatus
-  ALL_FINANCIAL_CONTRIBUTORS: CollectiveFeatureStatus
-  CONNECT: CollectiveFeatureStatus
   CONVERSATIONS: CollectiveFeatureStatus
   UPDATES: CollectiveFeatureStatus
-  ABOUT: CollectiveFeatureStatus
   TEAM: CollectiveFeatureStatus
   ORDER: CollectiveFeatureStatus
   CONTACT_COLLECTIVE: CollectiveFeatureStatus
   CONTACT_FORM: CollectiveFeatureStatus
   CREATE_COLLECTIVE: CollectiveFeatureStatus
   CROSS_CURRENCY_MANUAL_TRANSACTIONS: CollectiveFeatureStatus
+  TRANSFERWISE: CollectiveFeatureStatus
+  PAYPAL_PAYOUTS: CollectiveFeatureStatus
+  PAYPAL_DONATIONS: CollectiveFeatureStatus
+  HOST_DASHBOARD: CollectiveFeatureStatus
+  CONNECTED_ACCOUNTS: CollectiveFeatureStatus
 }
 
 enum CollectiveFeatureStatus {
@@ -1024,7 +1089,7 @@ type Comment {
   id: String
   createdAt: DateTime
   html: String
-  markdown: String
+  markdown: String @deprecated(reason: "2020-01-25: Use html")
   fromAccount: Account
   account: Account
 
@@ -1058,8 +1123,8 @@ input CommentCreateInput {
   If your comment is linked to an expense, set it here
   """
   expense: ExpenseReferenceInput
-  ExpenseId: Int
   ConversationId: String
+  update: UpdateReferenceInput
 }
 
 input CommentReferenceInput {
@@ -1174,8 +1239,8 @@ enum ConnectedAccountService {
   stripe
   github
   twitter
-  meetup
   transferwise
+  meetup @deprecated(reason: "Not using this service anymore")
 }
 
 enum ContributionFrequency {
@@ -2636,9 +2701,19 @@ All supported currencies
 """
 enum Currency {
   """
+  Argentine Peso
+  """
+  ARS
+
+  """
   Australian Dollar
   """
   AUD
+
+  """
+  Taka
+  """
+  BDT
 
   """
   Bulgarian Lev
@@ -2681,6 +2756,11 @@ enum Currency {
   GBP
 
   """
+  Hong Kong Dollar
+  """
+  HKD
+
+  """
   Kuna
   """
   HRK
@@ -2711,6 +2791,11 @@ enum Currency {
   MXN
 
   """
+  Malaysian Ringgit
+  """
+  MYR
+
+  """
   Naira
   """
   NGN
@@ -2719,6 +2804,11 @@ enum Currency {
   Norwegian Krone
   """
   NOK
+
+  """
+  Nepalese Rupee
+  """
+  NPR
 
   """
   New Zealand Dollar
@@ -2741,6 +2831,11 @@ enum Currency {
   SEK
 
   """
+  Singapore Dollar
+  """
+  SGD
+
+  """
   US Dollar
   """
   USD
@@ -2749,6 +2844,11 @@ enum Currency {
   Peso Uruguayo
   """
   UYU
+
+  """
+  Rand
+  """
+  ZAR
 }
 
 scalar DateString
@@ -2874,7 +2974,17 @@ type Event implements Account & AccountWithHost & AccountWithContributions {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -2891,6 +3001,11 @@ type Event implements Account & AccountWithHost & AccountWithContributions {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -2936,7 +3051,7 @@ type Event implements Account & AccountWithHost & AccountWithContributions {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -3283,12 +3398,6 @@ input ExpenseCreateInput {
   The payout method that will be used to reimburse the expense
   """
   payoutMethod: PayoutMethodInput!
-
-  """
-  @deprecated 2020-04-08: Please use the items field - The list of items for
-  this expense. Total amount will be computed from them.
-  """
-  attachments: [ExpenseItemCreateInput]
 
   """
   The list of items for this expense. Total amount will be computed from them.
@@ -3741,7 +3850,17 @@ type Fund implements Account & AccountWithHost & AccountWithContributions {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -3758,6 +3877,11 @@ type Fund implements Account & AccountWithHost & AccountWithContributions {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -3803,7 +3927,7 @@ type Fund implements Account & AccountWithHost & AccountWithContributions {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -4032,7 +4156,17 @@ type Host implements Account & AccountWithContributions {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -4049,6 +4183,11 @@ type Host implements Account & AccountWithContributions {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -4094,7 +4233,7 @@ type Host implements Account & AccountWithContributions {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -4210,6 +4349,17 @@ type Host implements Account & AccountWithContributions {
   isOpenToApplications: Boolean
   termsUrl: URL
   plan: HostPlan!
+  hostMetrics(
+    """
+    Inferior date limit in which we're calculating the metrics
+    """
+    from: String
+
+    """
+    Superior date limit in which we're calculating the metrics
+    """
+    to: String
+  ): HostMetrics!
 
   """
   The list of payment methods (Stripe, Paypal, manual bank transfer, etc ...) the Host can accept for its Collectives
@@ -4255,7 +4405,41 @@ type Host implements Account & AccountWithContributions {
     Order of the results
     """
     orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: DESC }
-  ): AccountCollection!
+  ): HostApplicationCollection!
+}
+
+type HostApplication {
+  id: String!
+
+  """
+  The account who applied to this host
+  """
+  account: Account!
+
+  """
+  The date on which the item was created
+  """
+  createdAt: DateTime!
+  status: HostApplicationStatus
+  message: String
+  customData: JSON
+}
+
+"""
+A collection of "HostApplication"
+"""
+type HostApplicationCollection implements Collection {
+  offset: Int
+  limit: Int
+  totalCount: Int
+  nodes: [HostApplication]
+}
+
+enum HostApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
 }
 
 """
@@ -4289,9 +4473,64 @@ enum HostFeeStructure {
 }
 
 """
+Host metrics related to collected and pending fees/tips.
+"""
+type HostMetrics {
+  """
+  Amount collected in host fees for given period
+  """
+  hostFees: Amount
+
+  """
+  Amount collected in platform fees for given period
+  """
+  platformFees: Amount
+
+  """
+  Amount collected in platform fees requiring settlement
+  """
+  pendingPlatformFees: Amount
+
+  """
+  Amount collected in platform tips for given period
+  """
+  platformTips: Amount
+
+  """
+  Amount collected in platform tips requiring settlement
+  """
+  pendingPlatformTips: Amount
+
+  """
+  Amount in host fee shared with the platform
+  """
+  hostFeeShare: Amount
+
+  """
+  Amount in host fee shared  requiring settlement
+  """
+  pendingHostFeeShare: Amount
+
+  """
+  Total amount managed on behalf of hosted collectives
+  """
+  totalMoneyManaged: Amount
+
+  """
+  Host fee sharing percent
+  """
+  hostFeeSharePercent: Int
+}
+
+"""
 The name of the current plan and its characteristics.
 """
 type HostPlan {
+  """
+  The public id identifying the account (ie: 5v08jk63-w4g9nbpz-j7qmyder-p7ozax5g)
+  """
+  id: String
+
   """
   The name of the plan
   """
@@ -4346,6 +4585,16 @@ type HostPlan {
   Amount limit for the transferwise payouts feature under this plan
   """
   transferwisePayoutsLimit: Int
+
+  """
+  Ability to charge Host Fees.
+  """
+  hostFees: Boolean
+
+  """
+  Charge on revenues made through Host Fees.
+  """
+  hostFeeSharePercent: Int
 }
 
 enum ImageFormat {
@@ -4414,7 +4663,17 @@ type Individual implements Account {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -4431,6 +4690,11 @@ type Individual implements Account {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -4476,7 +4740,7 @@ type Individual implements Account {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -4552,7 +4816,19 @@ type Individual implements Account {
   isGuest: Boolean!
   isFollowingConversation(id: String!): Boolean!
   hasTwoFactorAuth: Boolean
+
+  """
+  If the individual is a host account, this will return the matching Host object
+  """
+  host: Host
 }
+
+input IndividualCreateInput {
+  name: String!
+  email: String!
+}
+
+scalar IsoDateString
 
 """
 ISO-8601 date
@@ -4607,6 +4883,11 @@ type Location {
   Longitude
   """
   long: Float
+
+  """
+  Structured JSON address
+  """
+  structured: JSON
 }
 
 """
@@ -4637,6 +4918,11 @@ input LocationInput {
   Longitude
   """
   long: Float
+
+  """
+  Structured JSON address
+  """
+  structured: JSON
 }
 
 """
@@ -4738,6 +5024,7 @@ type Mutation {
     Can only be set if root
     """
     platformFeePercent: Int
+    platformTip: AmountInput
   ): Order!
   createCollective(
     """
@@ -4751,9 +5038,24 @@ type Mutation {
     host: AccountReferenceInput
 
     """
+    User information to create along with the collective
+    """
+    user: IndividualCreateInput
+
+    """
     Wether to trigger the automated approval for Open Source collectives with GitHub.
     """
     automateApprovalWithGithub: Boolean = false
+
+    """
+    A message to attach for the host to review the application
+    """
+    message: String
+
+    """
+    Further information about collective applying to host
+    """
+    applicationData: JSON
   ): Collective
   createFund(
     """
@@ -4766,6 +5068,12 @@ type Mutation {
     """
     host: AccountReferenceInput
   ): Fund
+  createOrganization(
+    """
+    Information about the organization to create (name, slug, description, website, ...)
+    """
+    organization: OrganizationCreateInput!
+  ): Organization
   createProject(
     """
     Information about the Project to create (name, slug, description, tags, settings)
@@ -4975,6 +5283,31 @@ type Mutation {
   ): Expense!
 
   """
+  Apply to an host with a collective
+  """
+  applyToHost(
+    """
+    Account applying to the host.
+    """
+    collective: AccountReferenceInput!
+
+    """
+    Host to apply to.
+    """
+    host: AccountReferenceInput!
+
+    """
+    A message to attach for the host to review the application
+    """
+    message: String
+
+    """
+    Further information about collective applying to host
+    """
+    applicationData: JSON
+  ): Account!
+
+  """
   Reply to a host application
   """
   processHostApplication(
@@ -5040,34 +5373,59 @@ type Mutation {
   ): Account!
 
   """
-  Add 2FA to the Account if it does not have it
+  Add 2FA to the Individual if it does not have it
   """
   addTwoFactorAuthTokenToIndividual(
     """
-    Account that will have 2FA added to it
+    Individual that will have 2FA added to it
     """
     account: AccountReferenceInput!
 
     """
-    The generated secret to save to the Account
+    The generated secret to save to the Individual
     """
     token: String!
+  ): AddTwoFactorAuthTokenToIndividualResponse!
+
+  """
+  Remove 2FA from the Individual if it has been enabled
+  """
+  removeTwoFactorAuthTokenFromIndividual(
+    """
+    Account that will have 2FA removed from it
+    """
+    account: AccountReferenceInput!
+
+    """
+    The 6-digit 2FA code
+    """
+    code: String!
   ): Individual!
 
   """
-  Apply to an host with a collective
+  Update the plan
   """
-  applyToHost(
+  editHostPlan(
     """
-    Account applying to the host.
+    Account where the host plan will be edited.
     """
-    collective: AccountReferenceInput!
+    account: AccountReferenceInput!
 
     """
-    Host to apply to.
+    The name of the plan to subscribe to.
     """
-    host: AccountReferenceInput!
-  ): Collective!
+    plan: String!
+  ): Host!
+
+  """
+  Edit key properties of an account.
+  """
+  editAccount(
+    """
+    Account to edit.
+    """
+    account: AccountUpdateInput!
+  ): Host!
 
   """
   Sends an email for guest to confirm their emails and create their Open Collective account
@@ -5092,11 +5450,6 @@ type Mutation {
     The key that you want to edit in settings
     """
     emailConfirmationToken: String!
-
-    """
-    This can be used to link the other guest contributions to the user
-    """
-    guestTokens: [String!]
   ): ConfirmGuestAccountResponse!
 
   """
@@ -5168,6 +5521,11 @@ type Mutation {
   ): OrderWithPayment!
 
   """
+  A mutation for the host to approve or reject an order
+  """
+  processPendingOrder(order: OrderReferenceInput!, action: ProcessOrderAction!): Order!
+
+  """
   Add a new payment method to be used with an Order
   """
   addCreditCard(
@@ -5191,31 +5549,6 @@ type Mutation {
     """
     account: AccountReferenceInput!
   ): CreditCardWithStripeError!
-
-  """
-  Add a new payment method to be used with an Order
-  """
-  addStripeCreditCard(
-    """
-    The credit card info
-    """
-    creditCardInfo: CreditCardCreateInput!
-
-    """
-    Name associated to this credit card
-    """
-    name: String!
-
-    """
-    Whether this credit card should be saved for future payments
-    """
-    isSavedForLater: Boolean = true
-
-    """
-    Account to add the credit card to
-    """
-    account: AccountReferenceInput!
-  ): CreditCardWithStripeError! @deprecated(reason: "2020-10-23: Use addCreditCard")
 
   """
   Confirm a credit card is ready for use after strong customer authentication
@@ -5266,6 +5599,11 @@ type Mutation {
     """
     message: String
   ): Member!
+  createUpdate(update: UpdateCreateInput!): Update!
+  editUpdate(update: UpdateUpdateInput!): Update!
+  publishUpdate(id: String!, notificationAudience: UpdateAudienceType!): Update!
+  unpublishUpdate(id: String!): Update!
+  deleteUpdate(id: String!): Update!
 }
 
 input NewAccountOrganizationInput {
@@ -5337,6 +5675,11 @@ type Order {
   This represents a MemberOf relationship (ie: Collective backed by an Individual) attached to the Order.
   """
   membership: MemberOf
+
+  """
+  The permissions given to current logged in user for this order
+  """
+  permissions: OrderPermissions!
 }
 
 """
@@ -5347,6 +5690,16 @@ type OrderCollection implements Collection {
   limit: Int
   totalCount: Int
   nodes: [Order]
+}
+
+"""
+Some context about how an order was created
+"""
+input OrderContextInput {
+  """
+  Whether this order was created using the embedded contribution flow
+  """
+  isEmbed: Boolean
 }
 
 """
@@ -5400,6 +5753,11 @@ input OrderCreateInput {
   If the tier has some "customFields", use this field to set their values
   """
   customData: JSON
+
+  """
+  Some context about how this order was created
+  """
+  context: OrderContextInput
 }
 
 """
@@ -5408,6 +5766,21 @@ Possible directions in which to order a list of items
 enum OrderDirection {
   ASC
   DESC
+}
+
+"""
+Fields for the user permissions on an order
+"""
+type OrderPermissions {
+  """
+  Whether the current user can mark this order as expired
+  """
+  canMarkAsExpired: Boolean!
+
+  """
+  Whether the current user can mark this order as unpaid
+  """
+  canMarkAsPaid: Boolean!
 }
 
 input OrderReferenceInput {
@@ -5448,7 +5821,7 @@ input OrderTaxInput {
   """
   Country of the account ordering, to know from where to apply the tax
   """
-  country: CountryISO!
+  country: CountryISO
 
   """
   Tax identification number, if any
@@ -5478,7 +5851,7 @@ type OrderWithPayment {
   order: Order!
 
   """
-  If donating as a guest, this will contain your guest token to contribute again in the future
+  If donating as a guest, this will contain your guest token to confirm your order
   """
   guestToken: String
 
@@ -5491,7 +5864,7 @@ type OrderWithPayment {
 """
 This represents an Organization account
 """
-type Organization implements Account {
+type Organization implements Account & AccountWithContributions {
   id: String
   legacyId: Int
 
@@ -5546,7 +5919,17 @@ type Organization implements Account {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -5563,6 +5946,11 @@ type Organization implements Account {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -5608,7 +5996,7 @@ type Organization implements Account {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -5680,15 +6068,61 @@ type Organization implements Account {
   features: CollectiveFeatures!
 
   """
+  Number of unique financial contributors.
+  """
+  totalFinancialContributors(
+    """
+    Type of account (COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)
+    """
+    accountType: AccountType
+  ): Int!
+  tiers: TierCollection!
+
+  """
+  All the persons and entities that contribute to this account
+  """
+  contributors(
+    """
+    The number of results to fetch (default 10, max 1000)
+    """
+    limit: Int = 10
+
+    """
+    The offset to use to fetch
+    """
+    offset: Int = 0
+    roles: [MemberRole]
+  ): ContributorCollection!
+
+  """
+  How much platform fees are charged for this account
+  """
+  platformFeePercent: Int!
+
+  """
+  Returns true if a custom contribution to Open Collective can be submitted for contributions made to this account
+  """
+  platformContributionAvailable: Boolean!
+
+  """
   Amount of money in cents in the currency of the collective currently available to spend
   """
   balance: Int @deprecated(reason: "2020/04/09 - Should not have been introduced. Use stats.balance.value")
+  contributionPolicy: String
   email: String
 
   """
-  If the organization if a host account, this will return the matchig Host object
+  If the organization if a host account, this will return the matching Host object
   """
   host: Host
+}
+
+input OrganizationCreateInput {
+  name: String!
+  slug: String!
+  description: String!
+  website: String
+  settings: JSON
 }
 
 """
@@ -5873,12 +6307,27 @@ type ProcessHostApplicationResponse {
   """
   The account that applied to the host
   """
-  account: Account!
+  account: Collective!
 
   """
   When sending a public message, this field will have the info about the conversation created
   """
   conversation: Conversation
+}
+
+"""
+Action to apply on the order
+"""
+enum ProcessOrderAction {
+  """
+  To mark the order as expired
+  """
+  MARK_AS_EXPIRED
+
+  """
+  To mark the order as paid
+  """
+  MARK_AS_PAID
 }
 
 """
@@ -5939,7 +6388,17 @@ type Project implements Account & AccountWithHost & AccountWithContributions {
   """
   Get all members (admins, members, backers, followers)
   """
-  members(limit: Int = 100, offset: Int = 0, role: [MemberRole], accountType: [AccountType]): MemberCollection
+  members(
+    limit: Int = 100
+    offset: Int = 0
+    role: [MemberRole]
+    accountType: [AccountType]
+
+    """
+    Order of the results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: ASC }
+  ): MemberCollection
   memberOf(
     limit: Int
     offset: Int
@@ -5956,6 +6415,11 @@ type Project implements Account & AccountWithHost & AccountWithContributions {
     Filter on (un)approved collectives
     """
     isApproved: Boolean
+
+    """
+    Filter on archived collectives
+    """
+    isArchived: Boolean
 
     """
     Wether incognito profiles should be included in the result. Only works if requesting user is an admin of the account.
@@ -6001,7 +6465,7 @@ type Project implements Account & AccountWithHost & AccountWithContributions {
     """
     onlySubscriptions: Boolean
     orderBy: ChronologicalOrderInput = { field: CREATED_AT, direction: DESC }
-  ): OrderCollection
+  ): OrderCollection!
   settings: JSON!
   conversations(
     limit: Int
@@ -6355,6 +6819,62 @@ type Query {
     """
     order: OrderReferenceInput!
   ): Order
+  orders(
+    """
+    The number of results to fetch (default 10, max 1000)
+    """
+    limit: Int = 10
+
+    """
+    The offset to use to fetch
+    """
+    offset: Int = 0
+
+    """
+    Return only orders made from/to account
+    """
+    account: AccountReferenceInput
+
+    """
+    If account is a host, also include hosted accounts orders
+    """
+    includeHostedAccounts: Boolean
+
+    """
+    Account orders filter (INCOMING or OUTGOING)
+    """
+    filter: AccountOrdersFilter
+
+    """
+    Use this field to filter orders on their statuses
+    """
+    status: OrderStatus
+
+    """
+    The order of results
+    """
+    orderBy: ChronologicalOrderInput! = { field: CREATED_AT, direction: DESC }
+
+    """
+    Only return orders where the amount is greater than or equal to this value (in cents)
+    """
+    minAmount: Int
+
+    """
+    Only return orders where the amount is lower than or equal to this value (in cents)
+    """
+    maxAmount: Int
+
+    """
+    Only return orders that were created after this date
+    """
+    dateFrom: ISODateTime
+
+    """
+    The term to search
+    """
+    searchTerm: String
+  ): OrderCollection!
   tier(
     """
     Identifiers to retrieve the tier
@@ -6448,6 +6968,27 @@ type Query {
     """
     includeIncognitoTransactions: Boolean! = false
   ): TransactionCollection
+  update(
+    """
+    Public identifier
+    """
+    id: String
+
+    """
+    The update slug identifying the update
+    """
+    updateSlug: String
+
+    """
+    The update slug identifying the update
+    """
+    slug: String
+
+    """
+    When fetching by slug, an account must be provided
+    """
+    account: AccountReferenceInput
+  ): Update
   loggedInAccount: Account
 }
 
@@ -6709,6 +7250,11 @@ type Update {
   tags: [String]
   fromAccount: Account
   account: Account
+
+  """
+  List the comments for this update. Not backed by a loader, don't use this in lists.
+  """
+  comments(limit: Int, offset: Int): CommentCollection
 }
 
 """
@@ -6739,6 +7285,38 @@ type UpdateCollection implements Collection {
   limit: Int
   totalCount: Int
   nodes: [Update]
+}
+
+"""
+Input type for UpdateType
+"""
+input UpdateCreateInput {
+  title: String!
+  isPrivate: Boolean
+  makePublicOn: IsoDateString
+  html: String
+  fromAccount: AccountReferenceInput
+  account: AccountReferenceInput!
+}
+
+input UpdateReferenceInput {
+  """
+  The public id identifying the update
+  """
+  id: String
+}
+
+"""
+Input type for UpdateType
+"""
+input UpdateUpdateInput {
+  id: String!
+  slug: String
+  title: String
+  isPrivate: Boolean
+  makePublicOn: ISODateTime
+  html: String
+  fromAccount: AccountReferenceInput
 }
 
 """

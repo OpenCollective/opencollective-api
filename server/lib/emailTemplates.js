@@ -26,7 +26,6 @@ export const templateNames = [
   'collective.created',
   'collective.created.the-social-change-nest',
   'collective.contact',
-  'collective.created.meetup',
   'collective.created.opensource',
   'collective.expense.approved',
   'collective.expense.approved.for.host',
@@ -128,7 +127,6 @@ const footertxt = fs.readFileSync(`${templatesPath}/partials/footer.text.hbs`, '
 const toplogo = fs.readFileSync(`${templatesPath}/partials/toplogo.hbs`, 'utf8');
 const eventsnippet = fs.readFileSync(`${templatesPath}/partials/eventsnippet.hbs`, 'utf8');
 const eventdata = fs.readFileSync(`${templatesPath}/partials/eventdata.hbs`, 'utf8');
-const relatedcollectives = fs.readFileSync(`${templatesPath}/partials/relatedcollectives.hbs`, 'utf8');
 const collectivecard = fs.readFileSync(`${templatesPath}/partials/collectivecard.hbs`, 'utf8');
 const chargeDateNotice = fs.readFileSync(`${templatesPath}/partials/charge_date_notice.hbs`, 'utf8');
 const mthReportFooter = fs.readFileSync(`${templatesPath}/partials/monthlyreport.footer.hbs`, 'utf8');
@@ -141,7 +139,6 @@ handlebars.registerPartial('toplogo', toplogo);
 handlebars.registerPartial('collectivecard', collectivecard);
 handlebars.registerPartial('eventsnippet', eventsnippet);
 handlebars.registerPartial('eventdata', eventdata);
-handlebars.registerPartial('relatedcollectives', relatedcollectives);
 handlebars.registerPartial('charge_date_notice', chargeDateNotice);
 handlebars.registerPartial('mr-footer', mthReportFooter);
 handlebars.registerPartial('mr-subscription', mthReportSubscription);

@@ -28,10 +28,11 @@ describe('server/graphql/loaders/expense', () => {
   describe('userTaxFormRequiredBeforePayment', () => {
     const req = {};
 
-    let host, collective;
+    let host, otherHost, collective;
 
     before(async () => {
       host = await fakeHostWithRequiredLegalDocument();
+      otherHost = await fakeHostWithRequiredLegalDocument();
       collective = await fakeCollective({ HostCollectiveId: host.id });
     });
 
@@ -70,7 +71,7 @@ describe('server/graphql/loaders/expense', () => {
         expect(result2).to.be.true;
       });
 
-      it('when the form was submitted for past year', async () => {
+      it('when the tax form was submitted more than 3 years ago', async () => {
         const user = await fakeUser();
         const loader = userTaxFormRequiredBeforePayment({ loaders: loaders(req) });
         const expenseWithUserTaxForm = await fakeExpense({
@@ -81,7 +82,7 @@ describe('server/graphql/loaders/expense', () => {
           type: 'INVOICE',
         });
         await models.LegalDocument.create({
-          year: parseInt(new Date().toISOString().split('-')) - 1,
+          year: parseInt(new Date().toISOString().split('-')) - 4,
           documentType: LEGAL_DOCUMENT_TYPE.US_TAX_FORM,
           documentLink: 'https://opencollective.com/tos',
           requestStatus: 'RECEIVED',
@@ -116,6 +117,27 @@ describe('server/graphql/loaders/expense', () => {
         });
         await models.LegalDocument.create({
           year: parseInt(new Date().toISOString().split('-')),
+          documentType: LEGAL_DOCUMENT_TYPE.US_TAX_FORM,
+          documentLink: 'https://opencollective.com/tos',
+          requestStatus: 'RECEIVED',
+          CollectiveId: user.CollectiveId,
+        });
+        const result = await loader.load(expenseWithUserTaxForm.id);
+        expect(result).to.be.false;
+      });
+
+      it('When legal document has already been submitted last year', async () => {
+        const user = await fakeUser();
+        const loader = userTaxFormRequiredBeforePayment({ loaders: loaders(req) });
+        const expenseWithUserTaxForm = await fakeExpense({
+          amount: US_TAX_FORM_THRESHOLD + 100e2,
+          CollectiveId: collective.id,
+          FromCollectiveId: user.CollectiveId,
+          UserId: user.id,
+          type: 'INVOICE',
+        });
+        await models.LegalDocument.create({
+          year: parseInt(new Date().toISOString().split('-')) - 1,
           documentType: LEGAL_DOCUMENT_TYPE.US_TAX_FORM,
           documentLink: 'https://opencollective.com/tos',
           requestStatus: 'RECEIVED',
@@ -191,6 +213,28 @@ describe('server/graphql/loaders/expense', () => {
         const [result1, result2] = await Promise.all(promises);
         expect(result1).to.be.true;
         expect(result2).to.be.false;
+      });
+
+      it('When expense is submitted by a collective under the same host', async () => {
+        const loader = userTaxFormRequiredBeforePayment({ loaders: loaders(req) });
+        const fromCollective = await fakeCollective({ HostCollectiveId: host.id });
+        const collectiveSameHost = await fakeCollective({ HostCollectiveId: host.id });
+        const collectiveDifferentHost = await fakeCollective({ HostCollectiveId: otherHost.id });
+        const expenseUnderSameHost = await fakeExpense({
+          amount: US_TAX_FORM_THRESHOLD + 1000,
+          CollectiveId: collectiveSameHost.id,
+          FromCollectiveId: fromCollective.id,
+          type: 'INVOICE',
+        });
+        const expenseUnderDifferentHost = await fakeExpense({
+          amount: US_TAX_FORM_THRESHOLD + 1000,
+          CollectiveId: collectiveDifferentHost.id,
+          FromCollectiveId: fromCollective.id,
+          type: 'INVOICE',
+        });
+
+        const result = await loader.loadMany([expenseUnderSameHost.id, expenseUnderDifferentHost.id]);
+        expect(result).to.deep.eq([false, true]);
       });
     });
   });

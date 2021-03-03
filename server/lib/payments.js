@@ -6,7 +6,7 @@ import { find, get, includes, isNumber, omit, pick } from 'lodash';
 
 import activities from '../constants/activities';
 import status from '../constants/order_status';
-import { PAYMENT_METHOD_TYPES } from '../constants/paymentMethods';
+import { PAYMENT_METHOD_TYPE } from '../constants/paymentMethods';
 import roles from '../constants/roles';
 import tiers from '../constants/tiers';
 import { FEES_ON_TOP_TRANSACTION_PROPERTIES } from '../constants/transactions';
@@ -19,6 +19,7 @@ import { getTransactionPdf } from './pdf';
 import { subscribeOrUpgradePlan, validatePlanRequest } from './plans';
 import { createPrepaidPaymentMethod, isPrepaidBudgetOrder } from './prepaid-budget';
 import { getNextChargeAndPeriodStartDates } from './recurring-contributions';
+import { stripHTML } from './sanitize-html';
 import { netAmount } from './transactions';
 import { formatAccountDetails } from './transferwise';
 import { formatCurrency, toIsoDateStr } from './utils';
@@ -28,7 +29,7 @@ const debug = debugLib('payments');
 /** Check if paymentMethod has a given fully qualified name
  *
  * Payment Provider names are composed by service and type joined with
- * a dot. E.g.: `opencollective.virtualcard`, `stripe.creditcard`,
+ * a dot. E.g.: `opencollective.giftcard`, `stripe.creditcard`,
  * etc. This function returns true if a *paymentMethod* instance has a
  * given *fqn*.
  *
@@ -39,7 +40,7 @@ const debug = debugLib('payments');
  * @returns {Boolean} true if *paymentMethod* has a fully qualified
  *  name that equals *fqn*.
  * @example
- * > isProvider('opencollective.virtualcard', { service: 'foo', type: 'bar' })
+ * > isProvider('opencollective.giftcard', { service: 'foo', type: 'bar' })
  * false
  * > isProvider('stripe.creditcard', { service: 'stripe', type: 'creditcard' })
  * true
@@ -168,6 +169,7 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
       'HostCollectiveId',
       'PaymentMethodId',
       'OrderId',
+      'ExpenseId',
       'hostCurrencyFxRate',
       'hostCurrency',
       'hostFeeInHostCurrency',
@@ -206,13 +208,7 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
   const creditTransactionRefund = buildRefund(creditTransaction);
 
   if (transaction.data?.isFeesOnTop) {
-    const feeOnTopTransaction = await models.Transaction.findOne({
-      where: {
-        ...FEES_ON_TOP_TRANSACTION_PROPERTIES,
-        type: 'CREDIT',
-        PlatformTipForTransactionGroup: transaction.TransactionGroup,
-      },
-    });
+    const feeOnTopTransaction = await transaction.getPlatformTipTransaction();
     const feeOnTopRefund = buildRefund(feeOnTopTransaction);
     const feeOnTopRefundTransaction = await models.Transaction.createDoubleEntry(feeOnTopRefund);
     await associateTransactionRefundId(feeOnTopTransaction, feeOnTopRefundTransaction, data);
@@ -365,10 +361,10 @@ export const executeOrder = async (user, order, options) => {
 
   sendEmailNotifications(order, transaction);
 
-  // Register VirtualCard emitter as collective backer too
-  if (transaction && transaction.UsingVirtualCardFromCollectiveId) {
+  // Register gift card emitter as collective backer too
+  if (transaction && transaction.UsingGiftCardFromCollectiveId) {
     await order.collective.findOrAddUserWithRole(
-      { id: user.id, CollectiveId: transaction.UsingVirtualCardFromCollectiveId },
+      { id: user.id, CollectiveId: transaction.UsingGiftCardFromCollectiveId },
       roles.BACKER,
       { TierId: get(order, 'tier.id') },
       { order, skipActivity: true },
@@ -394,7 +390,6 @@ const validatePayment = payment => {
 };
 
 const sendOrderConfirmedEmail = async (order, transaction) => {
-  let pdf;
   const attachments = [];
   const { collective, tier, interval, fromCollective, paymentMethod } = order;
   const user = order.createdByUser;
@@ -431,19 +426,33 @@ const sendOrderConfirmedEmail = async (order, transaction) => {
     };
 
     // hit PDF service and get PDF (unless payment method type is gift card)
-    if (paymentMethod?.type !== PAYMENT_METHOD_TYPES.VIRTUALCARD) {
-      pdf = await getTransactionPdf(transaction, user);
+    if (paymentMethod?.type !== PAYMENT_METHOD_TYPE.GIFT_CARD) {
+      const transactionPdf = await getTransactionPdf(transaction, user);
+      if (transactionPdf) {
+        const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
+        attachments.push({
+          filename: `transaction_${collective.slug}_${createdAtString}_${transaction.uuid}.pdf`,
+          content: transactionPdf,
+        });
+        data.transactionPdf = true;
+      }
+
+      if (transaction.hasPlatformTip()) {
+        const platformTipTransaction = await transaction.getPlatformTipTransaction();
+        if (platformTipTransaction) {
+          const platformTipPdf = await getTransactionPdf(platformTipTransaction, user);
+          if (platformTipPdf) {
+            const createdAtString = toIsoDateStr(new Date(platformTipTransaction.createdAt));
+            attachments.push({
+              filename: `transaction_opencollective_${createdAtString}_${platformTipTransaction.uuid}.pdf`,
+              content: platformTipPdf,
+            });
+            data.platformTipPdf = true;
+          }
+        }
+      }
     }
 
-    // attach pdf
-    if (pdf) {
-      const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
-      attachments.push({
-        filename: `transaction_${collective.slug}_${createdAtString}_${transaction.uuid}.pdf`,
-        content: pdf,
-      });
-      data.transactionPdf = true;
-    }
     const emailOptions = {
       from: `${collective.name} <no-reply@${collective.slug}.opencollective.com>`,
       attachments,
@@ -478,17 +487,17 @@ export const sendOrderProcessingEmail = async order => {
     const formatValues = {
       account,
       reference: order.id,
-      amount: formatCurrency(order.totalAmount, order.currency),
+      amount: formatCurrency(order.totalAmount, order.currency, 2),
       collective: parentCollective ? `${parentCollective.slug} event` : order.collective.slug,
       tier: get(order, 'tier.slug') || get(order, 'tier.name'),
       // @deprecated but we still have some entries in the DB
       OrderId: order.id,
     };
-    data.instructions = instructions.replace(/{([\s\S]+?)}/g, (match, key) => {
+    data.instructions = stripHTML(instructions).replace(/{([\s\S]+?)}/g, (match, key) => {
       if (key && formatValues[key]) {
-        return formatValues[key];
+        return `<strong>${stripHTML(formatValues[key])}</strong>`;
       } else {
-        return match;
+        return stripHTML(match);
       }
     });
   }
@@ -501,12 +510,17 @@ const sendManualPendingOrderEmail = async order => {
   const { collective, fromCollective } = order;
   const host = await collective.getHostCollective();
 
+  const pendingOrderLink =
+    host.type === 'COLLECTIVE'
+      ? `${config.host.website}/${host.slug}/edit/pending-orders?searchTerm=%23${order.id}`
+      : `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`;
+
   const data = {
     order: order.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
-    pendingOrderLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
+    pendingOrderLink,
   };
 
   return notifyAdminsOfCollective(host.id, { type: 'order.new.pendingFinancialContribution', data });
@@ -523,12 +537,17 @@ export const sendReminderPendingOrderEmail = async order => {
     return;
   }
 
+  const viewDetailsLink =
+    host.type === 'COLLECTIVE'
+      ? `${config.host.website}/${host.slug}/edit/pending-orders?searchTerm=%23${order.id}`
+      : `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`;
+
   const data = {
     order: order.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
-    viewDetailsLink: `${config.host.website}/${collective.slug}/orders/${order.id}`,
+    viewDetailsLink,
   };
 
   return notifyAdminsOfCollective(host.id, { type: 'order.reminder.pendingFinancialContribution', data });
@@ -543,12 +562,19 @@ export const sendExpiringCreditCardUpdateEmail = async data => {
   return emailLib.send('payment.creditcard.expiring', data.email, data);
 };
 
-export const getPlatformFee = async (totalAmount, order, host = null) => {
+export const getPlatformFee = async (totalAmount, order, host = null, { hostPlan } = {}) => {
   const isFeesOnTop = order.data?.isFeesOnTop || false;
+  const isSharedRevenue = hostPlan?.hostFeeSharePercent || false;
 
-  // If it's "Fees On Top", we're just using that
-  if (isFeesOnTop) {
-    return order.data?.platformFee;
+  // Fees On Top can now be combined with Shared Revenue
+  if (isFeesOnTop || isSharedRevenue) {
+    const platformFee = order.data?.platformFee || 0;
+
+    const sharedRevenue = isSharedRevenue
+      ? calcFee(await getHostFee(totalAmount, order, host), hostPlan.hostFeeSharePercent)
+      : 0;
+
+    return platformFee + sharedRevenue;
   }
 
   //  Otherwise, use platformFeePercent

@@ -1,4 +1,4 @@
-import { ApolloServer } from 'apollo-server-express';
+import { ApolloError, ApolloServer } from 'apollo-server-express';
 import config from 'config';
 import expressLimiter from 'express-limiter';
 import { get, pick } from 'lodash';
@@ -16,7 +16,7 @@ import graphqlSchemaV1 from './graphql/v1/schema';
 import graphqlSchemaV2 from './graphql/v2/schema';
 import cache from './lib/cache';
 import logger from './lib/logger';
-import statsd from './lib/statsd';
+import { SentryGraphQLPlugin } from './lib/sentry';
 import { parseToBoolean } from './lib/utils';
 import * as authentication from './middleware/authentication';
 import errorHandler from './middleware/error_handler';
@@ -126,7 +126,6 @@ export default app => {
         req.endAt = req.endAt || new Date();
         const executionTime = req.endAt - req.startAt;
         res.set('Execution-Time', executionTime);
-        statsd.timing('api.graphql.executionTime', executionTime);
         res.send(fromCache);
         return;
       }
@@ -140,6 +139,7 @@ export default app => {
   const graphqlServerOptions = {
     introspection: true,
     playground: isDevelopment,
+    plugins: config.sentry?.dsn ? [SentryGraphQLPlugin] : undefined,
     // Align with behavior from express-graphql
     context: ({ req }) => {
       return req;
@@ -166,7 +166,6 @@ export default app => {
       req.endAt = req.endAt || new Date();
       const executionTime = req.endAt - req.startAt;
       req.res.set('Execution-Time', executionTime);
-      statsd.timing('api.graphql.executionTime', executionTime);
       return response;
     },
   };
@@ -235,9 +234,9 @@ export default app => {
   /**
    * Generic OAuth (ConnectedAccounts)
    */
-  app.get('/connected-accounts/:service(github)', noCache, authentication.authenticateService); // backward compatibility
+  app.get('/connected-accounts/:service(github|transferwise)', noCache, authentication.authenticateService); // backward compatibility
   app.get(
-    '/connected-accounts/:service(github|twitter|meetup|stripe|paypal)/oauthUrl',
+    '/connected-accounts/:service(github|twitter|stripe|paypal|transferwise)/oauthUrl',
     noCache,
     authentication.authenticateService,
   );

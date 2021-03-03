@@ -144,6 +144,14 @@ const accountFieldsDefinition = () => ({
       limit: { type: GraphQLInt, defaultValue: 100 },
       offset: { type: GraphQLInt, defaultValue: 0 },
       role: { type: new GraphQLList(MemberRole) },
+      isApproved: {
+        type: GraphQLBoolean,
+        description: 'Filter on (un)approved collectives',
+      },
+      isArchived: {
+        type: GraphQLBoolean,
+        description: 'Filter on archived collectives',
+      },
       accountType: {
         type: new GraphQLList(AccountType),
         description: 'Type of accounts (BOT/COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)',
@@ -179,7 +187,7 @@ const accountFieldsDefinition = () => ({
     },
   },
   orders: {
-    type: OrderCollection,
+    type: new GraphQLNonNull(OrderCollection),
     args: {
       limit: { type: GraphQLInt, defaultValue: 100 },
       offset: { type: GraphQLInt, defaultValue: 0 },
@@ -246,7 +254,7 @@ const accountFieldsDefinition = () => ({
     args: {
       types: {
         type: new GraphQLList(GraphQLString),
-        description: 'Filter on given types (creditcard, virtualcard...)',
+        description: 'Filter on given types (creditcard, giftcard...)',
       },
       includeExpired: {
         type: GraphQLBoolean,
@@ -356,7 +364,7 @@ const accountTransactions = {
 };
 
 const accountOrders = {
-  type: OrderCollection,
+  type: new GraphQLNonNull(OrderCollection),
   args: {
     limit: { type: GraphQLInt, defaultValue: 100 },
     offset: { type: GraphQLInt, defaultValue: 0 },
@@ -395,6 +403,7 @@ const accountOrders = {
       where.TierId = tier.id;
     }
 
+    // Pagination
     if (args.limit <= 0 || args.limit > 1000) {
       args.limit = 100;
     }
@@ -542,7 +551,7 @@ export const AccountFields = {
     type: new GraphQLList(PayoutMethod),
     description: 'The list of payout methods that this collective can use to get paid',
     async resolve(collective, _, req) {
-      if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+      if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
         return null;
       } else {
         return req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
@@ -552,6 +561,7 @@ export const AccountFields = {
   paymentMethods: {
     type: new GraphQLNonNull(new GraphQLList(PaymentMethod)),
     args: {
+      // TODO: Should filter by providerType
       types: { type: new GraphQLList(GraphQLString) },
       includeExpired: {
         type: GraphQLBoolean,
@@ -573,6 +583,9 @@ export const AccountFields = {
           return false;
         } else if (!args.includeExpired && pm.expiryDate && pm.expiryDate <= now) {
           return false;
+          // Exclude unclaimed Gift Cards
+        } else if (pm.type === 'giftcard' && !pm.confirmedAt) {
+          return false;
         } else {
           return true;
         }
@@ -584,7 +597,7 @@ export const AccountFields = {
     description: 'The list of connected accounts (Stripe, Twitter, etc ...)',
     // Only for admins, no pagination
     async resolve(collective, _, req) {
-      if (!req.remoteUser || !req.remoteUser.isAdmin(collective.id)) {
+      if (!req.remoteUser || !req.remoteUser.isAdminOfCollective(collective)) {
         return null;
       } else {
         return req.loaders.Collective.connectedAccounts.load(collective.id);
