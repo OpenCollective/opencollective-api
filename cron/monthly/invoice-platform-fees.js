@@ -3,12 +3,12 @@ import '../../server/env';
 
 import config from 'config';
 import { parse as json2csv } from 'json2csv';
-import { compact, entries, groupBy, mapValues, pick, round, sumBy, values } from 'lodash';
+import { entries, groupBy, pick, round, sumBy } from 'lodash';
 import moment from 'moment';
 
 import expenseStatus from '../../server/constants/expense_status';
 import expenseTypes from '../../server/constants/expense_type';
-import plans from '../../server/constants/plans';
+import plans, { SHARED_REVENUE_PLANS } from '../../server/constants/plans';
 import { SETTLEMENT_EXPENSE_PROPERTIES, TransactionTypes } from '../../server/constants/transactions';
 import { uploadToS3 } from '../../server/lib/awsS3';
 import { generateKey } from '../../server/lib/encryption';
@@ -43,8 +43,6 @@ const ATTACHED_CSV_COLUMNS = [
   'PaymentService',
   'source',
 ];
-
-const sharedRevenuePlans = compact(values(mapValues(plans, (v, k) => (v.hostFeeSharePercent > 0 ? k : undefined))));
 
 export async function run() {
   console.info(`Invoicing hosts pending fees and tips for ${moment(date).subtract(1, 'month').format('MMMM')}.`);
@@ -89,7 +87,7 @@ export async function run() {
         t."createdAt" >= date_trunc('month', date :date - INTERVAL '1 month')
         AND t."createdAt" < date_trunc('month', date :date)
         AND t."deletedAt" IS NULL
-        AND t."CollectiveId" = 1
+        AND t."CollectiveId" = 8686
         AND t."PlatformTipForTransactionGroup" IS NOT NULL
         AND t."type" = 'CREDIT'
         AND ot."HostCollectiveId" NOT IN (8686)
@@ -206,10 +204,66 @@ export async function run() {
       AND (
         h."type" = 'ORGANIZATION'
         AND h."isHostAccount" = TRUE
-        AND h."plan" in ('${sharedRevenuePlans.join("', '")}')
+        AND h."plan" in ('${SHARED_REVENUE_PLANS.join("', '")}')
       )
     ORDER BY
       t."createdAt"
+    ),
+    "tipPaymentProcessorFee" AS (
+      SELECT
+        t."createdAt",
+        t.description,
+        round(t."paymentProcessorFeeInHostCurrency"::float / COALESCE((t."data"->>'hostToPlatformFxRate')::float, 1)) AS "amount",
+        ot."hostCurrency" AS "currency",
+        ot."CollectiveId",
+        c."slug" AS "CollectiveSlug",
+        ot."HostCollectiveId",
+        h."name" AS "HostName",
+        ot."OrderId",
+        t.id AS "TransactionId",
+        t.data,
+        pm."service" AS "PaymentService",
+        spm."service" AS "SourcePaymentService",
+        'Reimburse: Payment Processor Fee for collected Platform Tips'::TEXT AS "source",
+        h.plan,
+        CASE
+          WHEN h."isActive" THEN h.id
+          ELSE (
+            h."settings"->'hostCollective'->>'id'
+          )::INT
+        END AS "chargedHostId"
+      FROM
+        "Transactions" t
+      LEFT JOIN "Transactions" ot ON
+        t."PlatformTipForTransactionGroup"::uuid = ot."TransactionGroup"
+        AND ot.type = 'CREDIT'
+        AND ot."PlatformTipForTransactionGroup" IS NULL
+      LEFT JOIN "Collectives" h ON
+        ot."HostCollectiveId" = h.id
+      LEFT JOIN "Collectives" c ON
+        ot."CollectiveId" = c.id
+      LEFT JOIN "PaymentMethods" pm ON
+        t."PaymentMethodId" = pm.id
+      LEFT JOIN "PaymentMethods" spm ON
+        spm.id = pm."SourcePaymentMethodId"
+      WHERE
+        t."createdAt" >= date_trunc('month',  date :date - INTERVAL '1 month')
+        AND t."createdAt" < date_trunc('month',  date :date)
+        AND t."deletedAt" IS NULL
+        AND t."CollectiveId" = 8686
+        AND t."PlatformTipForTransactionGroup" IS NOT NULL
+        AND t."type" = 'CREDIT'
+        AND ot."HostCollectiveId" NOT IN (8686)
+        AND (
+          pm."service" = 'stripe'
+          OR spm.service = 'stripe'
+        )
+        AND (
+          h."type" = 'ORGANIZATION'
+          AND h."isHostAccount" = TRUE
+        )
+      ORDER BY
+        t."createdAt"
     )
 
     SELECT
@@ -225,7 +279,12 @@ export async function run() {
     SELECT
       *
     FROM
-      "sharedRevenue";
+      "sharedRevenue"
+    UNION
+    SELECT
+      *
+    FROM
+      "tipPaymentProcessorFee";
   `,
     { replacements: { date: date.format('L') } },
   );
@@ -243,9 +302,9 @@ export async function run() {
       continue;
     }
 
-    const { HostName, currency, plan, chargedHostId } = hostTransactions[0];
+    const { HostName, currency, plan: planId, chargedHostId } = hostTransactions[0];
 
-    const hostFeeSharePercent = plans[plan]?.hostFeeSharePercent;
+    const hostFeeSharePercent = plans[planId]?.hostFeeSharePercent;
     const transactions = hostTransactions.map(t => {
       if (t.source === 'Shared Revenue') {
         t.amount = round(t.amount * (hostFeeSharePercent / 100));
@@ -260,9 +319,26 @@ export async function run() {
       return { incurredAt, amount, description };
     });
 
+    const host = await models.Collective.findByPk(hostId);
+    const plan = await host.getPlan();
+    if (plan.pricePerCollective) {
+      const activeHostedCollectives = await host.getHostedCollectivesCount();
+      const amount = (activeHostedCollectives || 0) * plan.pricePerCollective;
+      if (amount) {
+        items.push({
+          incurredAt: new Date(),
+          amount,
+          description: 'Fixed Fee per Hosted Collective',
+        });
+      }
+    }
+
     const transactionIds = transactions.map(t => t.TransactionId);
     const totalAmountCredited = sumBy(
-      items.filter(i => i.description != 'Shared Revenue'),
+      items
+        .filter(i => i.description != 'Shared Revenue')
+        .filter(i => i.description != 'Reimburse: Payment Processor Fee for collected Platform Tips')
+        .filter(i => i.description != 'Fixed Fee per Hosted Collective'),
       'amount',
     );
     const totalAmountCharged = sumBy(items, 'amount');
@@ -297,11 +373,11 @@ export async function run() {
         FromCollectiveId: chargedHostId,
         HostCollectiveId: hostId,
         hostCurrency: currency,
+        hostCurrencyFxRate: 1,
         netAmountInCollectiveCurrency: totalAmountCredited,
         type: TransactionTypes.CREDIT,
       });
 
-      const host = await models.Collective.findByPk(hostId);
       const connectedAccounts = await host.getConnectedAccounts({
         where: { deletedAt: null },
       });
@@ -309,16 +385,16 @@ export async function run() {
       let PayoutMethod =
         payoutMethods[PayoutMethodTypes.OTHER]?.[0] || payoutMethods[PayoutMethodTypes.BANK_ACCOUNT]?.[0];
       if (
-        connectedAccounts?.find?.(c => c.service === 'paypal') &&
+        connectedAccounts?.find(c => c.service === 'transferwise') &&
+        payoutMethods[PayoutMethodTypes.BANK_ACCOUNT]?.[0]
+      ) {
+        PayoutMethod = payoutMethods[PayoutMethodTypes.BANK_ACCOUNT]?.[0];
+      } else if (
+        connectedAccounts?.find(c => c.service === 'paypal') &&
         !host.settings?.disablePaypalPayouts &&
         payoutMethods[PayoutMethodTypes.PAYPAL]?.[0]
       ) {
         PayoutMethod = payoutMethods[PayoutMethodTypes.PAYPAL]?.[0];
-      } else if (
-        connectedAccounts?.find?.(c => c.service === 'transferwise') &&
-        payoutMethods[PayoutMethodTypes.BANK_ACCOUNT]?.[0]
-      ) {
-        PayoutMethod = payoutMethods[PayoutMethodTypes.BANK_ACCOUNT]?.[0];
       }
 
       // Create the Expense
