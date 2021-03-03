@@ -1,11 +1,13 @@
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
-import { find, get } from 'lodash';
+import { find, get, keyBy, mapValues } from 'lodash';
 
+import { types as CollectiveType } from '../../../constants/collectives';
 import { PAYMENT_METHOD_SERVICE, PAYMENT_METHOD_TYPE } from '../../../constants/paymentMethods';
 import models, { Op, sequelize } from '../../../models';
 import { PayoutMethodTypes } from '../../../models/PayoutMethod';
 import TransferwiseLib from '../../../paymentProviders/transferwise';
-import { AccountCollection } from '../collection/AccountCollection';
+import { Unauthorized } from '../../errors';
+import { HostApplicationCollection } from '../collection/HostApplicationCollection';
 import { PaymentMethodType, PayoutMethodType } from '../enum';
 import { ChronologicalOrderInput } from '../input/ChronologicalOrderInput';
 import { Account, AccountFields } from '../interface/Account';
@@ -14,6 +16,7 @@ import { CollectionArgs } from '../interface/Collection';
 import URL from '../scalar/URL';
 
 import { Amount } from './Amount';
+import { HostMetrics } from './HostMetrics';
 import { HostPlan } from './HostPlan';
 import { PaymentMethod } from './PaymentMethod';
 import PayoutMethod from './PayoutMethod';
@@ -56,6 +59,24 @@ export const Host = new GraphQLObjectType({
           return host.getPlan();
         },
       },
+      hostMetrics: {
+        type: new GraphQLNonNull(HostMetrics),
+        args: {
+          from: {
+            type: GraphQLString,
+            description: "Inferior date limit in which we're calculating the metrics",
+          },
+          to: {
+            type: GraphQLString,
+            description: "Superior date limit in which we're calculating the metrics",
+          },
+        },
+        async resolve(host, args) {
+          const metrics = await host.getHostMetrics(args?.from, args?.to);
+          const toAmount = value => ({ value, currency: host.currency });
+          return mapValues(metrics, (value, key) => (key.includes('Percent') ? value : toAmount(value)));
+        },
+      },
       supportedPaymentMethods: {
         type: new GraphQLList(PaymentMethodType),
         description:
@@ -70,7 +91,7 @@ export const Host = new GraphQLObjectType({
             supportedPaymentMethods.push('CREDIT_CARD');
           }
 
-          if (find(connectedAccounts, ['service', 'paypal'])) {
+          if (find(connectedAccounts, ['service', 'paypal']) && !collective.settings?.disablePaypalDonations) {
             supportedPaymentMethods.push('PAYPAL');
           }
 
@@ -86,7 +107,7 @@ export const Host = new GraphQLObjectType({
         type: PayoutMethod,
         async resolve(collective, _, req) {
           const payoutMethods = await req.loaders.PayoutMethod.byCollectiveId.load(collective.id);
-          return payoutMethods.find(c => c.service === 'transferwise');
+          return payoutMethods.find(c => c.type === 'BANK_ACCOUNT' && c.data?.isManualBankTransfer);
         },
       },
       paypalPreApproval: {
@@ -137,7 +158,7 @@ export const Host = new GraphQLObjectType({
         },
       },
       pendingApplications: {
-        type: new GraphQLNonNull(AccountCollection),
+        type: new GraphQLNonNull(HostApplicationCollection),
         description: 'Pending applications for this host',
         args: {
           ...CollectionArgs,
@@ -152,8 +173,13 @@ export const Host = new GraphQLObjectType({
             description: 'Order of the results',
           },
         },
-        resolve: async (host, args) => {
-          const where = { HostCollectiveId: host.id, approvedAt: null };
+        resolve: async (host, args, req) => {
+          if (!req.remoteUser?.isAdmin(host.id)) {
+            throw new Unauthorized('You need to be logged in as an admin of the host to see its pending application');
+          }
+
+          const applyTypes = [CollectiveType.COLLECTIVE, CollectiveType.FUND];
+          const where = { HostCollectiveId: host.id, approvedAt: null, type: { [Op.in]: applyTypes } };
           const sanitizedSearch = args.searchTerm?.replace(/(_|%|\\)/g, '\\$1');
 
           if (sanitizedSearch) {
@@ -178,7 +204,28 @@ export const Host = new GraphQLObjectType({
             order: [[args.orderBy.field, args.orderBy.direction]],
           });
 
-          return { nodes: result.rows, totalCount: result.count, limit: args.limit, offset: args.offset };
+          // Link applications to collectives
+          const collectiveIds = result.rows.map(collective => collective.id);
+          const applications = await models.HostApplication.findAll({
+            order: [['updatedAt', 'DESC']],
+            where: {
+              HostCollectiveId: host.id,
+              status: 'PENDING',
+              CollectiveId: collectiveIds ? { [Op.in]: collectiveIds } : undefined,
+            },
+          });
+          const groupedApplications = keyBy(applications, 'CollectiveId');
+          const nodes = result.rows.map(collective => {
+            const application = groupedApplications[collective.id];
+            if (application) {
+              application.collective = collective;
+              return application;
+            } else {
+              return { collective };
+            }
+          });
+
+          return { totalCount: result.count, limit: args.limit, offset: args.offset, nodes };
         },
       },
     };

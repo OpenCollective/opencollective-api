@@ -15,6 +15,7 @@
 | STRIPE_CLIENT_ID                    | .stripe.client_id                           | Stripe Client id                                                               |
 | STRIPE_KEY                          | .stripe.key                                 | Stripe key                                                                     |
 | STRIPE_SECRET                       | .stripe.secret                              | Stripe secret                                                                  |
+| SENTRY_DSN                          | .sentry.dsn                                 | Sentry DSN                                                                     |
 | AWS_KEY                             | .aws.s3.key                                 | AWS key                                                                        |
 | AWS_SECRET                          | .aws.s3.secret                              | AWS secret                                                                     |
 | AWS_S3_BUCKET                       | .aws.s3.bucket                              | AWS s3 bucket to send files                                                    |
@@ -33,14 +34,8 @@
 | SLACK_WEBHOOK_ABUSE                 | .slack.webhooks.abuse                       | slack abuse webhook url                                                        |
 | GITHUB_CLIENT_ID                    | .github.clientId                            | github client ID                                                               |
 | GITHUB_CLIENT_SECRET                | .github.clientSecret                        | github client secret                                                           |
-| MEETUP_CLIENT_ID                    | .meetup.clientId                            | meetup client ID                                                               |
-| MEETUP_CLIENT_SECRET                | .meetup.clientSecret                        | meetup client secret                                                           |
 | TWITTER_CONSUMER_KEY                | .twitter.consumerKey                        | twitter key                                                                    |
 | TWITTER_CONSUMER_SECRET             | .twitter.consumerSecret                     | twitter secret                                                                 |
-| ALGOLIA_APP_ID                      | .algolia.appId                              | algolia APP id                                                                 |
-| ALGOLIA_KEY                         | .algolia.appKey                             | algolia key                                                                    |
-| ALGOLIA_INDEX                       | .algolia.index                              | algolia index                                                                  |
-| ALGOLIA_USE_DEFAULT                 | .algolia.useAsDefault                       | whether to use Algolia as the default engine for search                        |
 | FOREST_AUTH_SECRET                  |                                             | forest auth secret                                                             |
 | FOREST_ENV_SECRET                   |                                             | forest environment secret                                                      |
 |                                     | .stripe.redirectUri                         |                                                                                |
