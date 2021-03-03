@@ -69,7 +69,7 @@ describe('server/lib/email', () => {
       };
       return emailLib.send(template, data.user.email, data, options).tap(() => {
         let amountStr = 50;
-        amountStr = amountStr.toLocaleString('fr-BE', {
+        amountStr = amountStr.toLocaleString('fr-FR', {
           style: 'currency',
           currency: 'EUR',
           minimumFractionDigits: 0,
@@ -78,7 +78,7 @@ describe('server/lib/email', () => {
         expect(nm.sendMail.lastCall.args[0].from).to.equal(options.from);
         expect(nm.sendMail.lastCall.args[0].to).to.equal('emailbcc+user1-at-opencollective.com@opencollective.com');
         expect(nm.sendMail.lastCall.args[0].subject).to.contain(
-          `Merci pour votre donation de ${amountStr}/mois à En Marche`,
+          `Merci pour votre contribution de ${amountStr}/mois à En Marche`,
         );
         expect(nm.sendMail.lastCall.args[0].html).to.contain('Merci pour continuer à nous soutenir');
         expect(nm.sendMail.lastCall.args[0].html).to.contain('donate');
@@ -145,7 +145,7 @@ describe('server/lib/email', () => {
       const from = 'BrusselsTogether <info@brusselstogether.opencollective.com>';
       return emailLib.send('thankyou', data.user.email, data, { from }).tap(() => {
         let amountStr = 50;
-        amountStr = amountStr.toLocaleString('EUR', {
+        amountStr = amountStr.toLocaleString('fr-FR', {
           style: 'currency',
           currency: 'EUR',
           minimumFractionDigits: 0,

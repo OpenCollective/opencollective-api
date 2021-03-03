@@ -144,6 +144,14 @@ const accountFieldsDefinition = () => ({
       limit: { type: GraphQLInt, defaultValue: 100 },
       offset: { type: GraphQLInt, defaultValue: 0 },
       role: { type: new GraphQLList(MemberRole) },
+      isApproved: {
+        type: GraphQLBoolean,
+        description: 'Filter on (un)approved collectives',
+      },
+      isArchived: {
+        type: GraphQLBoolean,
+        description: 'Filter on archived collectives',
+      },
       accountType: {
         type: new GraphQLList(AccountType),
         description: 'Type of accounts (BOT/COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)',
@@ -246,7 +254,7 @@ const accountFieldsDefinition = () => ({
     args: {
       types: {
         type: new GraphQLList(GraphQLString),
-        description: 'Filter on given types (creditcard, virtualcard...)',
+        description: 'Filter on given types (creditcard, giftcard...)',
       },
       includeExpired: {
         type: GraphQLBoolean,
@@ -553,6 +561,7 @@ export const AccountFields = {
   paymentMethods: {
     type: new GraphQLNonNull(new GraphQLList(PaymentMethod)),
     args: {
+      // TODO: Should filter by providerType
       types: { type: new GraphQLList(GraphQLString) },
       includeExpired: {
         type: GraphQLBoolean,
@@ -573,6 +582,9 @@ export const AccountFields = {
         } else if (pm.service === 'stripe' && !pm.saved) {
           return false;
         } else if (!args.includeExpired && pm.expiryDate && pm.expiryDate <= now) {
+          return false;
+          // Exclude unclaimed Gift Cards
+        } else if (pm.type === 'giftcard' && !pm.confirmedAt) {
           return false;
         } else {
           return true;

@@ -22,9 +22,6 @@
     "images": "https://images.opencollective.com",
     "pdf": "https://pdf.opencollective.com"
   },
-  "guestContributions": {
-    "enable": false
-  },
   "log": {
     "slowRequest": true
   },
@@ -37,7 +34,9 @@
     }
   },
   "transferwise": {
-    "apiUrl": "https://api.transferwise.com"
+    "apiUrl": "https://api.transferwise.com",
+    "oauthUrl": "https://transferwise.com",
+    "redirectUri": "https://api.opencollective.com/connected-accounts/transferwise/callback"
   },
   "pdfService": {
     "fetchTransactionsReceipts": true
