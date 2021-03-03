@@ -3,6 +3,7 @@ import { GraphQLBoolean, GraphQLInputObjectType, GraphQLInt, GraphQLNonNull, Gra
 import { pick, size } from 'lodash';
 import { v4 as uuid } from 'uuid';
 
+import activities from '../../../constants/activities';
 import activityType from '../../../constants/activities';
 import { types as collectiveTypes } from '../../../constants/collectives';
 import expenseStatus from '../../../constants/expense_status';
@@ -14,19 +15,17 @@ import models from '../../../models';
 import {
   approveExpense,
   canDeleteExpense,
-  canEditExpense,
+  canVerifyDraftExpense,
+  createExpense,
+  editExpense,
+  markExpenseAsUnpaid,
+  payExpense,
   rejectExpense,
   scheduleExpenseForPayment,
   unapproveExpense,
 } from '../../common/expenses';
 import { createUser } from '../../common/user';
 import { FeatureNotAllowedForUser, NotFound, RateLimitExceeded, Unauthorized, ValidationFailed } from '../../errors';
-import {
-  createExpense as createExpenseLegacy,
-  editExpense as editExpenseLegacy,
-  markExpenseAsUnpaid as markExpenseAsUnpaidLegacy,
-  payExpense as payExpenseLegacy,
-} from '../../v1/mutations/expenses';
 import { ExpenseProcessAction } from '../enum/ExpenseProcessAction';
 import { idDecode, IDENTIFIER_TYPES } from '../identifiers';
 import { AccountReferenceInput, fetchAccountWithReference } from '../input/AccountReferenceInput';
@@ -66,7 +65,7 @@ const expenseMutations = {
       // Right now this endpoint uses the old mutation by adapting the data for it. Once we get rid
       // of the `createExpense` endpoint in V1, the actual code to create the expense should be moved
       // here and cleaned.
-      return createExpenseLegacy(req.remoteUser, {
+      return createExpense(req.remoteUser, {
         ...pick(args.expense, [
           'description',
           'longDescription',
@@ -79,7 +78,7 @@ const expenseMutations = {
         ]),
         items,
         amount: items.reduce((total, item) => total + item.amount, 0),
-        PayoutMethod: payoutMethod,
+        payoutMethod,
         collective: await fetchAccountWithReference(args.account, req),
         fromCollective: await fetchAccountWithReference(args.expense.payee, { throwIfMissing: true }),
       });
@@ -113,7 +112,7 @@ const expenseMutations = {
         privateMessage: expense.privateMessage,
         invoiceInfo: expense.invoiceInfo,
         amount: items?.reduce((total, att) => total + att.amount, 0),
-        PayoutMethod: expense.payoutMethod && {
+        payoutMethod: expense.payoutMethod && {
           id: expense.payoutMethod.id && idDecode(expense.payoutMethod.id, IDENTIFIER_TYPES.PAYOUT_METHOD),
           data: expense.payoutMethod.data,
           name: expense.payoutMethod.name,
@@ -154,7 +153,11 @@ const expenseMutations = {
         if (!payeeExists) {
           const { organization: organizationData, ...payee } = expense.payee;
           const { user, organization } = await createUser(
-            { ...pick(payee, ['email', 'newsletterOptIn']), ...models.User.splitName(payee.name) },
+            {
+              ...pick(payee, ['email', 'newsletterOptIn']),
+              ...models.User.splitName(payee.name),
+              location: expenseData.payeeLocation,
+            },
             {
               organizationData,
               throwIfExists: true,
@@ -171,7 +174,7 @@ const expenseMutations = {
           options.skipPermissionCheck = true;
         }
 
-        existingExpense = await editExpenseLegacy(req, expenseData, options);
+        existingExpense = await editExpense(req, expenseData, options);
 
         await existingExpense.update({
           status: options.overrideRemoteUser?.id ? expenseStatus.UNVERIFIED : undefined,
@@ -182,7 +185,7 @@ const expenseMutations = {
         return existingExpense;
       }
 
-      return editExpenseLegacy(req, expenseData);
+      return editExpense(req, expenseData);
     },
   },
   deleteExpense: {
@@ -233,7 +236,7 @@ const expenseMutations = {
         type: new GraphQLInputObjectType({
           name: 'ProcessExpensePaymentParams',
           description: 'Parameters for paying an expense',
-          fields: {
+          fields: () => ({
             paymentProcessorFee: {
               type: GraphQLInt,
               description:
@@ -247,7 +250,7 @@ const expenseMutations = {
               type: GraphQLString,
               description: '2FA code for if the host account has 2FA for payouts turned on.',
             },
-          },
+          }),
         }),
       },
     },
@@ -265,11 +268,11 @@ const expenseMutations = {
         case 'REJECT':
           return rejectExpense(req, expense);
         case 'MARK_AS_UNPAID':
-          return markExpenseAsUnpaidLegacy(req, expense.id, args.paymentParams?.paymentProcessorFee);
+          return markExpenseAsUnpaid(req, expense.id, args.paymentParams?.paymentProcessorFee);
         case 'SCHEDULE_FOR_PAYMENT':
           return scheduleExpenseForPayment(req, expense);
         case 'PAY':
-          return payExpenseLegacy(req, {
+          return payExpense(req, {
             id: expense.id,
             paymentProcessorFeeInCollectiveCurrency: args.paymentParams?.paymentProcessorFee,
             forceManual: args.paymentParams?.forceManual,
@@ -329,7 +332,7 @@ const expenseMutations = {
         );
       }
 
-      const draftKey = uuid();
+      const draftKey = process.env.OC_ENV === 'e2e' || process.env.OC_ENV === 'ci' ? 'draft-key' : uuid();
       const expenseFields = [
         'description',
         'longDescription',
@@ -355,6 +358,7 @@ const expenseMutations = {
         amount: expenseData.items?.reduce((total, item) => total + item.amount, 0) || expenseData.amount || 1,
         data: {
           items: expenseData.items,
+          attachedFiles: expenseData.attachedFiles,
           payee,
           invitedByCollectiveId: fromCollective.id,
           draftKey,
@@ -399,7 +403,7 @@ const expenseMutations = {
         throw new NotFound('Expense not found');
       } else if (expense.status !== expenseStatus.DRAFT) {
         throw new Unauthorized('Expense was already submitted.');
-      } else if (!(await canEditExpense(req, expense))) {
+      } else if (!(await canVerifyDraftExpense(req, expense))) {
         throw new Unauthorized("You don't have the permission to edit this expense.");
       }
 
@@ -428,10 +432,17 @@ const expenseMutations = {
       const expense = await fetchExpenseWithReference(args.expense, { throwIfMissing: true });
       if (expense.status !== expenseStatus.UNVERIFIED) {
         throw new Unauthorized('Expense can not be verified.');
-      } else if (!(await canEditExpense(req, expense))) {
+      } else if (!(await canVerifyDraftExpense(req, expense))) {
         throw new Unauthorized("You don't have the permission to edit this expense.");
       }
       await expense.update({ status: expenseStatus.PENDING });
+
+      // Technically the expense was already created, but it was a draft. It truly becomes visible
+      // for everyone (especially admins) at this point, so it's the right time to trigger `COLLECTIVE_EXPENSE_CREATED`
+      await expense
+        .createActivity(activities.COLLECTIVE_EXPENSE_CREATED, req.remoteUser)
+        .catch(e => logger.error('An error happened when creating the COLLECTIVE_EXPENSE_CREATED activity', e));
+
       return expense;
     },
   },

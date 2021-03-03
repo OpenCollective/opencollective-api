@@ -27,21 +27,21 @@ const modelArray = [
 
 const OrderWithPayment = new GraphQLObjectType({
   name: 'OrderWithPayment',
-  fields: {
+  fields: () => ({
     order: {
       type: new GraphQLNonNull(Order),
       description: 'The order created',
     },
     guestToken: {
       type: GraphQLString,
-      description: 'If donating as a guest, this will contain your guest token to contribute again in the future',
+      description: 'If donating as a guest, this will contain your guest token to confirm your order',
     },
     stripeError: {
       type: StripeError,
       description:
         'This field will be set if the order was created but there was an error with Stripe during the payment',
     },
-  },
+  }),
 });
 
 const orderMutations = {
@@ -91,11 +91,12 @@ const orderMutations = {
         customData: order.customData,
         tier: tier && { id: tier.id },
         guestInfo: order.guestInfo,
+        context: order.context,
         platformFee,
       };
 
       const result = await createOrderLegacy(legacyOrderObj, req.loaders, req.remoteUser, req.ip);
-      return { order: result.order, stripeError: result.stripeError, guestToken: result.guestToken?.value };
+      return { order: result.order, stripeError: result.stripeError, guestToken: result.order.data?.guestToken };
     },
   },
   cancelOrder: {

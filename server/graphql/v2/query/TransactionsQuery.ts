@@ -89,7 +89,7 @@ const TransactionsQuery = {
       ),
     );
     if (fromAccount) {
-      const condition = { FromCollectiveId: fromAccount.id };
+      let fromCollectiveCondition = fromAccount.id;
       if (
         args.includeIncognitoTransactions &&
         req.remoteUser?.isAdminOfCollective(fromAccount) &&
@@ -97,16 +97,21 @@ const TransactionsQuery = {
       ) {
         const incognitoProfile = await req.remoteUser.getIncognitoProfile();
         if (incognitoProfile) {
-          condition.FromCollectiveId = { [Op.or]: [fromAccount.id, incognitoProfile.id] };
+          fromCollectiveCondition = { [Op.or]: [fromAccount.id, incognitoProfile.id] };
         }
       }
 
-      where.push(condition);
+      where.push({
+        [Op.or]: [
+          { UsingGiftCardFromCollectiveId: fromAccount.id, type: 'CREDIT' },
+          { FromCollectiveId: fromCollectiveCondition },
+        ],
+      });
     }
     if (account) {
       const accountConditions = [
         { CollectiveId: account.id },
-        { UsingVirtualCardFromCollectiveId: account.id, type: 'DEBIT' },
+        { UsingGiftCardFromCollectiveId: account.id, type: 'DEBIT' },
       ];
 
       // When users are admins, also fetch their incognito contributions
@@ -167,8 +172,8 @@ const TransactionsQuery = {
     if (args.dateTo) {
       where.push({ createdAt: { [Op.lte]: args.dateTo } });
     }
-    if (args.hasExpense) {
-      where.push({ ExpenseId: { [Op.ne]: null } });
+    if (args.hasExpense !== undefined) {
+      where.push({ ExpenseId: { [args.hasExpense ? Op.ne : Op.eq]: null } });
     }
     if (args.hasOrder) {
       where.push({ OrderId: { [Op.ne]: null } });

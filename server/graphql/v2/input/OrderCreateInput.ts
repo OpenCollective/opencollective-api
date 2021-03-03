@@ -1,4 +1,4 @@
-import { GraphQLInputObjectType, GraphQLInt, GraphQLList, GraphQLNonNull } from 'graphql';
+import { GraphQLBoolean, GraphQLInputObjectType, GraphQLInt, GraphQLList, GraphQLNonNull } from 'graphql';
 import GraphQLJSON from 'graphql-type-json';
 
 import { ContributionFrequency } from '../enum/ContributionFrequency';
@@ -10,10 +10,21 @@ import { OrderTaxInput } from './OrderTaxInput';
 import { PaymentMethodInput } from './PaymentMethodInput';
 import { TierReferenceInput } from './TierReferenceInput';
 
+const OrderContextInput = new GraphQLInputObjectType({
+  name: 'OrderContextInput',
+  description: 'Some context about how an order was created',
+  fields: () => ({
+    isEmbed: {
+      type: GraphQLBoolean,
+      description: 'Whether this order was created using the embedded contribution flow',
+    },
+  }),
+});
+
 export const OrderCreateInput = new GraphQLInputObjectType({
   name: 'OrderCreateInput',
   description: 'Input to create a new order',
-  fields: {
+  fields: () => ({
     quantity: {
       type: new GraphQLNonNull(GraphQLInt),
       defaultValue: 1,
@@ -57,5 +68,9 @@ export const OrderCreateInput = new GraphQLInputObjectType({
       type: GraphQLJSON,
       description: 'If the tier has some "customFields", use this field to set their values',
     },
-  },
+    context: {
+      type: OrderContextInput,
+      description: 'Some context about how this order was created',
+    },
+  }),
 });

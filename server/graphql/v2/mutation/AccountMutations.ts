@@ -1,4 +1,5 @@
-import { GraphQLBoolean, GraphQLFloat, GraphQLNonNull, GraphQLString } from 'graphql';
+import cryptoRandomString from 'crypto-random-string';
+import { GraphQLBoolean, GraphQLFloat, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString } from 'graphql';
 import GraphQLJSON from 'graphql-type-json';
 import { cloneDeep, set } from 'lodash';
 
@@ -9,11 +10,28 @@ import { verifyTwoFactorAuthenticatorCode } from '../../../lib/two-factor-authen
 import models, { sequelize } from '../../../models';
 import { Forbidden, NotFound, Unauthorized, ValidationFailed } from '../../errors';
 import { AccountTypeToModelMapping } from '../enum/AccountType';
+import { idDecode } from '../identifiers';
 import { AccountReferenceInput, fetchAccountWithReference } from '../input/AccountReferenceInput';
+import { AccountUpdateInput } from '../input/AccountUpdateInput';
 import { Account } from '../interface/Account';
 import { Host } from '../object/Host';
 import { Individual } from '../object/Individual';
 import AccountSettingsKey from '../scalar/AccountSettingsKey';
+
+const AddTwoFactorAuthTokenToIndividualResponse = new GraphQLObjectType({
+  name: 'AddTwoFactorAuthTokenToIndividualResponse',
+  description: 'Response for the addTwoFactorAuthTokenToIndividual mutation',
+  fields: () => ({
+    account: {
+      type: new GraphQLNonNull(Individual),
+      description: 'The Individual that the 2FA has been enabled for',
+    },
+    recoveryCodes: {
+      type: new GraphQLList(GraphQLString),
+      description: 'The recovery codes for the Individual to write down',
+    },
+  }),
+});
 
 const accountMutations = {
   editAccountSetting: {
@@ -111,16 +129,16 @@ const accountMutations = {
     },
   },
   addTwoFactorAuthTokenToIndividual: {
-    type: new GraphQLNonNull(Individual),
-    description: 'Add 2FA to the Account if it does not have it',
+    type: new GraphQLNonNull(AddTwoFactorAuthTokenToIndividualResponse),
+    description: 'Add 2FA to the Individual if it does not have it',
     args: {
       account: {
         type: new GraphQLNonNull(AccountReferenceInput),
-        description: 'Account that will have 2FA added to it',
+        description: 'Individual that will have 2FA added to it',
       },
       token: {
         type: new GraphQLNonNull(GraphQLString),
-        description: 'The generated secret to save to the Account',
+        description: 'The generated secret to save to the Individual',
       },
     },
     async resolve(_, args, req): Promise<object> {
@@ -157,14 +175,22 @@ const accountMutations = {
 
       const encryptedText = crypto.encrypt(args.token);
 
-      await user.update({ twoFactorAuthToken: encryptedText });
+      /** Generate recovery codes, hash and store them in the table, and return them to the user to write down */
+      const recoveryCodesArray = Array.from({ length: 6 }, () =>
+        cryptoRandomString({ length: 16, type: 'distinguishable' }),
+      );
+      const hashedRecoveryCodesArray = recoveryCodesArray.map(code => {
+        return crypto.hash(code);
+      });
 
-      return account;
+      await user.update({ twoFactorAuthToken: encryptedText, twoFactorAuthRecoveryCodes: hashedRecoveryCodesArray });
+
+      return { account: account, recoveryCodes: recoveryCodesArray };
     },
   },
   removeTwoFactorAuthTokenFromIndividual: {
     type: new GraphQLNonNull(Individual),
-    description: 'Remove 2FA from the Account if it has been enabled',
+    description: 'Remove 2FA from the Individual if it has been enabled',
     args: {
       account: {
         type: new GraphQLNonNull(AccountReferenceInput),
@@ -202,7 +228,7 @@ const accountMutations = {
         throw new Unauthorized('Two-factor authentication code failed. Please try again');
       }
 
-      await user.update({ twoFactorAuthToken: null });
+      await user.update({ twoFactorAuthToken: null, twoFactorAuthRecoveryCodes: null });
 
       return account;
     },
@@ -213,7 +239,7 @@ const accountMutations = {
     args: {
       account: {
         type: new GraphQLNonNull(AccountReferenceInput),
-        description: 'Account that will have 2FA added to it',
+        description: 'Account where the host plan will be edited.',
       },
       plan: {
         type: new GraphQLNonNull(GraphQLString),
@@ -241,10 +267,53 @@ const accountMutations = {
       await account.update({ plan });
 
       if (plan === 'start-plan-2021') {
+        // This should cascade to all Collectives
         await account.updateHostFee(0, req.remoteUser);
       }
 
+      if (plan === 'start-plan-2021' || plan === 'grow-plan-2021') {
+        // This should cascade to all Collectives
+        await account.updatePlatformFee(0, req.remoteUser);
+
+        // Make sure budget is activated
+        await account.activateBudget();
+      }
+
       await cache.del(`plan_${account.id}`);
+
+      return account;
+    },
+  },
+  editAccount: {
+    type: new GraphQLNonNull(Host),
+    description: 'Edit key properties of an account.',
+    args: {
+      account: {
+        type: new GraphQLNonNull(AccountUpdateInput),
+        description: 'Account to edit.',
+      },
+    },
+    async resolve(_, args, req): Promise<object> {
+      if (!req.remoteUser) {
+        throw new Unauthorized();
+      }
+
+      const id = idDecode(args.account.id, 'account');
+      const account = await req.loaders.Collective.byId.load(id);
+      if (!account) {
+        throw new NotFound('Account Not Found');
+      }
+
+      if (!req.remoteUser.isAdminOfCollective(account) && !req.remoteUser.isRoot()) {
+        throw new Forbidden();
+      }
+
+      for (const key of Object.keys(args.account)) {
+        switch (key) {
+          case 'currency':
+            await account.setCurrency(args.account[key]);
+        }
+      }
 
       return account;
     },

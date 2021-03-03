@@ -19,7 +19,6 @@ import {
   fakePayoutMethod,
   fakeTransaction,
   fakeUser,
-  multiple,
   randStr,
 } from '../../test-helpers/fake-data';
 import * as utils from '../../utils';
@@ -357,7 +356,7 @@ describe('server/models/Collective', () => {
 
     it('fails to deactivate as host if it is hosting any collective', async () => {
       try {
-        await hostUser.collective.deactivateAsHost({ remoteUser: hostUser });
+        await hostUser.collective.deactivateAsHost();
         throw new Error("Didn't throw expected error!");
       } catch (e) {
         expect(e.message).to.contain("You can't deactivate hosting while still hosting");
@@ -434,6 +433,7 @@ describe('server/models/Collective', () => {
       const plan = await hostUser.collective.getPlan();
 
       expect(plan).to.deep.equal({
+        id: 3,
         name: 'default',
         hostedCollectives: 2,
         addedFunds: 0,
@@ -488,7 +488,7 @@ describe('server/models/Collective', () => {
 
   it('computes the balance until a certain month', done => {
     const until = new Date('2016-07-01');
-    collective.getBalance(until).then(balance => {
+    collective.getBalance({ endDate: until }).then(balance => {
       let sum = 0;
       transactions.map(t => {
         if (t.createdAt < until) {
@@ -527,7 +527,7 @@ describe('server/models/Collective', () => {
       data: { payout_batch_id: 1 },
     });
 
-    const balance = await collective.getBalance();
+    const balance = await collective.getBalanceWithBlockedFunds();
     expect(balance).to.equal(45000 - 30000);
   });
 
@@ -1066,17 +1066,11 @@ describe('server/models/Collective', () => {
       await utils.resetTestDB();
     });
 
-    let gbpHost, socialCollective;
+    let gbpHost, socialCollective, metrics;
     before(async () => {
       await utils.resetTestDB();
       const user = await fakeUser({ id: 30 }, { id: 20, slug: 'pia' });
-      const inc = await fakeHost({ id: 8686, slug: 'opencollectiveinc', CreatedByUserId: user.id });
-      const opencollective = await fakeCollective({
-        id: 1,
-        slug: 'opencollective',
-        CreatedByUserId: user.id,
-        HostCollectiveId: inc.id,
-      });
+      const opencollective = await fakeHost({ id: 8686, slug: 'opencollective', CreatedByUserId: user.id });
       // Move Collectives ID auto increment pointer up, so we don't collide with the manually created id:1
       await sequelize.query(`ALTER SEQUENCE "Collectives_id_seq" RESTART WITH 1453`);
       await fakePayoutMethod({
@@ -1091,6 +1085,7 @@ describe('server/models/Collective', () => {
 
       socialCollective = await fakeCollective({ HostCollectiveId: gbpHost.id });
       const transactionProps = {
+        amount: 100,
         type: 'CREDIT',
         CollectiveId: socialCollective.id,
         currency: 'GBP',
@@ -1119,7 +1114,7 @@ describe('server/models/Collective', () => {
       await fakeTransaction({
         type: 'CREDIT',
         CollectiveId: opencollective.id,
-        HostCollectiveId: inc.id,
+        HostCollectiveId: opencollective.id,
         amount: 100,
         currency: 'USD',
         data: { hostToPlatformFxRate: 1.23 },
@@ -1129,7 +1124,7 @@ describe('server/models/Collective', () => {
       await fakeTransaction({
         type: 'CREDIT',
         CollectiveId: opencollective.id,
-        HostCollectiveId: inc.id,
+        HostCollectiveId: opencollective.id,
         amount: 300,
         currency: 'USD',
         data: { hostToPlatformFxRate: 1.2 },
@@ -1137,11 +1132,24 @@ describe('server/models/Collective', () => {
         createdAt: lastMonth,
         PaymentMethodId: stripePaymentMethod.id,
       });
+      // Different Currency Transaction
+      const otherCollective = await fakeCollective({ currency: 'USD', HostCollectiveId: gbpHost.id });
+      await fakeTransaction({
+        type: 'CREDIT',
+        CollectiveId: otherCollective.id,
+        amount: 1000,
+        currency: 'USD',
+        hostCurrency: 'GBP',
+        HostCollectiveId: gbpHost.id,
+        hostCurrencyFxRate: 0.8,
+        createdAt: lastMonth,
+      });
+
+      metrics = await gbpHost.getHostMetrics(lastMonth);
     });
 
     it('returns acurate metrics for requested month', async () => {
-      const metrics = await gbpHost.getHostMetrics(lastMonth);
-      const expectedTotalMoneyManaged = await socialCollective.getBalance();
+      const expectedTotalMoneyManaged = 2400 + 4000 + 100 + 1000 * 0.8;
 
       expect(metrics).to.deep.equal({
         hostFees: 800,
@@ -1149,8 +1157,9 @@ describe('server/models/Collective', () => {
         pendingPlatformFees: 300,
         platformTips: 331,
         pendingPlatformTips: 81,
-        hostFeeCharge: 0,
-        hostFeeChargePercent: 0,
+        hostFeeShare: 0,
+        pendingHostFeeShare: 0,
+        hostFeeSharePercent: 0,
         totalMoneyManaged: expectedTotalMoneyManaged,
       });
     });
