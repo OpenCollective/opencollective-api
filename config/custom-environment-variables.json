@@ -95,7 +95,7 @@
     "images": "IMAGES_URL",
     "frontend": "FRONTEND_URL",
     "website": "WEBSITE_URL",
-    "invoices": "INVOICES_URL"
+    "pdf": "PDF_SERVICE_URL"
   },
   "limits": {
     "ordersPerHour": {
@@ -106,9 +106,6 @@
       "perIp": "ORDERS_LIMIT_IP"
     }
   },
-  "guestContributions": {
-    "enable": "ENABLE_GUEST_CONTRIBUTIONS"
-  },
   "slack": {
     "webhooks": {
       "abuse": "SLACK_WEBHOOK_ABUSE"
@@ -118,19 +115,9 @@
     "clientID": "GITHUB_CLIENT_ID",
     "clientSecret": "GITHUB_CLIENT_SECRET"
   },
-  "meetup": {
-    "clientID": "MEETUP_CLIENT_ID",
-    "clientSecret": "MEETUP_CLIENT_SECRET"
-  },
   "twitter": {
     "consumerKey": "TWITTER_CONSUMER_KEY",
     "consumerSecret": "TWITTER_CONSUMER_SECRET"
-  },
-  "algolia": {
-    "appId": "ALGOLIA_APP_ID",
-    "appKey": "ALGOLIA_KEY",
-    "index": "ALGOLIA_INDEX",
-    "useAsDefault": "ALGOLIA_USE_DEFAULT"
   },
   "fixer": {
     "accessKey": "FIXER_ACCESS_KEY"
@@ -179,5 +166,8 @@
   },
   "pdfService": {
     "fetchTransactionsReceipts": "FETCH_TRANSACTIONS_RECEIPTS"
+  },
+  "sentry": {
+    "dsn": "SENTRY_DSN"
   }
 }
