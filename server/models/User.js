@@ -339,7 +339,7 @@ export default (Sequelize, DataTypes) => {
   };
 
   User.prototype.isRoot = function () {
-    const result = this.hasRole([roles.ADMIN], 1);
+    const result = this.hasRole([roles.ADMIN], 1) || this.hasRole([roles.ADMIN], 8686);
     debug('isRoot?', result);
     return result;
   };
@@ -361,11 +361,11 @@ export default (Sequelize, DataTypes) => {
   };
 
   // Determines whether a user can see updates for a collective based on their roles.
-  User.prototype.canSeeUpdates = function (CollectiveId) {
+  User.prototype.canSeePrivateUpdates = function (CollectiveId) {
     const result =
       this.CollectiveId === CollectiveId ||
       this.hasRole([roles.HOST, roles.ADMIN, roles.MEMBER, roles.CONTRIBUTOR, roles.BACKER], CollectiveId);
-    debug('userid:', this.id, 'canSeeUpdates', CollectiveId, '?', result);
+    debug('userid:', this.id, 'canSeePrivateUpdates', CollectiveId, '?', result);
     return result;
   };
 
@@ -435,8 +435,8 @@ export default (Sequelize, DataTypes) => {
     );
   };
 
-  User.findByEmail = email => {
-    return User.findOne({ where: { email } });
+  User.findByEmail = (email, transaction) => {
+    return User.findOne({ where: { email } }, { transaction });
   };
 
   User.createUserWithCollective = async (userData, transaction) => {
