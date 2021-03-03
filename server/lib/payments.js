@@ -206,13 +206,7 @@ export async function createRefundTransaction(transaction, refundedPaymentProces
   const creditTransactionRefund = buildRefund(creditTransaction);
 
   if (transaction.data?.isFeesOnTop) {
-    const feeOnTopTransaction = await models.Transaction.findOne({
-      where: {
-        ...FEES_ON_TOP_TRANSACTION_PROPERTIES,
-        type: 'CREDIT',
-        PlatformTipForTransactionGroup: transaction.TransactionGroup,
-      },
-    });
+    const feeOnTopTransaction = await transaction.getPlatformTipTransaction();
     const feeOnTopRefund = buildRefund(feeOnTopTransaction);
     const feeOnTopRefundTransaction = await models.Transaction.createDoubleEntry(feeOnTopRefund);
     await associateTransactionRefundId(feeOnTopTransaction, feeOnTopRefundTransaction, data);
@@ -394,7 +388,6 @@ const validatePayment = payment => {
 };
 
 const sendOrderConfirmedEmail = async (order, transaction) => {
-  let pdf;
   const attachments = [];
   const { collective, tier, interval, fromCollective, paymentMethod } = order;
   const user = order.createdByUser;
@@ -432,18 +425,32 @@ const sendOrderConfirmedEmail = async (order, transaction) => {
 
     // hit PDF service and get PDF (unless payment method type is gift card)
     if (paymentMethod?.type !== PAYMENT_METHOD_TYPE.VIRTUALCARD) {
-      pdf = await getTransactionPdf(transaction, user);
+      const transactionPdf = await getTransactionPdf(transaction, user);
+      if (transactionPdf) {
+        const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
+        attachments.push({
+          filename: `transaction_${collective.slug}_${createdAtString}_${transaction.uuid}.pdf`,
+          content: transactionPdf,
+        });
+        data.transactionPdf = true;
+      }
+
+      if (transaction.hasPlatformTip()) {
+        const platformTipTransaction = await transaction.getPlatformTipTransaction();
+        if (platformTipTransaction) {
+          const platformTipPdf = await getTransactionPdf(platformTipTransaction, user);
+          if (platformTipPdf) {
+            const createdAtString = toIsoDateStr(new Date(platformTipTransaction.createdAt));
+            attachments.push({
+              filename: `transaction_opencollective_${createdAtString}_${platformTipTransaction.uuid}.pdf`,
+              content: platformTipPdf,
+            });
+            data.platformTipPdf = true;
+          }
+        }
+      }
     }
 
-    // attach pdf
-    if (pdf) {
-      const createdAtString = toIsoDateStr(transaction.createdAt ? new Date(transaction.createdAt) : new Date());
-      attachments.push({
-        filename: `transaction_${collective.slug}_${createdAtString}_${transaction.uuid}.pdf`,
-        content: pdf,
-      });
-      data.transactionPdf = true;
-    }
     const emailOptions = {
       from: `${collective.name} <no-reply@${collective.slug}.opencollective.com>`,
       attachments,
@@ -501,12 +508,17 @@ const sendManualPendingOrderEmail = async order => {
   const { collective, fromCollective } = order;
   const host = await collective.getHostCollective();
 
+  const pendingOrderLink =
+    host.type === 'COLLECTIVE'
+      ? `${config.host.website}/${host.slug}/edit/pending-orders?searchTerm=%23${order.id}`
+      : `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`;
+
   const data = {
     order: order.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
-    pendingOrderLink: `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`,
+    pendingOrderLink,
   };
 
   return notifyAdminsOfCollective(host.id, { type: 'order.new.pendingFinancialContribution', data });
@@ -523,12 +535,17 @@ export const sendReminderPendingOrderEmail = async order => {
     return;
   }
 
+  const viewDetailsLink =
+    host.type === 'COLLECTIVE'
+      ? `${config.host.website}/${host.slug}/edit/pending-orders?searchTerm=%23${order.id}`
+      : `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`;
+
   const data = {
     order: order.info,
     collective: collective.info,
     host: host.info,
     fromCollective: fromCollective.activity,
-    viewDetailsLink: `${config.host.website}/${host.slug}/dashboard/donations?searchTerm=%23${order.id}`,
+    viewDetailsLink,
   };
 
   return notifyAdminsOfCollective(host.id, { type: 'order.reminder.pendingFinancialContribution', data });
@@ -545,15 +562,17 @@ export const sendExpiringCreditCardUpdateEmail = async data => {
 
 export const getPlatformFee = async (totalAmount, order, host = null, { hostPlan } = {}) => {
   const isFeesOnTop = order.data?.isFeesOnTop || false;
+  const isSharedRevenue = hostPlan?.hostFeeSharePercent || false;
 
-  // If it's "Fees On Top", we're just using that
-  if (isFeesOnTop) {
-    return order.data?.platformFee;
-  }
+  // Fees On Top can now be combined with Shared Revenue
+  if (isFeesOnTop || isSharedRevenue) {
+    const platformFee = order.data?.platformFee || 0;
 
-  if (hostPlan?.hostFeeSharePercent) {
-    const hostFeePercent = await getHostFeePercent(order, host);
-    return calcFee(totalAmount, hostFeePercent * (hostPlan.hostFeeSharePercent / 100));
+    const sharedRevenue = isSharedRevenue
+      ? calcFee(await getHostFee(totalAmount, order, host), hostPlan.hostFeeSharePercent)
+      : 0;
+
+    return platformFee + sharedRevenue;
   }
 
   //  Otherwise, use platformFeePercent

@@ -8,6 +8,8 @@ import { isValidUploadedImage } from './images';
 interface AllowedContentType {
   /** Allows titles  supported by RichTextEditor (`h3` only) */
   titles?: boolean;
+  /** Allow h1/h2. This option should not be used in places where we embed content as it can mess up with our layout */
+  mainTitles?: boolean;
   /** Includes bold, italic, strong and strike */
   basicTextFormatting?: boolean;
   /** Includes multiline rich text formatting like lists or code blocks */
@@ -34,10 +36,25 @@ export const buildSanitizerOptions = (allowedContent: AllowedContentType = {}): 
   const allowedTags = [];
   const allowedAttributes = {};
   const allowedIframeHostnames = [];
+  const transformTags = {
+    a: function (_, attribs) {
+      return {
+        tagName: 'a',
+        attribs: {
+          ...attribs,
+          href: formatLinkHref(attribs.href),
+        },
+      };
+    },
+  };
 
   // Titles
-  if (allowedContent.titles) {
+  if (allowedContent.mainTitles) {
+    allowedTags.push('h1', 'h2', 'h3');
+  } else if (allowedContent.titles) {
     allowedTags.push('h3');
+    transformTags['h1'] = 'h3';
+    transformTags['h2'] = 'h3';
   }
 
   // Multiline text formatting
@@ -90,19 +107,7 @@ export const buildSanitizerOptions = (allowedContent: AllowedContentType = {}): 
     allowedTags,
     allowedAttributes,
     allowedIframeHostnames,
-    transformTags: {
-      h1: 'h3',
-      h2: 'h3',
-      a: function (tagName, attribs) {
-        return {
-          tagName: 'a',
-          attribs: {
-            ...attribs,
-            href: formatLinkHref(attribs.href),
-          },
-        };
-      },
-    },
+    transformTags,
   };
 };
 
@@ -147,19 +152,26 @@ export const generateSummaryForHTML = (content: string, maxLength = 255): string
   // Trim: `<strong> Test with   spaces </strong>` ==> <strong>Test with spaces</strong>
   const trimmed = sanitized.trim().replace('\n', ' ').replace(/\s+/g, ' ');
 
-  // Truncate
-  const truncated = truncate(trimmed, { length: maxLength, omission: '' });
-
-  // Second sanitize pass: an additional precaution in case someones finds a way to play with the trimmed version
-  const secondSanitized = sanitizeHTML(truncated, optsSanitizeSummary);
-
   const isTruncated = trimmed.length > maxLength;
+
+  let cutLength = maxLength;
+  let summary = trimmed;
+
+  while (summary.length > maxLength) {
+    // Truncate
+    summary = truncate(summary, { length: cutLength, omission: '' });
+
+    // Second sanitize pass: an additional precaution in case someones finds a way to play with the trimmed version
+    summary = sanitizeHTML(summary, optsSanitizeSummary);
+
+    cutLength--;
+  }
 
   // Check to see if the second sanitization cuts a html tag in the middle
   if (isTruncated) {
-    return `${secondSanitized.trim()}...`;
+    return `${summary.trim()}...`;
   } else {
-    return secondSanitized;
+    return summary;
   }
 };
 
