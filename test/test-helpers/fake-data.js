@@ -89,6 +89,7 @@ export const fakeCollective = async (collectiveData = {}) => {
     hostFeePercent: 10,
     tags: [randStr(), randStr()],
     isActive: true,
+    approvedAt: collectiveData.HostCollectiveId ? new Date() : null,
     ...collectiveData,
   });
 
@@ -319,7 +320,7 @@ export const fakeConversation = async (conversationData = {}) => {
 export const fakeTier = async (tierData = {}) => {
   const name = randStr('tier');
   const interval = sample(['month', 'year']);
-  const currency = sample(['USD', 'EUR']);
+  const currency = tierData.currency || sample(['USD', 'EUR']);
   const amount = tierData.amount || randAmount(1, 100) * 100;
   const description = `$${amount / 100}/${interval}`;
 
@@ -424,6 +425,7 @@ export const fakeTransaction = async (transactionData = {}) => {
     hostCurrencyFxRate: 1,
     netAmountInCollectiveCurrency: amount,
     amountInHostCurrency: amount,
+    TransactionGroup: uuid(),
     ...transactionData,
     amount,
     CreatedByUserId,
