@@ -1,6 +1,6 @@
 import debug from 'debug';
 import slugify from 'limax';
-import { get, omit, forEach } from 'lodash';
+import { get, omit } from 'lodash';
 import { map } from 'bluebird';
 
 import models, { Op } from '../../../models';
@@ -380,38 +380,6 @@ export function editCollective(_, args, req) {
 
   let collective, parentCollective;
 
-  const tiers = args.collective.tiers;
-  forEach(tiers, tier => {
-    const presets = tier.presets;
-    const amount = tier.amount;
-    const name = tier.name;
-
-    if (!tier.amountType) {
-      tier.amountType = presets ? 'FLEXIBLE' : 'FIXED';
-    }
-
-    const amountType = tier.amountType;
-    const minPreset = presets ? Math.min(...presets) : null;
-
-    if (!name || name.trim().length === 0) {
-      throw new Error('Name field is required for all tiers');
-    }
-
-    if (tier.type !== 'TICKET' && amountType === 'FIXED' && !amount) {
-      throw new Error(`In ${name}'s tier, "Amount" is required`);
-    }
-
-    if (amountType === 'FLEXIBLE' && presets.indexOf(amount) === -1) {
-      throw new Error(`In ${name}'s tier, "Default amount" must be one of suggested values amounts`);
-    }
-
-    if (amountType === 'FLEXIBLE' && tier.minimumAmount && minPreset < tier.minimumAmount) {
-      throw new Error(`In ${name}'s tier, minimum amount cannot be less than minimum suggested amounts`);
-    }
-
-    return tier;
-  });
-
   const promises = [
     req.loaders.collective.findById.load(args.collective.id).then(c => {
       if (!c) throw new Error(`Collective with id ${args.collective.id} not found`);
@@ -450,9 +418,7 @@ export function editCollective(_, args, req) {
         let errorMsg;
         switch (newCollectiveData.type) {
           case types.EVENT:
-            errorMsg = `You must be logged in as the creator of this Event or as an admin of the ${
-              parentCollective.slug
-            } collective to edit this Event Collective`;
+            errorMsg = `You must be logged in as the creator of this Event or as an admin of the ${parentCollective.slug} collective to edit this Event Collective`;
             break;
 
           case types.USER:

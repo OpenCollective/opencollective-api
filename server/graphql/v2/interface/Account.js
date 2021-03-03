@@ -1,3 +1,5 @@
+import { invert } from 'lodash';
+
 import { GraphQLInt, GraphQLString, GraphQLList, GraphQLInterfaceType } from 'graphql';
 
 import { GraphQLDateTime } from 'graphql-iso-date';
@@ -11,7 +13,15 @@ import { MemberCollection, MemberOfCollection } from '../collection/MemberCollec
 import { TransactionCollection } from '../collection/TransactionCollection';
 import { OrderCollection } from '../collection/OrderCollection';
 
-import { AccountType, ImageFormat, MemberRole, OrderStatus, TransactionType } from '../enum';
+import {
+  AccountOrdersFilter,
+  AccountType,
+  AccountTypeToModelMapping,
+  ImageFormat,
+  MemberRole,
+  OrderStatus,
+  TransactionType,
+} from '../enum';
 
 import { ChronologicalOrder } from '../input/ChronologicalOrder';
 
@@ -53,11 +63,23 @@ const accountOrders = {
   args: {
     limit: { type: GraphQLInt, defaultValue: 100 },
     offset: { type: GraphQLInt, defaultValue: 0 },
+    filter: { type: AccountOrdersFilter },
     status: { type: new GraphQLList(OrderStatus) },
     tierSlug: { type: GraphQLString },
+    orderBy: {
+      type: ChronologicalOrder,
+      defaultValue: ChronologicalOrder.defaultValue,
+    },
   },
   async resolve(collective, args) {
-    const where = { [Op.or]: { CollectiveId: collective.id, FromCollectiveId: collective.id } };
+    let where;
+    if (args.filter === 'OUTGOING') {
+      where = { FromCollectiveId: collective.id };
+    } else if (args.filter === 'INCOMING') {
+      where = { CollectiveId: collective.id };
+    } else {
+      where = { [Op.or]: { CollectiveId: collective.id, FromCollectiveId: collective.id } };
+    }
 
     if (args.status && args.status.length > 0) {
       where.status = { [Op.in]: args.status };
@@ -72,7 +94,19 @@ const accountOrders = {
       where.TierId = tier.id;
     }
 
-    const result = await models.Order.findAndCountAll({ where, limit: args.limit, offset: args.offset });
+    if (args.limit <= 0 || args.limit > 1000) {
+      args.limit = 100;
+    }
+    if (args.offset <= 0) {
+      args.offset = 0;
+    }
+
+    const result = await models.Order.findAndCountAll({
+      where,
+      limit: args.limit,
+      offset: args.offset,
+      order: [[args.orderBy.field, args.orderBy.direction]],
+    });
 
     return { limit: args.limit, offset: args.offset, ...result };
   },
@@ -95,6 +129,12 @@ export const AccountFields = {
     type: GraphQLString,
     resolve(collective) {
       return collective.slug;
+    },
+  },
+  type: {
+    type: AccountType,
+    resolve(collective) {
+      return invert(AccountTypeToModelMapping)[collective.type];
     },
   },
   name: {
@@ -180,6 +220,10 @@ export const Account = new GraphQLInterfaceType({
         type: GraphQLString,
         description: 'The slug identifying the account (ie: babel)',
       },
+      type: {
+        type: AccountType,
+        description: 'The type of the account (BOT/COLLECTIVE/EVENT/ORGANIZATION/INDIVIDUAL)',
+      },
       name: {
         type: GraphQLString,
       },
@@ -258,8 +302,12 @@ export const Account = new GraphQLInterfaceType({
         args: {
           limit: { type: GraphQLInt, defaultValue: 100 },
           offset: { type: GraphQLInt, defaultValue: 0 },
+          filter: { type: AccountOrdersFilter },
           status: { type: new GraphQLList(OrderStatus) },
           tierSlug: { type: GraphQLString },
+          orderBy: {
+            type: ChronologicalOrder,
+          },
         },
       },
     };

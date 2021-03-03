@@ -7,6 +7,7 @@ import { Op } from 'sequelize';
 import CustomDataTypes from './DataTypes';
 import { maxInteger } from '../constants/math';
 import { capitalize, pluralize, days, formatCurrency, strip_tags } from '../lib/utils';
+import { isSupportedVideoProvider, supportedVideoProviders } from '../lib/validators';
 
 const debug = debugLib('tier');
 
@@ -51,6 +52,13 @@ export default function(Sequelize, DataTypes) {
           }
           this.setDataValue('name', name);
         },
+        validate: {
+          isValidName(value) {
+            if (!value || value.trim().length === 0) {
+              throw new Error('Name field is required for all tiers');
+            }
+          },
+        },
       },
 
       type: {
@@ -75,12 +83,44 @@ export default function(Sequelize, DataTypes) {
         },
       },
 
+      videoUrl: {
+        type: DataTypes.STRING,
+        validate: {
+          isUrl: true,
+          /** Ensure that the URL points toward a supported video provider */
+          isSupportedProvider(url) {
+            if (!url) {
+              return;
+            } else if (!isSupportedVideoProvider(url)) {
+              throw new Error(
+                `Only the following video providers are supported: ${supportedVideoProviders.join(', ')}`,
+              );
+            }
+          },
+        },
+        set(url) {
+          // Store null if URL is empty
+          this.setDataValue('videoUrl', url || null);
+        },
+      },
+
       button: DataTypes.STRING,
 
       amount: {
         type: DataTypes.INTEGER, // In cents
+        allowNull: true,
         validate: {
           min: 0,
+          validateFixedAmount(value) {
+            if (this.type !== 'TICKET' && this.amountType === 'FIXED' && !value) {
+              throw new Error(`In ${this.name}'s tier, "Amount" is required`);
+            }
+          },
+          validateFlexibleAmount(value) {
+            if (this.amountType === 'FLEXIBLE' && this.presets && this.presets.indexOf(value) === -1) {
+              throw new Error(`In ${this.name}'s tier, "Default amount" must be one of suggested values amounts`);
+            }
+          },
         },
       },
 
@@ -96,6 +136,12 @@ export default function(Sequelize, DataTypes) {
         type: DataTypes.INTEGER,
         validate: {
           min: 0,
+          isValidMinAmount(value) {
+            const minPreset = this.presets ? Math.min(...this.presets) : null;
+            if (this.amountType === 'FLEXIBLE' && value && minPreset < value) {
+              throw new Error(`In ${this.name}'s tier, minimum amount cannot be less than minimum suggested amounts`);
+            }
+          },
         },
       },
 
@@ -195,7 +241,13 @@ export default function(Sequelize, DataTypes) {
         },
 
         amountStr() {
-          let str = `${formatCurrency(this.minimumAmount || 0, this.currency)}+`;
+          let str;
+          if (this.amountType === 'FLEXIBLE') {
+            str = `${formatCurrency(this.minimumAmount || 0, this.currency)}+`;
+          } else {
+            str = `${formatCurrency(this.amount || 0, this.currency)}`;
+          }
+
           if (this.interval) {
             str += ` per ${this.interval}`;
           }

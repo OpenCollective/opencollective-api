@@ -189,10 +189,10 @@ export async function createOrder(order, loaders, remoteUser, reqIp) {
         defaults: order.collective,
       }))[0];
     } else if (order.collective.githubHandle) {
-      collective = (await models.Collective.findOrCreate({
-        where: { githubHandle: order.collective.githubHandle },
-        defaults: { ...order.collective, isPledged: true },
-      }))[0];
+      collective = await models.Collective.findOne({ where: { githubHandle: order.collective.githubHandle } });
+      if (!collective) {
+        collective = await models.Collective.create({ ...order.collective, isPledged: true });
+      }
     }
 
     if (!collective) {
@@ -742,17 +742,20 @@ export async function updateSubscription(remoteUser, args) {
 
     const newSubscriptionDataValues = Object.assign(omit(order.Subscription.dataValues, ['id', 'deactivatedAt']), {
       amount: amount,
+      createdAt: new Date(),
       updatedAt: new Date(),
       activatedAt: new Date(),
       isActive: true,
     });
 
     const newSubscription = await models.Subscription.create(newSubscriptionDataValues);
-    const newOrderDataValues = Object.assign(omit(order.dataValues, ['id', 'status']), {
+
+    const newOrderDataValues = Object.assign(omit(order.dataValues, ['id']), {
       totalAmount: amount,
       SubscriptionId: newSubscription.id,
+      createdAt: new Date(),
       updatedAt: new Date(),
-      status: status.PENDING,
+      status: status.ACTIVE,
     });
 
     order = await models.Order.create(newOrderDataValues);

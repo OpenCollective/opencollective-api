@@ -11,7 +11,6 @@ import { formatError } from 'apollo-errors';
 import { get } from 'lodash';
 
 import * as connectedAccounts from './controllers/connectedAccounts';
-import getDiscoverPage from './controllers/discover';
 import * as collectives from './controllers/collectives';
 import * as RestApi from './graphql/v1/restapi';
 import getHomePage from './controllers/homepage';
@@ -123,6 +122,7 @@ export default app => {
    * User reset password or new token flow (no jwt verification)
    */
   app.post('/users/signin', required('user'), users.signin);
+  app.post('/users/signin-public-key', required('user'), users.signinPublicKey);
   app.post('/users/update-token', auth.mustBeLoggedIn, users.updateToken);
 
   /**
@@ -193,14 +193,14 @@ export default app => {
   app.get('/homepage', getHomePage); // This query takes 5s to execute!!!
 
   /**
-   * Discover
-   */
-  app.get('/discover', getDiscoverPage);
-
-  /**
    * Users.
    */
   app.get('/users/exists', required('email'), users.exists); // Checks the existence of a user based on email.
+
+  /**
+   * Users with public key
+   */
+  app.get('/users/exists-with-public-key', required('email', 'publicKey'), users.existsWithPublicKey); // Checks the existence of a user based on email and public key.
 
   /**
    * Create a payment method.
@@ -212,8 +212,8 @@ export default app => {
   /**
    * Collectives.
    */
-  app.get('/groups/tags', collectives.getCollectiveTags); // List all unique tags on all collectives
   app.get('/groups/:collectiveid/:tierSlug(backers|users)', cacheControlMaxAge(60), collectives.getUsers); // Get collective backers
+
   /**
    * Transactions (financial).
    */

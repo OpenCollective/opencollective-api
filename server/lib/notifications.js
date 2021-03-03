@@ -13,6 +13,7 @@ import models from '../models';
 import debugLib from 'debug';
 import { formatCurrency } from './utils';
 import { channels } from '../constants';
+import { sanitizeActivity } from './webhooks';
 
 const debug = debugLib('notification');
 
@@ -72,7 +73,8 @@ function publishToGitter(activity, notifConfig) {
 }
 
 function publishToWebhook(activity, webhookUrl) {
-  return axios.post(webhookUrl, activity);
+  const sanitizedActivity = sanitizeActivity(activity);
+  return axios.post(webhookUrl, sanitizedActivity);
 }
 
 function publishToSlack(activity, webhookUrl, options) {
@@ -318,15 +320,14 @@ async function notifyByEmail(activity) {
 
     case activityType.COLLECTIVE_EXPENSE_APPROVED:
       activity.data.actions = {
-        viewLatestExpenses: `${config.host.website}/${activity.data.collective.slug}/expenses#expense${
-          activity.data.expense.id
-        }`,
+        viewLatestExpenses: `${config.host.website}/${activity.data.collective.slug}/expenses#expense${activity.data.expense.id}`,
       };
       if (get(activity, 'data.expense.payoutMethod') === 'paypal') {
         activity.data.expense.payoutMethod = `PayPal (${activity.data.user.paypalEmail})`;
       }
       notifyUserId(activity.data.expense.UserId, activity);
-      if (get(activity, 'data.host.id')) {
+      // We only notify the admins of the host if the collective is active (ie. has been approved by the host)
+      if (get(activity, 'data.host.id') && get(activity, 'data.collective.isActive')) {
         notifyAdminsOfCollective(activity.data.host.id, activity, {
           template: 'collective.expense.approved.for.host',
           collective: activity.data.host,
@@ -336,9 +337,7 @@ async function notifyByEmail(activity) {
 
     case activityType.COLLECTIVE_EXPENSE_PAID:
       activity.data.actions = {
-        viewLatestExpenses: `${config.host.website}/${activity.data.collective.slug}/expenses#expense${
-          activity.data.expense.id
-        }`,
+        viewLatestExpenses: `${config.host.website}/${activity.data.collective.slug}/expenses#expense${activity.data.expense.id}`,
       };
       notifyUserId(activity.data.expense.UserId, activity);
       if (get(activity, 'data.host.id')) {

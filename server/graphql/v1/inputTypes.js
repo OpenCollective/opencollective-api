@@ -99,6 +99,7 @@ export const UserInputType = new GraphQLInputObjectType({
     website: { type: GraphQLString },
     paypalEmail: { type: GraphQLString },
     newsletterOptIn: { type: GraphQLBoolean },
+    publicKey: { type: GraphQLString },
   }),
 });
 
@@ -253,6 +254,10 @@ export const TierInputType = new GraphQLInputObjectType({
     longDescription: {
       type: GraphQLString,
       description: 'A long, html-formatted description.',
+    },
+    videoUrl: {
+      type: GraphQLString,
+      description: 'Link to a video (YouTube, Vimeo).',
     },
     amount: {
       type: GraphQLInt,

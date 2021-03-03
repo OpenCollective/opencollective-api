@@ -666,14 +666,15 @@ const queries = {
           throw new Error('Collective not found');
         }
         const getCollectiveIds = () => {
-          // if is host, we get all the expenses across all the hosted collectives
+          // if is host, we get all the expenses across all the hosted collectives that are active
           if (args.includeHostedCollectives) {
-            return models.Member.findAll({
+            return models.Collective.findAll({
+              attributes: ['id'],
               where: {
-                MemberCollectiveId: collective.id,
-                role: 'HOST',
+                HostCollectiveId: collective.id,
+                isActive: true,
               },
-            }).map(member => member.CollectiveId);
+            }).map(c => c.id);
           } else {
             return Promise.resolve([args.CollectiveId]);
           }
@@ -899,6 +900,26 @@ const queries = {
         return { total, collectives, limit: args.limit, offset: args.offset };
       }
 
+      if (args.orderBy === 'totalDonations') {
+        query.attributes = {
+          include: [
+            [
+              sequelize.literal(`(
+                SELECT  COALESCE(SUM("netAmountInCollectiveCurrency"), 0) 
+                FROM    "Transactions" t 
+                WHERE   t."type" = 'CREDIT' 
+                AND     t."CollectiveId" = "Collective".id
+              )`),
+              'totalDonations',
+            ],
+          ],
+        };
+
+        query.order = [[sequelize.col('totalDonations'), args.orderDirection]];
+      } else {
+        query.order = [[args.orderBy, args.orderDirection]];
+      }
+
       if (args.minBackerCount) {
         const { total, collectives } = await rawQueries.getCollectivesWithMinBackers({
           ...args,
@@ -906,8 +927,6 @@ const queries = {
         });
         return { total, collectives, limit: args.limit, offset: args.offset };
       }
-
-      query.order = [[args.orderBy, args.orderDirection]];
 
       if (args.offset) query.offset = args.offset;
 

@@ -22,20 +22,11 @@ import { CollectiveInterfaceType, CollectiveSearchResultsType } from './Collecti
 import { TransactionInterfaceType, OrderDirectionType } from './TransactionInterface';
 
 import models, { Op, sequelize } from '../../models';
-import dataloaderSequelize from 'dataloader-sequelize';
 import { strip_tags } from '../../lib/utils';
 import status from '../../constants/expense_status';
 import orderStatus from '../../constants/order_status';
 import { maxInteger } from '../../constants/math';
 import intervals from '../../constants/intervals';
-
-dataloaderSequelize(models.Order);
-dataloaderSequelize(models.Transaction);
-dataloaderSequelize(models.Collective);
-dataloaderSequelize(models.Expense);
-
-// This breaks the tests for some reason (mocha test/Member.routes.test.js -g "successfully add a user to a collective with a role")
-// dataloaderSequelize(models.User);
 
 /**
  * Take a graphql type and return a wrapper type that adds pagination. The pagination
@@ -597,9 +588,7 @@ export const ExpenseType = new GraphQLObjectType({
           return expense.getUser().then(u => {
             if (!u) {
               return console.error(
-                `Cannot fetch the UserId ${expense.UserId} referenced in ExpenseId ${
-                  expense.id
-                } -- has the user been deleted?`,
+                `Cannot fetch the UserId ${expense.UserId} referenced in ExpenseId ${expense.id} -- has the user been deleted?`,
               );
             }
             return models.Collective.findByPk(u.CollectiveId);
@@ -682,6 +671,9 @@ export const UpdateType = new GraphQLObjectType({
         description: 'Indicates whether or not the user is allowed to see the content of this update',
         type: GraphQLBoolean,
         resolve(update, _, req) {
+          if (!update.isPrivate) {
+            return true;
+          }
           return req.remoteUser && req.remoteUser.canSeeUpdates(update.CollectiveId);
         },
       },
@@ -1125,6 +1117,17 @@ export const TierType = new GraphQLObjectType({
       longDescription: {
         type: GraphQLString,
         description: 'A long, html-formatted description.',
+      },
+      hasLongDescription: {
+        type: GraphQLBoolean,
+        description: 'Returns true if the tier has a long description',
+        resolve(tier) {
+          return Boolean(tier.longDescription);
+        },
+      },
+      videoUrl: {
+        type: GraphQLString,
+        description: 'Link to a video (YouTube, Vimeo).',
       },
       button: {
         type: GraphQLString,

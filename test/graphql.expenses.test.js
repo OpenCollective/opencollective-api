@@ -154,6 +154,9 @@ describe('GraphQL Expenses API', () => {
       // Given that we have two collectives within a host
       const { hostAdmin, hostCollective, collective } = await store.newCollectiveWithHost('apex', 'USD', 'USD', 10);
       const anotherCollective = (await store.newCollectiveInHost('brusselstogether', 'USD', hostCollective)).collective;
+      const inactiveCollective = (await store.newCollectiveInHost('womer-inactive', 'USD', hostCollective)).collective;
+      inactiveCollective.isActive = false;
+      await inactiveCollective.save();
       // And given that the first collective created above have two expenses
       const data = {
         currency: 'USD',
@@ -181,6 +184,14 @@ describe('GraphQL Expenses API', () => {
       await store.createExpense(hostAdmin, {
         amount: 4000,
         description: 'Stickers',
+        ...data,
+      });
+      // And given that the inactive collective created above also has
+      // one expense
+      data.collective = { id: inactiveCollective.id };
+      await store.createExpense(hostAdmin, {
+        amount: 3500,
+        description: 'Banner inactive',
         ...data,
       });
       // When we retrieve all the expenses of the host
@@ -513,7 +524,7 @@ describe('GraphQL Expenses API', () => {
       expect(result.errors[0].message).to.equal("You can't reject an expense that is already paid");
     }); /* End of "fails to approve expense if expense.status is PAID" */
 
-    it('successfully approve expense if expense.status is PENDING and send notification email to author of expense and host admin (unless unsubscribed)', async () => {
+    it('successfully approve expense and send notification email to author of expense', async () => {
       // Given that we have a collective
       const { hostAdmin, collective } = await store.newCollectiveWithHost('rollup', 'USD', 'USD', 10);
       // And given a user that will file an expense
@@ -551,10 +562,55 @@ describe('GraphQL Expenses API', () => {
       expect(emailSendMessageSpy.firstCall.args[1]).to.contain('Your expense');
       expect(emailSendMessageSpy.firstCall.args[1]).to.contain('has been approved');
       expect(emailSendMessageSpy.secondCall.args[0]).to.equal(hostAdmin.email);
+      expect(emailSendMessageSpy.secondCall.args[1]).to.contain('New expense approved');
+    }); /* End of "successfully approve expense and send notification email to author of expense" */
+    it('successfully approve expense and send notification email to admin of host', async () => {
+      // Given a user that will file an expense and that is an admin of the collective
+      const { user } = await store.newUser('an internet user', {
+        paypalEmail: 'testuser@paypal.com',
+      });
+      const admin = (await store.newUser('collectives-admin')).user;
+      // and given that we have a host
+      const { hostAdmin, collective } = await store.newCollectiveWithHost('rollup', 'USD', 'USD', 10, admin);
+      // approve the collective to be hosted by the host
+      collective.isActive = true;
+      await collective.save();
+      // And given the above collective has one expense (created by
+      // the above user)
+      const data = {
+        currency: 'USD',
+        payoutMethod: 'paypal',
+        privateMessage: 'Private instructions to reimburse this expense',
+        collective: { id: collective.id },
+      };
+      const expense = await store.createExpense(user, {
+        amount: 1000,
+        description: 'Pizza',
+        ...data,
+      });
+      await utils.waitForCondition(() => emailSendMessageSpy.callCount >= 2);
+      emailSendMessageSpy.resetHistory();
+      // When the expense is approved by the admin of collective
+      const result = await utils.graphqlQuery(approveExpenseQuery, { id: expense.id }, admin);
+      result.errors && console.log(result.errors);
+      // Then there should be no errors in the result
+      expect(result.errors).to.not.exist;
+      // And then the approved expense should be set as APPROVED
+      expect(result.data.approveExpense.status).to.equal('APPROVED');
+      // And then an email should have been sent to the admin and
+      // another one to the user. This call to the function
+      // `waitForCondition()` is required because notifications are
+      // sent asynchronously.
+      await utils.waitForCondition(() => emailSendMessageSpy.callCount >= 2);
+      expect(emailSendMessageSpy.callCount).to.equal(2);
+      expect(emailSendMessageSpy.firstCall.args[0]).to.equal(user.email);
+      expect(emailSendMessageSpy.firstCall.args[1]).to.contain('Your expense');
+      expect(emailSendMessageSpy.firstCall.args[1]).to.contain('has been approved');
+      expect(emailSendMessageSpy.secondCall.args[0]).to.equal(hostAdmin.email);
       expect(emailSendMessageSpy.secondCall.args[1]).to.contain('New expense approved on rollup: $10 for Pizza');
       expect(emailSendMessageSpy.secondCall.args[2]).to.contain('PayPal (testuser@paypal.com)');
       expect(emailSendMessageSpy.secondCall.args[2]).to.contain('Private instructions to reimburse this expense');
-    }); /* End of "successfully approve expense if expense.status is PENDING and send notification email to author of expense and host admin (unless unsubscribed)" */
+    }); /* End of "successfully approve expense and send notification email to author of expense" */
   }); /* End of "#approveExpense" */
 
   describe('#rejectExpense', () => {}); /* End of "#rejectExpense" */
@@ -883,6 +939,15 @@ describe('GraphQL Expenses API', () => {
         expect(creditTransaction.netAmountInCollectiveCurrency).to.equal(expense.amount);
         expect(creditTransaction.amount).to.equal(expensePlusFees);
         expect(emailSendMessageSpy.callCount).to.equal(4);
+        expect(emailSendMessageSpy.args[0][0]).to.equal(user.email);
+        expect(emailSendMessageSpy.args[0][1]).to.contain('Your expense to WWCode Berlin');
+        expect(emailSendMessageSpy.args[0][1]).to.contain('has been approved');
+        expect(emailSendMessageSpy.args[1][0]).to.equal(hostAdmin.email);
+        expect(emailSendMessageSpy.args[1][1]).to.contain('New expense approved on WWCode Berlin');
+        expect(emailSendMessageSpy.args[2][0]).to.equal(user.email);
+        expect(emailSendMessageSpy.args[2][1]).to.contain('from WWCode Berlin for Pizza');
+        expect(emailSendMessageSpy.args[3][0]).to.equal(hostAdmin.email);
+        expect(emailSendMessageSpy.args[3][1]).to.contain('Expense paid on WWCode Berlin');
       }); /* End of "pays the expense manually and reduces the balance of the collective" */
 
       it('Pay expense in kind', async () => {
