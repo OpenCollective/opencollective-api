@@ -8,7 +8,7 @@ import { AmountInput } from './AmountInput';
 export const OrderTaxInput = new GraphQLInputObjectType({
   name: 'OrderTaxInput',
   description: 'Input to set taxes for an order',
-  fields: {
+  fields: () => ({
     type: {
       type: new GraphQLNonNull(OrderTaxType),
     },
@@ -16,12 +16,12 @@ export const OrderTaxInput = new GraphQLInputObjectType({
       type: new GraphQLNonNull(AmountInput),
     },
     country: {
-      type: new GraphQLNonNull(CountryISO),
+      type: CountryISO,
       description: 'Country of the account ordering, to know from where to apply the tax',
     },
     idNumber: {
       type: GraphQLString,
       description: 'Tax identification number, if any',
     },
-  },
+  }),
 });

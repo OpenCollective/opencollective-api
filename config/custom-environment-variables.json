@@ -103,11 +103,9 @@
       "perAccountForCollective": "ORDERS_LIMIT_ACCOUNT_COLLECTIVE",
       "perEmail": "ORDERS_LIMIT_EMAIL",
       "perEmailForCollective": "ORDERS_LIMIT_EMAIL_COLLECTIVE",
-      "perIp": "ORDERS_LIMIT_IP"
+      "perIp": "ORDERS_LIMIT_IP",
+      "forCollective": "ORDERS_LIMIT_COLLECTIVE"
     }
-  },
-  "guestContributions": {
-    "enable": "ENABLE_GUEST_CONTRIBUTIONS"
   },
   "slack": {
     "webhooks": {
@@ -118,19 +116,9 @@
     "clientID": "GITHUB_CLIENT_ID",
     "clientSecret": "GITHUB_CLIENT_SECRET"
   },
-  "meetup": {
-    "clientID": "MEETUP_CLIENT_ID",
-    "clientSecret": "MEETUP_CLIENT_SECRET"
-  },
   "twitter": {
     "consumerKey": "TWITTER_CONSUMER_KEY",
     "consumerSecret": "TWITTER_CONSUMER_SECRET"
-  },
-  "algolia": {
-    "appId": "ALGOLIA_APP_ID",
-    "appKey": "ALGOLIA_KEY",
-    "index": "ALGOLIA_INDEX",
-    "useAsDefault": "ALGOLIA_USE_DEFAULT"
   },
   "fixer": {
     "accessKey": "FIXER_ACCESS_KEY"
@@ -155,6 +143,11 @@
   },
   "transferwise": {
     "apiUrl": "TRANSFERWISE_API_URL",
+    "oauthUrl": "TRANSFERWISE_OAUTH_URL",
+    "clientKey": "TRANSFERWISE_CLIENT_KEY",
+    "clientId": "TRANSFERWISE_CLIENT_ID",
+    "clientSecret": "TRANSFERWISE_CLIENT_SECRET",
+    "redirectUri": "TRANSFERWISE_REDIRECT_URI",
     "privateKey": "TRANSFERWISE_PRIVATE_KEY"
   },
   "fixie": {
@@ -179,5 +172,8 @@
   },
   "pdfService": {
     "fetchTransactionsReceipts": "FETCH_TRANSACTIONS_RECEIPTS"
+  },
+  "sentry": {
+    "dsn": "SENTRY_DSN"
   }
 }

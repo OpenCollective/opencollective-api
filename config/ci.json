@@ -16,7 +16,7 @@
     "url": "postgres://postgres@localhost:5432/postgres"
   },
   "limits": {
-    "virtualCards": {
+    "giftCards": {
       "maxPerDay": 1000
     }
   },
@@ -42,8 +42,5 @@
   },
   "fixer": {
     "accessKey": "UNDEFINED_FIXER_ACCESS_KEY"
-  },
-  "pdfService": {
-    "fetchTransactionsReceipts": false
   }
 }
