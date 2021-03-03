@@ -13,7 +13,7 @@ import EmailAddress from '../scalar/EmailAddress';
 const ConfirmGuestAccountResponse = new GraphQLObjectType({
   name: 'ConfirmGuestAccountResponse',
   description: 'Response for the confirmGuestAccount mutation',
-  fields: {
+  fields: () => ({
     account: {
       type: new GraphQLNonNull(Account),
       description: 'The validated account',
@@ -22,7 +22,7 @@ const ConfirmGuestAccountResponse = new GraphQLObjectType({
       type: new GraphQLNonNull(GraphQLString),
       description: 'A token that can be used to sign in',
     },
-  },
+  }),
 });
 
 const guestMutations = {
@@ -111,6 +111,7 @@ const guestMutations = {
       guestTokens: {
         type: new GraphQLList(new GraphQLNonNull(GraphQLString)),
         description: 'This can be used to link the other guest contributions to the user',
+        deprecationReason: '2021-01-26: Guest tokens are not used anymore',
       },
     },
     async resolve(
@@ -129,15 +130,9 @@ const guestMutations = {
         throw new RateLimitExceeded();
       }
 
-      const guestTokens = <string[] | null>args.guestTokens;
-      if (guestTokens?.length > 30) {
-        throw new Error('Cannot link more than 30 profiles at the same time');
-      }
-
       const { user, collective } = await confirmGuestAccountByEmail(
         <string>args.email,
         <string>args.emailConfirmationToken,
-        <string[]>args.guestTokens,
       );
 
       const accessToken = user.jwt({}, TOKEN_EXPIRATION_SESSION);
