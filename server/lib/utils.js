@@ -6,7 +6,7 @@ import { URL } from 'url';
 import Promise from 'bluebird';
 import config from 'config';
 import pdf from 'html-pdf';
-import { cloneDeep, get, isEqual, padStart } from 'lodash';
+import { cloneDeep, filter, get, isEqual, padStart, sumBy } from 'lodash';
 import sanitizeHtml from 'sanitize-html';
 
 import errors from './errors';
@@ -371,6 +371,8 @@ export const defaultHostCollective = category => {
   if (config.env === 'production' || config.env === 'staging') {
     if (category === 'opensource') {
       return { id: 772, CollectiveId: 11004, ParentCollectiveId: 83 }; // Open Source Host Collective
+    } else if (category === 'foundation') {
+      return { CollectiveId: 11049 };
     } else {
       return {}; // Don't automatically assign a host anymore
     }
@@ -378,6 +380,8 @@ export const defaultHostCollective = category => {
   if (config.env === 'development' || process.env.E2E_TEST) {
     if (category === 'opensource') {
       return { CollectiveId: 9805, ParentCollectiveId: 83 }; // Open Source Host Collective
+    } else if (category === 'foundation') {
+      return { CollectiveId: 9805 };
     } else {
       return {}; // Don't automatically assign a host anymore
     }
@@ -636,3 +640,5 @@ export const getTokenFromRequestHeaders = req => {
 
   return token;
 };
+
+export const sumByWhen = (vector, iteratee, predicate) => sumBy(filter(vector, predicate), iteratee);

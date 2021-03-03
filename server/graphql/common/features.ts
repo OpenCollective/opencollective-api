@@ -1,3 +1,4 @@
+import { types } from '../../constants/collectives';
 import FEATURE from '../../constants/feature';
 import FEATURE_STATUS from '../../constants/feature-status';
 import { hasFeature, isFeatureAllowedForCollectiveType } from '../../lib/allowed-features';
@@ -13,7 +14,9 @@ const checkIsActive = (
 /**
  * Returns a resolved that will give the `FEATURE_STATUS` for the given collective/feature.
  */
-export const getFeatureStatusResolver = (feature: FEATURE) => async (collective): Promise<FEATURE_STATUS> => {
+export const getFeatureStatusResolver = (feature: FEATURE) => async (
+  collective: typeof models.Collective,
+): Promise<FEATURE_STATUS> => {
   if (!collective) {
     return FEATURE_STATUS.UNSUPPORTED;
   } else if (!isFeatureAllowedForCollectiveType(collective.type, feature, collective.isHostAccount)) {
@@ -53,6 +56,34 @@ export const getFeatureStatusResolver = (feature: FEATURE) => async (collective)
           limit: 1,
         }),
         FEATURE_STATUS.DISABLED,
+      );
+    case FEATURE.EVENTS:
+      return checkIsActive(
+        models.Collective.count({
+          where: { type: types.EVENT, ParentCollectiveId: collective.id },
+          limit: 1,
+        }),
+      );
+    case FEATURE.PROJECTS:
+      return checkIsActive(
+        models.Collective.count({
+          where: { type: types.PROJECT, ParentCollectiveId: collective.id },
+          limit: 1,
+        }),
+      );
+    case FEATURE.CONNECTED_ACCOUNTS:
+      return checkIsActive(
+        models.Member.count({
+          where: { role: 'CONNECTED_COLLECTIVE', CollectiveId: collective.id },
+          limit: 1,
+        }),
+      );
+    case FEATURE.TRANSACTIONS:
+      return checkIsActive(
+        models.Transaction.count({
+          where: { [Op.or]: { CollectiveId: collective.id, FromCollectiveId: collective.id } },
+          limit: 1,
+        }),
       );
     default:
       return FEATURE_STATUS.ACTIVE;

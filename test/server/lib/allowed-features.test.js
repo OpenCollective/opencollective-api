@@ -27,7 +27,7 @@ describe('server/lib/allowed-features', () => {
     });
     it('EVENTS', () => {
       expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.EVENTS)).to.be.true;
-      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.EVENTS)).to.be.true;
+      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.EVENTS)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.EVENTS, true)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('USER', FEATURE.EVENTS)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('EVENT', FEATURE.EVENTS)).to.be.false;
@@ -53,13 +53,13 @@ describe('server/lib/allowed-features', () => {
       expect(isFeatureAllowedForCollectiveType('PROJECT', FEATURE.USE_EXPENSES)).to.be.true;
     });
     it('RECEIVE_EXPENSES', () => {
-      expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.RECEIVE_EXPENSES)).to.be.false;
+      expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.RECEIVE_EXPENSES)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.RECEIVE_EXPENSES)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.RECEIVE_EXPENSES, true)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('USER', FEATURE.RECEIVE_EXPENSES)).to.be.false;
-      expect(isFeatureAllowedForCollectiveType('EVENT', FEATURE.RECEIVE_EXPENSES)).to.be.false;
-      expect(isFeatureAllowedForCollectiveType('FUND', FEATURE.RECEIVE_EXPENSES)).to.be.false;
-      expect(isFeatureAllowedForCollectiveType('PROJECT', FEATURE.RECEIVE_EXPENSES)).to.be.false;
+      expect(isFeatureAllowedForCollectiveType('EVENT', FEATURE.RECEIVE_EXPENSES)).to.be.true;
+      expect(isFeatureAllowedForCollectiveType('FUND', FEATURE.RECEIVE_EXPENSES)).to.be.true;
+      expect(isFeatureAllowedForCollectiveType('PROJECT', FEATURE.RECEIVE_EXPENSES)).to.be.true;
     });
     it('COLLECTIVE_GOALS', () => {
       expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.COLLECTIVE_GOALS)).to.be.true;
@@ -83,7 +83,7 @@ describe('server/lib/allowed-features', () => {
 
     it('UPDATES', () => {
       expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.UPDATES)).to.be.true;
-      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.UPDATES)).to.be.true;
+      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.UPDATES)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.UPDATES, true)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('USER', FEATURE.UPDATES)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('EVENT', FEATURE.UPDATES)).to.be.false;
@@ -92,7 +92,7 @@ describe('server/lib/allowed-features', () => {
     });
     it('CONVERSATIONS', () => {
       expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.CONVERSATIONS)).to.be.true;
-      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.CONVERSATIONS)).to.be.true;
+      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.CONVERSATIONS)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.CONVERSATIONS, true)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('USER', FEATURE.CONVERSATIONS)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('EVENT', FEATURE.CONVERSATIONS)).to.be.false;
@@ -113,7 +113,7 @@ describe('server/lib/allowed-features', () => {
     it('CONTACT_FORM', () => {
       expect(isFeatureAllowedForCollectiveType('COLLECTIVE', FEATURE.CONTACT_FORM)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.CONTACT_FORM)).to.be.false;
-      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.CONTACT_FORM, true)).to.be.false;
+      expect(isFeatureAllowedForCollectiveType('ORGANIZATION', FEATURE.CONTACT_FORM, true)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('USER', FEATURE.CONTACT_FORM)).to.be.false;
       expect(isFeatureAllowedForCollectiveType('EVENT', FEATURE.CONTACT_FORM)).to.be.true;
       expect(isFeatureAllowedForCollectiveType('FUND', FEATURE.CONTACT_FORM)).to.be.false;
