@@ -13,6 +13,7 @@ import expenseMutations from './ExpenseMutations';
 import guestMutations from './GuestMutations';
 import hostApplicationMutations from './HostApplicationMutations';
 import individualMutations from './IndividualMutations';
+import memberInvitationMutations from './MemberInvitationMutations';
 import memberMutations from './MemberMutations';
 import orderMutations from './OrderMutations';
 import paymentMethodMutations from './PaymentMethodMutations';
@@ -41,6 +42,7 @@ const mutation = {
   ...paymentMethodMutations,
   ...transactionMutations,
   ...memberMutations,
+  ...memberInvitationMutations,
   ...updateMutations,
   ...individualMutations,
   ...virtualCardMutations,
