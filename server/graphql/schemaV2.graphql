@@ -6011,7 +6011,7 @@ type Mutation {
     """
     role: MemberRole
     description: String
-    since: ISODateTime
+    since: DateTime
   ): Member
 
   """
@@ -6054,7 +6054,7 @@ type Mutation {
     """
     role: MemberRole!
     description: String
-    since: ISODateTime
+    since: DateTime
   ): MemberInvitation!
 
   """
@@ -6076,7 +6076,7 @@ type Mutation {
     """
     role: MemberRole
     description: String
-    since: ISODateTime
+    since: DateTime
   ): MemberInvitation
 
   """
@@ -6092,7 +6092,7 @@ type Mutation {
     Whether this invitation should be accepted or declined
     """
     accept: Boolean!
-  ): Boolean
+  ): Boolean!
   createUpdate(update: UpdateCreateInput!): Update!
   editUpdate(update: UpdateUpdateInput!): Update!
   publishUpdate(id: String!, notificationAudience: UpdateAudience): Update!
