@@ -249,7 +249,8 @@ async function createExpensesBatchGroup(
 
   batchGroup = await transferwise.getBatchGroup(token, profileId, batchGroup.id);
   const includesEveryTransferCreated =
-    batchGroup.transferIds.every(id => transferIds.includes(id)) && batchGroup.transferIds.length == transferIds.length;
+    batchGroup.transferIds.every(id => transferIds.includes(id)) &&
+    batchGroup.transferIds.length === transferIds.length;
   if (!includesEveryTransferCreated) {
     await transferwise.cancelBatchGroup(token, profileId, batchGroup.id, batchGroup.version).catch(console.error);
     throw new Error('Batch group does not include every transfer created');
