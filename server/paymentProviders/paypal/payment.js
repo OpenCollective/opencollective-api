@@ -170,6 +170,10 @@ const processPaypalOrder = async (order, paypalOrderId) => {
   const capture = await paypalRequestV2(`${paypalOrderUrl}/capture`, hostCollective, 'POST');
   const captureId = capture.purchase_units[0].payments.captures[0].id;
   const captureDetails = await paypalRequestV2(`payments/captures/${captureId}`, hostCollective, 'GET');
+  if (captureDetails.status !== 'COMPLETED') {
+    // Return nothing, the transactions will be created by the webhook when the charge switches to COMPLETED
+    return;
+  }
 
   // Record the charge in our ledger
   return recordPaypalCapture(order, captureDetails);
