@@ -34,7 +34,6 @@ import PayoutMethod from '../object/PayoutMethod';
 import { TagStats } from '../object/TagStats';
 import { TransferWise } from '../object/TransferWise';
 import EmailAddress from '../scalar/EmailAddress';
-import ISODateTime from '../scalar/ISODateTime';
 
 import { CollectionArgs } from './Collection';
 import { HasMembersFields } from './HasMembers';
@@ -372,12 +371,12 @@ const accountFieldsDefinition = () => ({
       state: { type: GraphQLString, defaultValue: null },
       merchantAccount: { type: AccountReferenceInput, defaultValue: null },
       dateFrom: {
-        type: ISODateTime,
+        type: GraphQLDateTime,
         defaultValue: null,
         description: 'Only return expenses that were created after this date',
       },
       dateTo: {
-        type: ISODateTime,
+        type: GraphQLDateTime,
         defaultValue: null,
         description: 'Only return expenses that were created before this date',
       },
